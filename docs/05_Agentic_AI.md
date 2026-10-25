@@ -1,4 +1,4 @@
-# Agentic AI: L2 → L3 Interview Preparation
+# Agentic AI: Interview Preparation
 
 > **Updated:** 24 October 2026 (MCP spec revision **2026-07-28** is current) · **Level:** what an agent is → patterns → protocols (MCP/A2A) → production safety
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition. *Pitfall / Follow-up* = where interviewers dig.

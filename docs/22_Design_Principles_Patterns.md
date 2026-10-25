@@ -1,4 +1,4 @@
-# Software Design: OOP, SOLID, Design Patterns & Microservice Patterns: L2 → L3 Interview Preparation
+# Software Design: OOP, SOLID, Design Patterns & Microservice Patterns: Interview Preparation
 
 > **Updated:** 25 October 2026 · **Level:** OOP principles → SOLID → classic patterns in Python → distributed/microservice patterns → design review scenarios
 > **How to use:** *Short answer* = your first 30 seconds. *Explanation / Example* build intuition. *Pitfall / Follow-up* = where interviewers dig deeper.
@@ -558,7 +558,7 @@ Microservices > Independent deploys, at the cost of network failures, distribute
 | Pros | simple dev, testing, transactions | simple + clean boundaries; easy to split later | independent deploy/scale, team autonomy, fault isolation |
 | Cons | tangles as it grows | discipline needed | network failures, distributed data, ops/observability cost |
 
-**L3 answer:** "Start modular; split a service out when there's a concrete reason — different scaling profile (GPU/agent workers vs API), different release cadence, separate team ownership, or a fault-isolation/security boundary." Microservices are an organisational scaling tool, not a default.
+**Senior-level answer:** "Start modular; split a service out when there's a concrete reason — different scaling profile (GPU/agent workers vs API), different release cadence, separate team ownership, or a fault-isolation/security boundary." Microservices are an organisational scaling tool, not a default.
 
 ---
 

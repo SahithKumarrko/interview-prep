@@ -1,4 +1,4 @@
-# React.js: L2 → L3 Interview Preparation
+# React.js: Interview Preparation
 
 > **Updated:** 24 October 2026 (React 19.2 line is current) · **Level:** basics → hooks → architecture & production
 > **How to use:** *Short answer* = what you say first. *Explanation* + *Example* = why it works. *Pitfall / Follow-up* = where interviewers dig.

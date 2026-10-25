@@ -1,4 +1,4 @@
-# AWS Foundations, IAM & Networking: L2 → L3 Interview Preparation
+# AWS Foundations, IAM & Networking: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** global infrastructure → VPC & IAM → integration services → resilient secure design
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and diagrams. *Pitfall / Follow-up* = where interviewers dig.

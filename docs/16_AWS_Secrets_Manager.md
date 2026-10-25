@@ -1,4 +1,4 @@
-# AWS Secrets Manager: L2 → L3 Interview Preparation
+# AWS Secrets Manager: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** what a secret is → access, encryption, rotation → secure credential architecture for agents
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and code. *Pitfall / Follow-up* = where interviewers dig.

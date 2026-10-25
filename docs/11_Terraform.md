@@ -1,4 +1,4 @@
-# Terraform: L2 → L3 Interview Preparation
+# Terraform: Interview Preparation
 
 > **Updated:** 24 October 2026 (Terraform 1.x; AWS provider v6) · **Level:** IaC basics → state & modules → safe production workflows
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and HCL. *Pitfall / Follow-up* = where interviewers dig.

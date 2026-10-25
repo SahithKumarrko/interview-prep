@@ -1,4 +1,4 @@
-# Databases: SQL, PostgreSQL, DynamoDB & Caching: L2 → L3 Interview Preparation
+# Databases: SQL, PostgreSQL, DynamoDB & Caching: Interview Preparation
 
 > **Updated:** 25 October 2026 · **Level:** SQL basics → indexes & transactions → scaling → DynamoDB design → production scenarios
 > **How to use:** *Short answer* = your first 30 seconds. *Explanation / Example* build intuition. *Pitfall / Follow-up* = where interviewers dig deeper.

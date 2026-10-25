@@ -1,4 +1,4 @@
-# Generative AI: L2 → L3 Interview Preparation
+# Generative AI: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** how LLMs work → RAG → evaluation → production & security
 > **How to use:** *Short answer* = your first 30 seconds. *Explanation* / *Example* build intuition. *Pitfall / Follow-up* = where interviewers dig deeper.
@@ -456,7 +456,7 @@ Separating reasoning from the answer lets your code parse `<answer>` and ignore 
 | Delimiters / XML tags | separate instructions from data | prevent confusion/injection |
 | Prefill / output template | start the answer for the model | force format |
 
-**Prompts in production (L3 point):** treat prompts like code.
+**Prompts in production (senior-level point):** treat prompts like code.
 - Store them as **versioned templates** (in the repo or a prompt registry), not strings scattered in code.
 - Test every change against an **eval set** (Q35) before release — a "small wording tweak" can break 10% of cases.
 - Log the prompt version with each request so you can trace regressions.

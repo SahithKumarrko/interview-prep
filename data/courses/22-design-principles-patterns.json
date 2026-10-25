@@ -2,7 +2,7 @@
  "slug": "22-design-principles-patterns",
  "num": 22,
  "title": "Software Design: OOP, SOLID, Design Patterns & Microservice Patterns",
- "full_title": "Software Design: OOP, SOLID, Design Patterns & Microservice Patterns: L2 → L3 Interview Preparation",
+ "full_title": "Software Design: OOP, SOLID, Design Patterns & Microservice Patterns: Interview Preparation",
  "group": "Design & Coding",
  "accent": "#2dd4bf",
  "updated": "25 October 2026",
@@ -166,7 +166,7 @@
      "id": "Q20",
      "title": "Monolith vs modular monolith vs microservices",
      "short_md": "pipeline: Monolith → modular monolith → microservices Monolith > One deployable; simple until it tangles. Modular monolith > One deployable, strict module boundaries and owned data. Extract a service when there's a reason > Different scaling, release cadence, team, or security boundary. Microservices > Independent deploys, at the cost of network failures, distributed data and ops overhead.",
-     "body_md": "```flow\npipeline: Monolith → modular monolith → microservices\nMonolith > One deployable; simple until it tangles.\nModular monolith > One deployable, strict module boundaries and owned data.\nExtract a service when there's a reason > Different scaling, release cadence, team, or security boundary.\nMicroservices > Independent deploys, at the cost of network failures, distributed data and ops overhead.\n```\n\n| | Monolith | Modular monolith | Microservices |\n|---|---|---|---|\n| Deploy | one unit | one unit, strong internal module boundaries | many independent units |\n| Pros | simple dev, testing, transactions | simple + clean boundaries; easy to split later | independent deploy/scale, team autonomy, fault isolation |\n| Cons | tangles as it grows | discipline needed | network failures, distributed data, ops/observability cost |\n\n**L3 answer:** \"Start modular; split a service out when there's a concrete reason — different scaling profile (GPU/agent workers vs API), different release cadence, separate team ownership, or a fault-isolation/security boundary.\" Microservices are an organisational scaling tool, not a default."
+     "body_md": "```flow\npipeline: Monolith → modular monolith → microservices\nMonolith > One deployable; simple until it tangles.\nModular monolith > One deployable, strict module boundaries and owned data.\nExtract a service when there's a reason > Different scaling, release cadence, team, or security boundary.\nMicroservices > Independent deploys, at the cost of network failures, distributed data and ops overhead.\n```\n\n| | Monolith | Modular monolith | Microservices |\n|---|---|---|---|\n| Deploy | one unit | one unit, strong internal module boundaries | many independent units |\n| Pros | simple dev, testing, transactions | simple + clean boundaries; easy to split later | independent deploy/scale, team autonomy, fault isolation |\n| Cons | tangles as it grows | discipline needed | network failures, distributed data, ops/observability cost |\n\n**Senior-level answer:** \"Start modular; split a service out when there's a concrete reason — different scaling profile (GPU/agent workers vs API), different release cadence, separate team ownership, or a fault-isolation/security boundary.\" Microservices are an organisational scaling tool, not a default."
     },
     {
      "id": "Q21",

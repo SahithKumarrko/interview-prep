@@ -1,4 +1,4 @@
-# Python: L2 → L3 Interview Preparation
+# Python: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** basics → internals → production engineering
 > **How to use:** Read the *Short answer* first and say it aloud (that is your 30-second interview reply). Then read *Explanation* and *Example* to understand **why**. *Pitfall / Follow-up* lists what interviewers push on next.

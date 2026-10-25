@@ -1,6 +1,6 @@
 # Interview Prep Handbook
 
-A static, single-page study app for the Infosys Specialist Programmer L2 → L3 interview: 22 courses and 928 questions covering Python, React, Vite, GenAI, agentic AI, LangChain, LangGraph, Bedrock AgentCore, GitLab CI/CD, Docker, Terraform, AWS (foundations, ECS, Lambda, Step Functions, Secrets Manager, EC2), system design, DSA, FastAPI, databases and design patterns.
+A static, single-page interview-preparation app: 22 courses and 928 questions covering Python, React, Vite, GenAI, agentic AI, LangChain, LangGraph, Bedrock AgentCore, GitLab CI/CD, Docker, Terraform, AWS (foundations, ECS, Lambda, Step Functions, Secrets Manager, EC2), system design, DSA, FastAPI, databases and design patterns.
 
 Plain HTML, CSS and JavaScript. No framework and no build step for the site itself.
 

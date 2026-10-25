@@ -1,4 +1,4 @@
-# AWS Step Functions: L2 → L3 Interview Preparation
+# AWS Step Functions: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** state machine basics → integration patterns → resilient large-scale workflows
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and ASL. *Pitfall / Follow-up* = where interviewers dig.

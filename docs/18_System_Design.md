@@ -1,4 +1,4 @@
-# L3 Architecture & System Design: Interview Preparation
+# Architecture & System Design: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** design framework → building blocks → agentic AI platform designs → leadership & incidents
 > **How to use:** Learn the **framework** (section 1) and practise saying each design out loud in 5, 15 and 45-minute versions. Diagrams here are what you'd draw on the whiteboard.
@@ -21,13 +21,13 @@
 
 ## 1. How to answer a system design question
 
-### Q01. What does an L3-level answer look like?
+### Q01. What does a senior-level answer look like?
 
-**Short answer:** Not just "boxes and arrows". An L3 (senior/specialist) answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership ("how I'd test, launch, operate and evolve it").
+**Short answer:** Not just "boxes and arrows". A senior-level answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership ("how I'd test, launch, operate and evolve it").
 
 **The framework (use every time):**
 ```flow
-pipeline: The L3 system design answer, in order
+pipeline: A senior-level system design answer, in order
 Requirements > Functional (what it does) + non-functional (latency, scale, availability, compliance).
 Estimates > Users, requests/s, data size, tokens/day, peak vs average. These drive your choices.
 API & data model > Key endpoints/events, entities, ownership, consistency needs.

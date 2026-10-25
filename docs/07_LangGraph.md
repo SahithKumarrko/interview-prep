@@ -1,4 +1,4 @@
-# LangGraph: L2 → L3 Interview Preparation
+# LangGraph: Interview Preparation
 
 > **Updated:** 24 October 2026 (LangGraph **v1.x**) · **Level:** graph basics → persistence & HITL → multi-agent → production
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and code. *Pitfall / Follow-up* = where interviewers dig.

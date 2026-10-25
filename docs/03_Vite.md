@@ -1,4 +1,4 @@
-# Vite.js: L2 → L3 Interview Preparation
+# Vite.js: Interview Preparation
 
 > **Updated:** 24 October 2026 (Vite 8 is current — stable since March 2026, uses **Rolldown**) · **Level:** basics → internals → production delivery
 > **How to use:** *Short answer* = your first 30 seconds. *Explanation* / *Example* = understanding. *Pitfall* = follow-up traps.

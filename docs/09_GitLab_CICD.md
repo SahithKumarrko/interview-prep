@@ -1,4 +1,4 @@
-# GitLab CI/CD: L2 → L3 Interview Preparation
+# GitLab CI/CD: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** pipeline basics → advanced YAML → secure deployments to AWS
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and YAML. *Pitfall / Follow-up* = where interviewers dig.

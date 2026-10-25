@@ -2,7 +2,7 @@
  "slug": "06-langchain",
  "num": 6,
  "title": "LangChain",
- "full_title": "LangChain: L2 → L3 Interview Preparation",
+ "full_title": "LangChain: Interview Preparation",
  "group": "AI & Agents",
  "accent": "#fb7185",
  "updated": "24 October 2026 (LangChain **v1.x** — `create_agent` + middleware, built on LangGraph)",

@@ -1,8 +1,8 @@
-# Infosys Specialist Programmer L2 → L3: Comprehensive Interview Handbook
+# Comprehensive Interview Handbook
 
 **Updated:** 25 October 2026 · **928 questions** across 22 subjects · basics → advanced → production scenarios
 
-This is **not an Infosys-provided syllabus** and does not predict internal interview questions. It is an engineering-focused preparation bank for the listed tech stack, checked against current official documentation (React 19.2, Vite 8, LangChain/LangGraph v1, MCP spec 2026-07-28, current AgentCore services, Terraform 1.x/AWS provider v6).
+This is an engineering-focused interview preparation bank for the listed tech stack, checked against current official documentation (React 19.2, Vite 8, LangChain/LangGraph v1, MCP spec 2026-07-28, current AgentCore services, Terraform 1.x/AWS provider v6).
 
 > These markdown files are the source for the web app in the repository root (`index.html`). After editing them, run `python tools/build_data.py` to refresh `data/`.
 
@@ -40,7 +40,7 @@ Every file has the same structure:
 | 15 | [AWS Step Functions](15_AWS_Step_Functions.md) | 35 | Standard vs Express, JSONata & variables, `.sync`/task tokens, Distributed Map, sagas, redrive |
 | 16 | [AWS Secrets Manager](16_AWS_Secrets_Manager.md) | 31 | staging labels, KMS, cross-account, 4-step rotation, alternating users, ECS/Lambda consumption, agent credentials |
 | 17 | [Amazon EC2](17_AWS_EC2.md) | 35 | instance types, EBS vs instance store, IMDSv2, pricing models, ASG, hardening, incident response |
-| 18 | [L3 Architecture & System Design](18_L3_System_Design.md) | 48 | design framework, building blocks, **full agentic AI reference architecture**, scenarios, incidents, leadership, classic designs (URL shortener, notifications, chat) |
+| 18 | [Architecture & System Design](18_System_Design.md) | 48 | design framework, building blocks, **full agentic AI reference architecture**, scenarios, incidents, leadership, classic designs (URL shortener, notifications, chat) |
 | 19 | [Python Algorithms & Coding](19_Python_DSA_Coding.md) | 45 | pattern-recognition map + template code for every major pattern, LRU, scale problems, sorting algorithms, bits, grids, strings |
 | 20 | [FastAPI & API Design](20_FastAPI_API_Design.md) | 42 | request lifecycle, DI, native SSE, idempotency keys, JWT/IDOR, production on ECS, REST vs GraphQL vs gRPC, SQLAlchemy async + Alembic |
 | 21 | [Databases: SQL, PostgreSQL, DynamoDB & caching](21_Databases_SQL_DynamoDB.md) | 41 | joins, window functions, B-tree & composite indexes, EXPLAIN, isolation levels, locking, migrations, DynamoDB key/GSI design, conditional writes, hot partitions, cache-aside |
@@ -57,7 +57,7 @@ Every file has the same structure:
  Built & shipped by GitLab CI/CD (09) with Terraform (11) · designed & defended in system design (18)
 ```
 
-## Preparation priority for L3
+## Preparation priorities for senior roles
 
 1. **Own your production design:** draw React/Vite → API/auth → AgentCore/LangGraph → MCP/tools → AWS services, and explain every trust boundary (18 §3).
 2. **Explain trade-offs:** ECS vs Lambda vs AgentCore Runtime, Standard vs Express Step Functions, `create_agent` vs custom LangGraph, RAG vs fine-tuning, session isolation vs durable checkpoints.
@@ -80,7 +80,7 @@ Give a **60–90 second answer: definition → how it works → example → trad
 | 6 | Docker + GitLab CI/CD + Terraform (10, 09, 11) |
 | 7 | AWS foundations + ECS + EC2 (12, 13, 17) |
 | 8 | Lambda + Step Functions + FastAPI + databases (14, 15, 20, 21) |
-| 9 | L3 system design scenarios, including failures (18) |
+| 9 | System design scenarios, including failures (18) |
 | 10 | Two timed mock interviews: explain your architecture, then live-debug a scenario |
 
 ## Limits

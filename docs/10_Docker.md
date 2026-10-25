@@ -1,4 +1,4 @@
-# Docker: L2 → L3 Interview Preparation
+# Docker: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** containers basics → Dockerfile mastery → security & production on ECS
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and code. *Pitfall / Follow-up* = where interviewers dig.

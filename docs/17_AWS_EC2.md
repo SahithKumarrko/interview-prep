@@ -1,4 +1,4 @@
-# Amazon EC2: L2 → L3 Interview Preparation
+# Amazon EC2: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** instance basics → storage, networking, scaling → hardening & incident response
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and config. *Pitfall / Follow-up* = where interviewers dig.

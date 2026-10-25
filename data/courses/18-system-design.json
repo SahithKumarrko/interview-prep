@@ -1,13 +1,13 @@
 {
- "slug": "18-l3-system-design",
+ "slug": "18-system-design",
  "num": 18,
- "title": "L3 Architecture & System Design",
- "full_title": "L3 Architecture & System Design: Interview Preparation",
+ "title": "Architecture & System Design",
+ "full_title": "Architecture & System Design: Interview Preparation",
  "group": "Design & Coding",
  "accent": "#fb7185",
  "updated": "24 October 2026",
  "level": "design framework → building blocks → agentic AI platform designs → leadership & incidents",
- "source": "docs/18_L3_System_Design.md",
+ "source": "docs/18_System_Design.md",
  "question_count": 48,
  "section_count": 10,
  "sections": [
@@ -19,9 +19,9 @@
    "questions": [
     {
      "id": "Q01",
-     "title": "What does an L3-level answer look like?",
-     "short_md": "Not just \"boxes and arrows\". An L3 (senior/specialist) answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership (\"how I'd test, launch, operate and evolve it\").",
-     "body_md": "**Short answer:** Not just \"boxes and arrows\". An L3 (senior/specialist) answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership (\"how I'd test, launch, operate and evolve it\").\n\n**The framework (use every time):**\n```flow\npipeline: The L3 system design answer, in order\nRequirements > Functional (what it does) + non-functional (latency, scale, availability, compliance).\nEstimates > Users, requests/s, data size, tokens/day, peak vs average. These drive your choices.\nAPI & data model > Key endpoints/events, entities, ownership, consistency needs.\nHigh-level design > Clients → edge → API → services → data → async.\nDeep dives > The 2–3 hardest parts: streaming, idempotency, multi-tenancy, RAG quality.\nFailure handling > Timeouts, retries, DLQs, degradation, DR.\nSecurity > Identity, authorisation, data protection, threat model (prompt injection for AI).\nObservability > SLIs/SLOs, traces, alarms, dashboards.\nCost & scale > Biggest cost drivers and how it scales 10×.\nRollout & evolve > Testing, canary, migration, what you'd do next.\n```"
+     "title": "What does a senior-level answer look like?",
+     "short_md": "Not just \"boxes and arrows\". A senior-level answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership (\"how I'd test, launch, operate and evolve it\").",
+     "body_md": "**Short answer:** Not just \"boxes and arrows\". A senior-level answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership (\"how I'd test, launch, operate and evolve it\").\n\n**The framework (use every time):**\n```flow\npipeline: A senior-level system design answer, in order\nRequirements > Functional (what it does) + non-functional (latency, scale, availability, compliance).\nEstimates > Users, requests/s, data size, tokens/day, peak vs average. These drive your choices.\nAPI & data model > Key endpoints/events, entities, ownership, consistency needs.\nHigh-level design > Clients → edge → API → services → data → async.\nDeep dives > The 2–3 hardest parts: streaming, idempotency, multi-tenancy, RAG quality.\nFailure handling > Timeouts, retries, DLQs, degradation, DR.\nSecurity > Identity, authorisation, data protection, threat model (prompt injection for AI).\nObservability > SLIs/SLOs, traces, alarms, dashboards.\nCost & scale > Biggest cost drivers and how it scales 10×.\nRollout & evolve > Testing, canary, migration, what you'd do next.\n```"
     },
     {
      "id": "Q02",

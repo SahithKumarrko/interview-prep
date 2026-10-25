@@ -1,4 +1,4 @@
-# AWS Lambda: L2 → L3 Interview Preparation
+# AWS Lambda: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** execution model → event sources & concurrency → production patterns
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and code. *Pitfall / Follow-up* = where interviewers dig.

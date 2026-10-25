@@ -1,4 +1,4 @@
-# Amazon ECS: L2 → L3 Interview Preparation
+# Amazon ECS: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** core concepts → networking, IAM, deployments → scaling & production debugging
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and config. *Pitfall / Follow-up* = where interviewers dig.

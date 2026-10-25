@@ -1,4 +1,4 @@
-# Amazon Bedrock AgentCore: L2 → L3 Interview Preparation
+# Amazon Bedrock AgentCore: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** what each service does → how they connect → security & production design
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition. *Pitfall / Follow-up* = where interviewers dig.

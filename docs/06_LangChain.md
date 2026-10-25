@@ -1,4 +1,4 @@
-# LangChain: L2 → L3 Interview Preparation
+# LangChain: Interview Preparation
 
 > **Updated:** 24 October 2026 (LangChain **v1.x** — `create_agent` + middleware, built on LangGraph) · **Level:** components → agents → production
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and code. *Pitfall / Follow-up* = where interviewers dig.

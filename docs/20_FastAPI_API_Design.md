@@ -1,4 +1,4 @@
-# FastAPI & API Design: L2 → L3 Interview Preparation
+# FastAPI & API Design: Interview Preparation
 
 > **Updated:** 24 October 2026 · **Level:** HTTP & REST basics → FastAPI internals → secure, resilient production APIs
 > **How to use:** *Short answer* = what you say first. *Explanation / Example* = intuition and code. *Pitfall / Follow-up* = where interviewers dig.

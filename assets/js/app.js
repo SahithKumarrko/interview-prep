@@ -175,7 +175,6 @@ function homeView() {
     <div class="home">
       <section class="hero">
         <h1>Interview prep handbook</h1>
-        <p class="lede">For the Infosys Specialist Programmer L2 to L3 interview. ${total} questions across ${INDEX.courses.length} courses, each answered with a short version, a worked explanation and the follow-ups interviewers ask next.</p>
         <div class="hero-actions">
           ${resume}
           <a class="btn" href="#/cards/all">Practise with flashcards</a>
