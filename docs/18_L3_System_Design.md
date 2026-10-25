@@ -26,17 +26,18 @@
 **Short answer:** Not just "boxes and arrows". An L3 (senior/specialist) answer: clarifies requirements and constraints, proposes a simple design first, explains **trade-offs** (why X over Y), covers **failure modes**, security, data consistency, scale, cost, observability and rollout — and shows ownership ("how I'd test, launch, operate and evolve it").
 
 **The framework (use every time):**
-```
- 1. Requirements      functional (what it does) + non-functional (latency, scale, availability, compliance)
- 2. Estimates         users, requests/s, data size, tokens/day, peak vs average → drives choices
- 3. API & data model  key endpoints/events, entities, ownership, consistency needs
- 4. High-level design simple diagram: clients → edge → API → services → data → async
- 5. Deep dives        the 2–3 hardest parts (streaming, idempotency, multi-tenancy, RAG quality…)
- 6. Failure handling  timeouts, retries, DLQs, degradation, DR
- 7. Security          identity, authZ, data protection, threat model (prompt injection for AI)
- 8. Observability     SLIs/SLOs, traces, alarms, dashboards
- 9. Cost & scale      biggest cost drivers, how it scales 10×
-10. Rollout & evolve  testing, canary, migration, what you'd do next
+```flow
+pipeline: The L3 system design answer, in order
+Requirements > Functional (what it does) + non-functional (latency, scale, availability, compliance).
+Estimates > Users, requests/s, data size, tokens/day, peak vs average. These drive your choices.
+API & data model > Key endpoints/events, entities, ownership, consistency needs.
+High-level design > Clients → edge → API → services → data → async.
+Deep dives > The 2–3 hardest parts: streaming, idempotency, multi-tenancy, RAG quality.
+Failure handling > Timeouts, retries, DLQs, degradation, DR.
+Security > Identity, authorisation, data protection, threat model (prompt injection for AI).
+Observability > SLIs/SLOs, traces, alarms, dashboards.
+Cost & scale > Biggest cost drivers and how it scales 10×.
+Rollout & evolve > Testing, canary, migration, what you'd do next.
 ```
 
 ---
@@ -111,9 +112,16 @@ Numbers reveal the real bottleneck (often **LLM quotas and cost**, not CPU).
 
 ### Q08. Synchronous vs asynchronous communication
 
-```
- Sync (HTTP/gRPC):   A ──request──► B ──response──► A     simple, but A fails/slows when B does
- Async (queue/event): A ──message──► SQS/EventBridge ──► B  decoupled, absorbs bursts, retries; eventual
+```flow
+sequence: Sync vs async between services
+actors: A, Queue, B
+A -> B: SYNC: request
+B --> A: response
+> Simple, but A slows down or fails whenever B does.
+A -> Queue: ASYNC: message
+> A returns immediately. The queue absorbs bursts and retries delivery.
+Queue -> B: deliver when B is ready
+> Decoupled, but eventually consistent, and B must handle duplicates (idempotent consumer).
 ```
 Use async for anything slow (OCR, LLM batch jobs), bursty, or that can retry; return `202 Accepted` + job ID.
 
@@ -170,6 +178,20 @@ AI-specific SLIs: time to first token, task success rate (eval), cost per task, 
 ## 3. Reference architecture: agentic AI platform on AWS
 
 ### Q15. Design a high-level agentic AI web app using our stack
+
+```flow
+sequence: Walk one chat message through the platform
+actors: React SPA, FastAPI (ECS), AgentCore Runtime, Gateway, Tools/Data
+React SPA -> FastAPI (ECS): POST /api/chat + JWT (via CloudFront → ALB)
+FastAPI (ECS) -> FastAPI (ECS): verify JWT, tenant + role, ownership, rate limit
+FastAPI (ECS) -> AgentCore Runtime: InvokeAgentRuntime (stream)
+> LangGraph agent in a per-session microVM; Postgres checkpointer; AgentCore Memory per user.
+AgentCore Runtime -> Gateway: tool call (MCP, workload token)
+Gateway -> Gateway: inbound JWT, Cedar policy, PII redaction
+Gateway -> Tools/Data: Lambda tools · Jira via OAuth 3LO · RAG search with tenant + ACL filters
+AgentCore Runtime --> React SPA: SSE stream: tokens, tool status, approval_needed
+> Long document jobs go to Step Functions instead; EventBridge publishes "job.completed". One trace ID end to end.
+```
 
 ```
  ┌──────────────────────────────────────────── CLIENT ─────────────────────────────────────────────┐
@@ -231,15 +253,18 @@ AI-specific SLIs: time to first token, task success rate (eval), cost per task, 
 
 ### Q17. Secure presigned S3 uploads
 
-```
- 1. Browser → API: POST /uploads {filename, size, contentType}
- 2. API: authN/authZ, validate size/type, create upload record (PENDING) with server-chosen key
-         tenants/{tenantId}/uploads/{uuid}  ← never use client filename as the key
- 3. API → S3: presigned PUT/POST (5–15 min expiry, content-length-range & content-type conditions,
-         SSE-KMS required) → return URL
- 4. Browser PUTs file directly to S3 (API doesn't proxy bytes)
- 5. S3 event → SQS → worker: verify size/type (magic bytes), malware scan, mark READY / REJECTED
- 6. Only READY files can be processed or downloaded (presigned GET after authZ)
+```flow
+sequence: Secure presigned S3 upload
+actors: Browser, API, S3, Scan worker
+Browser -> API: POST /uploads {filename, size, contentType}
+API -> API: authN/authZ, validate, create PENDING record
+> The server chooses the key, e.g. tenants/{tenantId}/uploads/{uuid}. Never use the client's filename as the key.
+API --> Browser: presigned PUT URL (5–15 min, size + type conditions, SSE-KMS)
+Browser -> S3: PUT file directly
+> The API never proxies the file bytes.
+S3 -> Scan worker: S3 event → SQS
+Scan worker -> Scan worker: check magic bytes, malware scan → READY / REJECTED
+> Only READY files can be processed or downloaded (presigned GET after an authorisation check).
 ```
 Bucket: Block Public Access, deny non-TLS, CORS limited to app origin, lifecycle to delete abandoned uploads.
 
@@ -248,13 +273,17 @@ Bucket: Block Public Access, deny non-TLS, CORS limited to app origin, lifecycle
 ### Q18. Document extraction service for 100–300 requests/minute
 
 Requirements: async, per-document status, accuracy with human review, cost/quotas.
-```
- API (202 + job_id) → S3 presigned upload → S3 event → SQS → Step Functions execution (name=doc hash)
-   → Textract async (ClientRequestToken) → SNS callback (task token)
-   → Map over pages (MaxConcurrency sized to Bedrock TPM quota) → LLM extraction (Pydantic schema)
-   → validation rules + confidence → low confidence → review queue (task token) → save results
-   → EventBridge "doc.processed" → SSE/WebSocket push to UI
- Failure: Retry with jitter on throttling; Catch → FAILED status + DLQ + alarm; redrive.
+```flow
+pipeline: Document extraction service, 100–300 requests/minute
+API: 202 + job_id > Respond immediately; work happens asynchronously.
+Presigned S3 upload > The file goes straight to S3.
+S3 event → SQS > Buffered.
+Step Functions (name = doc hash) > Duplicate events can't start duplicate runs.
+Textract async > ClientRequestToken; SNS callback via task token.
+Map over pages > MaxConcurrency sized to the Bedrock tokens-per-minute quota.
+LLM extraction > Output validated against a Pydantic schema.
+Validate + confidence > Low confidence → review queue (task token).
+Save + notify > EventBridge "doc.processed" → SSE/WebSocket push to the UI. Failures: retry with jitter, Catch → FAILED + DLQ + alarm, redrive.
 ```
 Deep-dive talking points: quotas (Textract TPS, Bedrock TPM), cost per document, idempotency, backpressure via SQS, partial page failures, evaluation set for extraction accuracy.
 
@@ -262,10 +291,16 @@ Deep-dive talking points: quotas (Textract TPS, Bedrock TPM), cost per document,
 
 ### Q19. Real-time agent response streaming
 
-```
- React (EventSource/fetch stream) ─► CloudFront ─► ALB (idle timeout ↑) ─► FastAPI (async StreamingResponse)
-       ◄─ event: token / tool_start / tool_result / approval_needed / error / done (with event ids)
-                                          └─► AgentCore Runtime stream (SSE) / LangGraph astream
+```flow
+sequence: Streaming agent tokens to the browser
+actors: React, CloudFront, ALB, FastAPI, Agent
+React -> CloudFront: open stream (EventSource / fetch)
+CloudFront -> ALB: forward (no buffering)
+ALB -> FastAPI: idle timeout raised for long streams
+FastAPI -> Agent: astream / AgentCore Runtime stream
+Agent --> FastAPI: tokens + tool events
+FastAPI --> React: event: token / tool_start / tool_result / approval_needed / error / done
+> Each event has an id, so a dropped connection resumes with Last-Event-ID. Send heartbeats so proxies don't close idle streams.
 ```
 Design points: stable event schema (UI not coupled to graph internals), heartbeats every 15 s (proxies), client reconnect with `Last-Event-ID` → server replays from persisted events or returns current state, cancellation (client abort → cancel agent run), backpressure, don't buffer in proxies (`X-Accel-Buffering: no`), auth on the stream endpoint, per-user concurrent stream limits.
 
@@ -291,12 +326,18 @@ No distributed transaction across them. Approach: **job record is the source of 
 
 ### Q22. Document RAG over live Confluence
 
-```
- Ingestion: Confluence webhooks/scheduled sync → fetch page + permissions (space/page restrictions)
-   → parse (keep headings, tables) → chunk with metadata {page_id, version, space, acl_groups, updated_at}
-   → embed → upsert into hybrid index (OpenSearch) → delete chunks of removed/old versions
- Query: user JWT → groups → hybrid search WITH acl filter → rerank → answer with citations
-   → optional live check: fetch the cited page via Confluence API as the user (3LO) to confirm access & freshness
+```flow
+pipeline: RAG over live Confluence with permissions
+stage: Ingestion
+Webhook / scheduled sync > Fetch the page and its permissions (space and page restrictions).
+Parse > Keep headings and tables.
+Chunk + metadata > page_id, version, space, acl_groups, updated_at.
+Embed + upsert > Into a hybrid index (OpenSearch); delete chunks of removed or old versions.
+stage: Query
+User JWT → groups > Who is asking, and what can they see?
+Hybrid search with ACL filter > Only chunks this user may read.
+Rerank + answer with citations > Cite page ids.
+Optional live check > Fetch the cited page as the user (3LO) to confirm access and freshness.
 ```
 Trade-off: index freshness vs API load; permission changes must propagate quickly (re-sync ACLs separately from content). Evaluate retrieval recall on a labelled set.
 
@@ -328,12 +369,13 @@ React: **no secrets** (public bundle). API/workers: Secrets Manager (cached, rot
 
 ### Q27. Migrating a monolith to this architecture (strangler fig)
 
-```
- Monolith ◄── ALB ──► new services (route by path, one capability at a time)
- 1. Put the monolith behind ALB/API layer; add observability baseline
- 2. Extract one bounded capability (e.g., document processing) → async service
- 3. Route traffic gradually (weighted rules / feature flags); compare metrics
- 4. Move data ownership with CDC/dual-write carefully; decommission old code
+```flow
+pipeline: Strangler-fig migration
+Put monolith behind ALB > Add a routing layer and an observability baseline first.
+Extract one capability > E.g. document processing as an async service.
+Route gradually > Weighted rules or feature flags; compare metrics old vs new.
+Move data ownership > Carefully, with CDC or a controlled dual-write period.
+Decommission old code > Repeat capability by capability until the monolith is gone.
 ```
 Measure success: latency, error rate, deploy frequency, cost.
 
@@ -424,11 +466,14 @@ Use **STAR** (Situation, Task, Action, Result) with metrics: designed X reducing
 
 ### Q39. "Design your current agentic AI platform in 5 minutes"
 
-1. **Problem & users** (30 s): who uses it, what tasks, scale.
-2. **Diagram** (2 min): Q15 — edge/auth → API → agent runtime → gateway/tools → data → async pipeline.
-3. **Key decisions** (1 min): why LangGraph (explicit control, HITL), why AgentCore (isolation, identity), why Step Functions for documents.
-4. **Hard problems solved** (1 min): multi-tenant isolation, approvals exactly once, streaming, quotas/cost.
-5. **Operations & next steps** (30 s): SLOs, evals, what you'd improve.
+```flow
+pipeline: Your 5-minute platform pitch
+Problem & users (30 s) > Who uses it, what tasks, what scale.
+Diagram (2 min) > Q15: edge/auth → API → agent runtime → gateway/tools → data → async pipeline.
+Key decisions (1 min) > Why LangGraph (explicit control, HITL), why AgentCore (isolation, identity), why Step Functions for documents.
+Hard problems solved (1 min) > Multi-tenant isolation, approvals exactly once, streaming, quotas and cost.
+Operations & next steps (30 s) > SLOs, evals, and what you'd improve next.
+```
 
 ---
 
@@ -484,10 +529,19 @@ These generic problems are still common in interviews. Use the same framework (�
 
 **Estimates:** 100M new links/month ≈ 40 writes/s; 4,000 redirects/s average (peaks ×5). 7 base62 characters = 62⁷ ≈ 3.5 trillion codes — plenty.
 
-```
-POST /links {long_url} ──► API ──► ID generator ──► DynamoDB  (PK = short_code → long_url, owner, expires_at TTL)
-GET /{code} ──► CloudFront/edge cache ──► API ──► Redis cache ──► DynamoDB
-                    └── 301/302 redirect                       └── click event → Kinesis/SQS → analytics store
+```flow
+sequence: URL shortener: create and redirect
+actors: Client, Edge cache, API, Redis, DynamoDB, Analytics
+Client -> API: POST /links {long_url}
+API -> DynamoDB: put short_code → long_url (conditional write)
+> Code from an ID generator (base62) or random 7 chars; `attribute_not_exists` prevents collisions. TTL for expiry.
+Client -> Edge cache: GET /{code}
+Edge cache -> API: cache miss
+API -> Redis: lookup code
+Redis -> DynamoDB: on miss, read item
+API --> Client: 301 or 302 redirect
+> 301 is cached by browsers (less load, but you lose click analytics); 302 keeps every click visible.
+API -> Analytics: click event → Kinesis/SQS → analytics store
 ```
 **Deep dives:**
 - **Code generation:** (a) counter/ID service (e.g. pre-allocated ranges per server) → base62 encode: no collisions, but sequential = guessable; (b) random 7 chars + conditional write `attribute_not_exists` and retry on collision; (c) hash of URL (same URL → same code; collisions to handle).
@@ -500,6 +554,17 @@ GET /{code} ──► CloudFront/edge cache ──► API ──► Redis cache 
 ### Q47. Design a notification system (email, SMS, push, in-app)
 
 **Requirements:** many services send notifications; user preferences/opt-outs; retries; no duplicates; priority (OTP now, marketing later); templates; audit.
+
+```flow
+pipeline: A notification's journey
+Service calls Notification API > With an idempotency key, so retries don't send twice.
+Validate + prefs + template > Opt-outs and quiet hours checked; message rendered from a versioned template.
+Log in DynamoDB > Status tracking and audit.
+Publish to topic > SNS/EventBridge fans out by channel.
+Per-channel queue > Email, SMS and push have separate queues, with priority queues so OTPs never wait behind marketing.
+Worker → provider > SES / SMS provider / mobile push, within each provider's rate limits.
+Retry → DLQ → alarm > Backoff on failure; delivery callbacks update the log.
+```
 
 ```
  services ──► Notification API ──► validate + prefs + template ──► SNS/EventBridge topic
@@ -517,6 +582,20 @@ GET /{code} ──► CloudFront/edge cache ──► API ──► Redis cache 
 ### Q48. Design a real-time chat system
 
 **Requirements:** 1:1 and group chat, online presence, delivery/read receipts, history, offline delivery.
+
+```flow
+sequence: Delivering one chat message
+actors: Sender, Gateway A, Chat service, Message store, Pub/sub, Gateway B, Recipient
+Sender -> Gateway A: send over WebSocket (client message id)
+Gateway A -> Chat service: forward
+Chat service -> Message store: save (PK=conversation_id, SK=timestamp#msg_id)
+> The client message id makes retries idempotent; the sort key gives ordering.
+Chat service -> Pub/sub: publish to recipients
+Pub/sub -> Gateway B: the node holding the recipient's connection
+> A connection registry (Redis/DynamoDB) maps user_id → connection ids, so servers scale without sticky sessions.
+Gateway B -> Recipient: push over WebSocket
+> Offline? Send a push notification instead; they fetch history on reconnect.
+```
 
 ```
 clients ══ WebSocket ══► connection gateway (API Gateway WebSocket API / ALB + WS servers)

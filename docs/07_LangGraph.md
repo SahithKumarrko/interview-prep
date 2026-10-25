@@ -24,6 +24,17 @@
 **LangGraph = a state machine for LLM apps.** You define a shared **state**, **nodes** (functions that read state and return updates) and **edges** (which node runs next). Unlike a simple chain, graphs can **loop**, **branch**, run **in parallel**, **pause for humans**, and **resume after crashes**.
 
 **A typical agent graph:**
+```flow
+pipeline: One run through the example graph
+START > Input enters the graph with a thread_id.
+classify > A deterministic or LLM router decides the path.
+Route (conditional edge) > Simple question → direct answer. Needs tools → agent. Risky action → approval gate.
+agent ⇄ tools loop > The agent calls tools and loops back until no tool calls remain.
+approval gate > `interrupt()` pauses here and saves state; a human approves later.
+execute > Runs only after approval.
+END > Every path ends here; each step was checkpointed along the way.
+```
+
 ```
                  ┌──────────────┐
       START ───► │  classify    │  (deterministic or LLM router)
@@ -47,11 +58,14 @@
 ```
 
 **Execution engine (Pregel-style "super-steps"):**
-```
- super-step 1: run all nodes scheduled now (in parallel if several) ──► collect their updates
-               apply updates to state using REDUCERS ──► save CHECKPOINT
- super-step 2: follow edges → schedule next nodes ──► run ──► reduce ──► checkpoint
- ...           until no nodes scheduled (END) or interrupt or recursion_limit hit
+```flow
+cycle: Super-steps: how LangGraph executes
+Run scheduled nodes > All nodes scheduled for this step run (in parallel if there are several).
+Collect updates > Each node returns a partial state update.
+Apply reducers > Updates are merged into state with each key's reducer (e.g. append messages).
+Save checkpoint > State + next nodes are persisted for this thread_id.
+Follow edges > Normal and conditional edges schedule the next nodes.
+exit > No nodes left (END), an `interrupt()`, or `recursion_limit` reached.
 ```
 **Why super-steps matter:** nodes in the same step run in parallel and don't see each other's updates until the step ends; a checkpoint after each step lets you resume, time-travel and pause.
 
@@ -309,10 +323,13 @@ Use for debugging incidents — in an **isolated environment with side-effecting
 
 **Short answer:** On resume (after crash or interrupt), LangGraph restarts from the last checkpoint — the **interrupted/failed node runs again from its beginning**. Completed nodes in earlier steps are not re-run. So any side effect inside a node that can re-run must be **idempotent**, or isolated (separate node / `@task` in the functional API whose result is cached in the checkpoint).
 
-```
-node "submit": call Textract (side effect) → crash before checkpoint
-resume → node "submit" runs again → second Textract job ❌
-fix: idempotency key (job token) or store job_id in state in an earlier node/task
+```flow
+pipeline: Why side effects can run twice after a crash
+Node "submit" starts > It calls Textract (a real side effect).
+Crash before checkpoint > The node's result was never saved.
+Resume > LangGraph replays from the last checkpoint, so "submit" runs again.
+Second Textract job > Duplicate side effect.
+Fix > Use an idempotency key (ClientRequestToken), or create the job_id in an earlier node so it's in state before the side effect.
 ```
 
 ---
@@ -323,15 +340,20 @@ fix: idempotency key (job token) or store job_id in state in an earlier node/tas
 
 **Short answer:** Calling `interrupt(payload)` inside a node **pauses the graph**, saves state via the checkpointer, and returns `payload` to the caller. Later you resume with `Command(resume=value)` on the same `thread_id`; `interrupt()` then **returns `value`** and the node continues. Requires a checkpointer.
 
-```
- invoke ──► node "approve" ──► interrupt({"action": "...", "args": {...}})
-                                   │ state saved, run returns __interrupt__ to caller
-                                   ▼
-             UI shows request ── human approves (hours later, other process/pod)
-                                   │
- invoke(Command(resume={"approved": True}), same thread_id)
-                                   ▼
-          node "approve" RE-RUNS FROM THE TOP; interrupt() now returns {"approved": True}
+```flow
+sequence: interrupt() and resume across hours and processes
+actors: Caller, Graph, Checkpointer, Human
+Caller -> Graph: invoke(input, thread_id)
+Graph -> Graph: node "approve" calls interrupt({action, args})
+Graph -> Checkpointer: save state
+Graph --> Caller: returns __interrupt__ payload
+> The run ends cleanly. Nothing is waiting in memory, so it can resume hours later on another pod.
+Caller -> Human: show the request in the UI
+Human --> Caller: approves
+Caller -> Graph: invoke(Command(resume={approved: True}), same thread_id)
+Graph -> Checkpointer: load state
+Graph -> Graph: node "approve" re-runs from the top
+> This time `interrupt()` returns {approved: True} instead of pausing. Code before `interrupt()` runs again, so keep it idempotent.
 ```
 
 ```python
@@ -493,10 +515,13 @@ router = model.with_structured_output(Route)
 
 ### Q26. Planner–executor–verifier graph with context pruning
 
-```
- START → planner (typed plan in state) → executor (bounded tools, Send per step)
-       → verifier (checks evidence/citations) ── fail & iterations<3 ──► planner
-                                              └─ pass ──► pruner (summarise, keep IDs/approvals) → answer → END
+```flow
+cycle: Planner–executor–verifier with pruning
+planner > Writes a typed plan into state.
+executor > Runs each step with bounded tools (`Send` fans out per step).
+verifier > Checks evidence and citations.
+fail & < 3 rounds > Back to the planner with the verifier's feedback.
+exit > Pass → pruner summarises (keeping IDs and approvals) → answer → END.
 ```
 State keeps `plan`, `evidence` (reducer), `iterations`, `approvals`; pruner replaces bulky tool outputs with summaries + references stored in S3.
 
@@ -580,12 +605,19 @@ Options: your own FastAPI service on ECS/EKS with a Postgres checkpointer; **Lan
 
 ### Q33. LangGraph on AgentCore Runtime — how do the layers fit?
 
-```
- Client ─► AgentCore Runtime (session_id → isolated microVM, inbound auth JWT/IAM)
-              └─ your container/code: LangGraph graph
-                    ├─ checkpointer (Postgres or AgentCore Memory–backed saver) keyed by thread_id
-                    ├─ tools via AgentCore Gateway (MCP) with outbound auth from AgentCore Identity
-                    └─ traces → AgentCore Observability (OTel)
+```flow
+sequence: LangGraph on AgentCore Runtime
+actors: Client, AgentCore Runtime, LangGraph, Checkpointer, Gateway
+Client -> AgentCore Runtime: invoke(session_id) + JWT/IAM
+> Inbound auth is checked; the session maps to its own isolated microVM.
+AgentCore Runtime -> LangGraph: run your container's entrypoint
+LangGraph -> Checkpointer: load state by thread_id
+> Postgres or an AgentCore Memory–backed saver.
+LangGraph -> Gateway: tool calls over MCP
+> Outbound credentials come from AgentCore Identity.
+LangGraph -> Checkpointer: save checkpoints
+LangGraph --> Client: stream response
+> Traces go to AgentCore Observability (OpenTelemetry) throughout.
 ```
 Runtime **session isolation** ≠ graph **persistence**: a session's microVM can end (idle timeout/max lifetime), but the checkpointer restores the conversation. Your backend maps verified user → session ID and → thread ID.
 

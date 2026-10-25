@@ -402,6 +402,14 @@ Python alternative: pass the varying step as a function (strategy) — often sim
 
 ### Q23. Resilience patterns: timeout, retry, circuit breaker, bulkhead
 
+```flow
+cycle: Circuit breaker states
+CLOSED > Calls flow normally; failures are counted.
+OPEN > Too many failures → fail fast without calling the dependency; use a fallback.
+HALF-OPEN > After a cool-down, let a few trial calls through.
+exit > Trial calls succeed → back to CLOSED. They fail → OPEN again.
+```
+
 ```
             timeout              retry (backoff + jitter)       circuit breaker
  caller ──► every call has  ──►  only for transient,       ──►  CLOSED: calls flow
@@ -435,10 +443,16 @@ class CircuitBreaker:
 
 **Short answer:** A business transaction across services is split into **local transactions**, each with a **compensating action** that undoes it if a later step fails. No global lock or two-phase commit.
 
-```
-Book trip:   reserve flight ──► reserve hotel ──► charge card
-                                                     ✗ fails
-Compensate:  cancel flight  ◄── cancel hotel  ◄──────┘
+```flow
+sequence: Saga: booking a trip
+actors: Saga, Flights, Hotels, Payments
+Saga -> Flights: reserve flight
+Saga -> Hotels: reserve hotel
+Saga -> Payments: charge card
+Payments --> Saga: ✗ fails
+> No global transaction exists, so undo the earlier steps in reverse order.
+Saga -> Hotels: cancel hotel (compensation)
+Saga -> Flights: cancel flight (compensation)
 ```
 | Style | How | Trade-off |
 |---|---|---|
@@ -467,9 +481,16 @@ relay (poller or CDC / DynamoDB Streams) → EventBridge/SQS → consumers (must
 
 **Short answer:** Use **different models for writes (commands) and reads (queries)**. The write side keeps normalised, validated data; one or more read models are denormalised for fast queries and updated from events.
 
-```
-POST /orders ──► write model (Postgres, validation) ──event──► projector ──► read model
-GET /dashboard ◄───────────────────────────────────────────────── (DynamoDB / OpenSearch / cache)
+```flow
+sequence: CQRS: separate write and read models
+actors: Client, Write model, Projector, Read model
+Client -> Write model: POST /orders
+> Validated and stored in the normalised write store (e.g. Postgres).
+Write model -> Projector: event: order.created
+Projector -> Read model: update denormalised view
+> E.g. DynamoDB, OpenSearch or a cache, shaped for fast queries.
+Client -> Read model: GET /dashboard
+Read model --> Client: fast read (eventually consistent)
 ```
 Use when reads and writes have very different shapes/scale (dashboards, search). Cost: eventual consistency between sides and more moving parts — don't use it for simple CRUD.
 

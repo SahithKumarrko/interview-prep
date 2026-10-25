@@ -45,9 +45,14 @@
 ```
 
 **Request flow for an API service:**
-```
- Client ─► Route 53 ─► ALB (HTTPS, listener rule /api/*) ─► Target group ─► Task ENI:8000 ─► container
-                                                             health check /health every 15 s
+```flow
+pipeline: Request path into an ECS service
+Client > Calls api.example.com.
+Route 53 > Resolves to the ALB.
+ALB listener rule > HTTPS on 443; rule /api/* picks the target group.
+Target group > Only healthy targets receive traffic (health check /health every 15 s).
+Task ENI:8000 > With awsvpc networking every task has its own IP.
+Container > Your app listening on port 8000.
 ```
 
 ---
@@ -142,10 +147,17 @@ Containers in the same task share the network namespace (`localhost`), can share
 
 ### Q08. Task lifecycle and termination
 
-```
- PROVISIONING → PENDING (pull image, attach ENI) → ACTIVATING → RUNNING
- stop: DEACTIVATING (deregister from ALB, wait deregistration delay) → STOPPING
-       → SIGTERM to containers → wait stopTimeout (default 30 s, Fargate max 120 s) → SIGKILL → STOPPED
+```flow
+pipeline: ECS task lifecycle
+stage: Starting
+PROVISIONING > Capacity and the network interface are prepared.
+PENDING > Pulling the image, attaching the ENI.
+ACTIVATING → RUNNING > Registered with the load balancer; serving traffic once healthy.
+stage: Stopping
+DEACTIVATING > Deregistered from the ALB; waits for the deregistration delay.
+SIGTERM > Sent to each container.
+Wait stopTimeout > Default 30 s (Fargate max 120 s) to drain.
+SIGKILL → STOPPED > Anything still running is killed.
 ```
 Apps must handle SIGTERM: stop accepting work, finish in-flight requests, exit. Set ALB **deregistration delay** to roughly your longest normal request (default 300 s is often too long for fast deploys, too short for long SSE streams). Fargate Spot gives 2-minute warning via SIGTERM + EventBridge event.
 
@@ -237,9 +249,13 @@ Non-root `user`, `readonlyRootFilesystem: true` (+ tmpfs/ephemeral volume for sc
 - `minimumHealthyPercent` — lowest % of desired tasks kept running (e.g., 100 → never drop capacity).
 - `maximumPercent` — upper limit during deploy (e.g., 200 → can double temporarily).
 
-```
-desired=4, min=100%, max=200%:
- [old old old old] → start 4 new → [old×4 new×4] → new healthy in ALB → stop old → [new×4]
+```flow
+pipeline: Rolling deployment (desired=4, min 100%, max 200%)
+4 old tasks > Serving traffic.
+Start 4 new > Max 200% allows 8 tasks at once.
+New tasks healthy in ALB > Health checks pass; traffic now goes to both versions.
+Stop old tasks > Min 100% is kept the whole time.
+4 new tasks > Done with zero downtime. A circuit breaker rolls back if new tasks keep failing.
 ```
 
 ---
@@ -254,9 +270,15 @@ desired=4, min=100%, max=200%:
 
 **Short answer:** ECS now has **native blue/green** (plus **linear** and **canary** traffic shifting) built into the service: it launches the new ("green") revision alongside "blue", shifts ALB traffic (all at once, in steps, or a canary %), keeps blue for a **bake time**, and rolls back instantly on alarms. Lifecycle hooks (Lambda) can run tests at stages. Previously this required **CodeDeploy** (still supported).
 
-```
- blue (v41) 100% ─► green (v42) started ─► test listener checks ─► shift 10% (canary) ─► bake 10 min
-     ─► alarms OK ─► 100% green ─► bake ─► blue terminated        (alarm fires ─► instant rollback to blue)
+```flow
+pipeline: Native blue/green with a canary shift
+Blue (v41) 100% > Current version takes all traffic.
+Green (v42) started > New tasks start alongside.
+Test listener checks > Validate green through a test listener before real users see it.
+Shift 10% (canary) > A small share of real traffic.
+Bake 10 min > Watch alarms. Any alarm → instant rollback to blue.
+100% green > All traffic moves over.
+Bake, then terminate blue > Blue is kept until the bake time passes, so rollback stays instant.
 ```
 Use when you need fast rollback and production testing before full cutover.
 

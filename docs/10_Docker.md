@@ -39,19 +39,27 @@ Linux features that make a container:
 - **Capabilities, seccomp, AppArmor/SELinux** — what it's *allowed to do* (syscalls, privileges).
 
 **Docker architecture:**
-```
- docker CLI ──REST API──► dockerd (Docker Engine) ──► containerd ──► runc ──► container process
-      │                        │ BuildKit (builds images)
-      └── docker build/push ───┴──► Registry (Docker Hub, ECR, GitLab registry)
+```flow
+sequence: What actually runs when you type docker run
+actors: docker CLI, dockerd, containerd, runc, Registry
+docker CLI -> dockerd: REST API: run nginx
+dockerd -> Registry: pull image (if missing)
+Registry --> dockerd: layers
+dockerd -> containerd: create container
+containerd -> runc: start process
+> runc sets up namespaces (isolation) and cgroups (limits), then starts your process. A container is just an isolated Linux process.
+runc --> docker CLI: container running
 ```
 
 **Image → container lifecycle:**
-```
- Dockerfile ──build──► Image (read-only layers, ID/digest) ──push──► Registry
-                           │ run
-                           ▼
-                      Container = image layers + writable layer + process + config
-                      created → running → (stopped) → removed  (writable layer lost on removal)
+```flow
+pipeline: Image to container lifecycle
+Dockerfile > Instructions, each creating a layer.
+build > Produces an image: read-only layers with an ID/digest.
+push → registry > ECR, Docker Hub or the GitLab registry.
+run > Container = image layers + a thin writable layer + a process + config.
+created → running → stopped > Stopping keeps the writable layer.
+removed > The writable layer is deleted. Anything not in a volume is lost.
 ```
 
 ---
@@ -358,9 +366,13 @@ Anything written to the container filesystem disappears when the task is replace
 
 **Short answer:** `docker stop` / ECS sends **SIGTERM** to PID 1, waits a grace period (Docker default 10 s; ECS `stopTimeout` default 30 s, max 120 s on Fargate), then **SIGKILL**. Your app must catch SIGTERM: stop accepting new work, finish in-flight requests, close connections, exit.
 
-```
- ECS deploy/scale-in ─► deregister from ALB (deregistration delay) ─► SIGTERM ─► app drains
-                                                   └─ after stopTimeout ─► SIGKILL (hard kill)
+```flow
+pipeline: Graceful shutdown on ECS
+Deploy / scale-in > ECS decides to stop a task.
+Deregister from ALB > No new requests; in-flight ones continue during the deregistration delay.
+SIGTERM > Sent to PID 1 in the container. Your app must handle it (exec form CMD, or an init like tini).
+App drains > Stop accepting work, finish in-flight requests, close connections, flush logs.
+SIGKILL after stopTimeout > Anything still running is killed hard.
 ```
 Requirements: exec-form `ENTRYPOINT` (app is PID 1) or an init (`tini`, `docker run --init`, ECS `initProcessEnabled`) that forwards signals and reaps zombies. Uvicorn/Gunicorn handle SIGTERM gracefully.
 
@@ -460,11 +472,14 @@ Mirror base images and packages into an internal registry/artifact repository (E
 
 ### Q34. Container crash-loops. How do you debug?
 
-1. `docker logs` / CloudWatch logs — error at startup?
-2. `docker inspect` → `State.ExitCode`, `OOMKilled`.
-3. Exit code meaning (Q27): 137 → memory; 127 → bad command; exec format error → architecture.
-4. Run interactively: `docker run --rm -it --entrypoint sh img` and start the app manually.
-5. Check env vars/secrets present, config file paths, permissions (non-root can't write to `/app`?), dependency reachable (DB DNS).
+```flow
+pipeline: Debugging a crash-looping container
+Read the logs > `docker logs` / CloudWatch: is there an error at startup?
+Inspect exit state > `docker inspect` → `State.ExitCode`, `OOMKilled`.
+Decode the exit code > 137 → killed (often memory); 127 → command not found; "exec format error" → wrong CPU architecture.
+Run it interactively > `docker run --rm -it --entrypoint sh img`, then start the app by hand.
+Check the environment > Env vars and secrets present? Config paths? Permissions (can non-root write to /app)? Dependencies reachable (DB DNS)?
+```
 
 ---
 

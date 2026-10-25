@@ -24,6 +24,18 @@
 
 An LLM is a **next-token predictor**. Given a sequence of tokens, it outputs a probability for every possible next token. Generation = repeat: pick a token, append it, predict again.
 
+```flow
+pipeline: How an LLM produces one token, then the next
+"The capital of France is" > Your prompt text.
+Tokenizer > Text → token IDs, e.g. [791, 6864, 315, 9822, 374].
+Embeddings + position > Each ID becomes a vector; position information is added.
+Self-attention × N layers > Each token looks at earlier tokens: "which words matter for me?"
+Feed-forward (MLP) > Applies learned knowledge to each position: "what do I know about this pattern?"
+Probabilities > Scores for every vocabulary token: " Paris" 0.92, " Lyon" 0.01 …
+Sample (temperature, top-p) > One token is picked.
+Append + repeat > " Paris" is appended and the whole thing runs again for the next token, until a stop token or max tokens.
+```
+
 ```
  "The capital of France is"
           │ tokenizer
@@ -49,16 +61,13 @@ An LLM is a **next-token predictor**. Given a sequence of tokens, it outputs a p
 ```
 
 **How a model becomes an assistant (training pipeline):**
-```
- 1. Pre-training        trillions of tokens of web/code/books → learns language + world knowledge
-        │               ("predict the next token")
- 2. Supervised fine-tune (SFT / instruction tuning) on prompt→ideal-answer pairs → follows instructions
-        │
- 3. Preference tuning   RLHF (reward model + RL) or DPO → helpful, harmless, preferred style
-        │
- 4. Reinforcement learning on verifiable tasks (math, code, tool use) → "reasoning" models
-        ▼
-   Chat / reasoning model you call via an API
+```flow
+pipeline: How a chat model is trained
+Pre-training > Trillions of tokens of web, code and books. Objective: predict the next token. Learns language and world knowledge.
+Supervised fine-tuning (SFT) > Prompt → ideal answer pairs written or curated by people. The model learns to follow instructions.
+Preference tuning > RLHF (reward model + reinforcement learning) or DPO. Makes answers helpful, harmless and in the preferred style.
+RL on verifiable tasks > Math, code and tool use where answers can be checked automatically. Produces "reasoning" models.
+Model you call via API > The chat / reasoning model behind Bedrock, OpenAI or Anthropic APIs.
 ```
 
 **Key consequence:** the model knows only what was in training data (up to a cutoff) plus what you put in the **context window**. It has no live database, no memory between calls, and no notion of "truth" — only likely text. Everything in production GenAI (RAG, tools, guardrails, evaluation) exists to work around that.
@@ -135,10 +144,15 @@ If input = 195K and max_tokens = 8K → request fails or output gets cut. Input 
 **Short answer:** These are **inference hyperparameters**: knobs you set per API call that control *how the next token is picked* from the model's probability distribution. They don't change the model, only how you sample from it. The main ones: temperature (how random), top-p / top-k (which tokens are allowed), max tokens (how long), stop sequences (where to stop).
 
 **Explanation — where they act:** at every step the model outputs a score (logit) for every token in its vocabulary. Decoding turns those scores into one chosen token:
-```
- logits ──► ÷ temperature ──► softmax ──► top-k filter ──► top-p filter ──► sample 1 token
- (raw scores)  (sharpen/flatten)  (probabilities)  (keep k best)   (keep until sum ≥ p)
- repeat until: stop sequence hit │ max_tokens reached │ model emits end-of-turn
+```flow
+pipeline: How decoding picks the next token
+Logits > Raw scores for every token in the vocabulary.
+÷ temperature > Below 1 sharpens the distribution (more predictable); above 1 flattens it (more varied).
+Softmax > Scores become probabilities that add up to 1.
+Top-k filter > Keep only the k most likely tokens.
+Top-p filter > Keep the smallest set whose probabilities add up to p; the long tail is cut off.
+Sample 1 token > Pick one at random from what's left, weighted by probability.
+Repeat > Until a stop sequence, max_tokens, or the model ends its turn.
 ```
 (Exact filter order varies by implementation; the idea is the same.)
 
@@ -382,12 +396,21 @@ Separating reasoning from the answer lets your code parse `<answer>` and ignore 
 - **Structured output** forces/validates responses against a JSON schema (provider "JSON mode"/strict schemas, or validate with Pydantic and retry).
 - **Function/tool calling**: you describe tools (name, description, JSON-schema parameters); the model returns a **request** to call one with arguments; **your code** executes it and returns the result.
 
-```
-1. App → LLM: messages + tools=[get_order(order_id: string)]
-2. LLM → App: tool_use {name: "get_order", input: {"order_id": "A12"}}
-3. App: validate args, check user may see A12, call DB
-4. App → LLM: tool_result {"status": "shipped"}
-5. LLM → App: "Your order A12 has shipped."
+```flow
+sequence: Tool calling end to end
+actors: User, App, LLM, Orders DB
+User -> App: "Where is my order A12?"
+App -> LLM: messages + tools=[get_order(order_id)]
+> You describe each tool with a name, description and JSON schema. The model can't run anything itself.
+LLM --> App: tool_use get_order({"order_id": "A12"})
+> The model only *requests* a call with arguments.
+App -> App: validate args + check user may see A12
+> Your code is the security boundary: validate the schema and authorise this user for this order.
+App -> Orders DB: SELECT status WHERE id = A12
+Orders DB --> App: shipped
+App -> LLM: tool_result {"status": "shipped"}
+LLM --> App: "Your order A12 has shipped."
+App --> User: answer
 ```
 
 ```python
@@ -488,32 +511,20 @@ cos(a, b) = (a · b) / (|a| · |b|)
 **Short answer:** Retrieval-Augmented Generation = **retrieve relevant documents at query time and put them in the prompt** so the model answers from them. Solves: private data, freshness (no retraining), citations, access control (only retrieve what the user may see). Doesn't guarantee correctness — retrieval can miss, and the model can still misread.
 
 **Architecture:**
-```
- ─────────────────────── INGESTION (offline / on change) ───────────────────────
- Sources (S3, Confluence, SharePoint, DB)
-     │ 1. parse (PDF → text; OCR/Textract for scans; keep tables & page numbers)
-     ▼
- Chunker  ─ 2. split into chunks (by headings/paragraphs, ~300–800 tokens) + metadata
-     │        {doc_id, title, section, page, tenant_id, acl_groups, updated_at}
-     ▼
- Embedding model ─ 3. vector per chunk
-     ▼
- Vector store (OpenSearch / pgvector / S3 Vectors / Pinecone) + keyword index
-
- ─────────────────────── QUERY (online, per request) ───────────────────────────
- User question + identity
-     │ 4. (optional) rewrite query: resolve "it", expand acronyms, split sub-questions
-     ▼
- Retriever ─ 5. hybrid search (vector + BM25) WITH metadata filter (tenant, ACL)
-     │          → top 50 candidates
-     ▼
- Reranker ─ 6. cross-encoder rescoring → top 5–8
-     ▼
- Prompt builder ─ 7. instructions + chunks (with ids) + question
-     ▼
- LLM ─ 8. answer with citations
-     ▼
- Post-checks ─ 9. citation valid? grounded? guardrails → response to user
+```flow
+pipeline: RAG end to end
+stage: Ingestion (offline, when documents change)
+Parse > PDF → text; OCR/Textract for scans; keep tables, headings and page numbers.
+Chunk + metadata > Split by headings/paragraphs (~300–800 tokens). Attach doc_id, section, page, tenant_id, acl_groups, updated_at.
+Embed > Each chunk becomes a vector with an embedding model.
+Index > Store in a vector store (OpenSearch, pgvector, S3 Vectors) plus a keyword index.
+stage: Query (online, per request)
+Rewrite query > Optional: resolve "it", expand acronyms, split multi-part questions.
+Hybrid retrieve + ACL filter > Vector + BM25 search, filtered to what this user may see → ~50 candidates.
+Rerank > A cross-encoder rescores candidates → keep the best 5–8.
+Build prompt > Instructions + chunks with ids + the question.
+LLM answers with citations > The model must cite chunk ids.
+Post-checks > Citations valid? Answer grounded? Guardrails pass? Then respond.
 ```
 
 ---
@@ -626,14 +637,14 @@ Consider: domain/language quality (benchmark on your queries), dimensions (cost 
 
 ### Q30. Debugging RAG: where did it go wrong?
 
-```
- Wrong answer?
-   1. Is the right info in the source docs?            no  → content gap
-   2. Was it parsed correctly (tables, OCR)?           no  → parsing fix
-   3. Is it in a sensible chunk with metadata?         no  → chunking fix
-   4. Was that chunk retrieved in top-k?               no  → retrieval (hybrid, rewrite, rerank, filters)
-   5. Did it make it into the prompt (not truncated)?  no  → context packing
-   6. Did the model use it correctly?                  no  → prompt / model / generation
+```flow
+pipeline: Debugging a wrong RAG answer (stop at the first "no")
+In the source docs? > No → content gap. Add or fix the source document.
+Parsed correctly? > Tables, scans, columns. No → fix parsing/OCR.
+Sensible chunk + metadata? > No → fix chunking (size, boundaries, metadata).
+Retrieved in top-k? > No → retrieval fix: hybrid search, query rewrite, reranker, filters.
+Made it into the prompt? > Not truncated or dropped by packing? No → fix context packing.
+Model used it correctly? > No → prompt, model choice or generation settings.
 ```
 Always look at **retrieved chunks** before changing the prompt.
 
@@ -703,13 +714,15 @@ A 4-bit 7B model may fit an 8 GB GPU for one user with short context, but not 32
 
 **Short answer:** Outputs are probabilistic and change with prompts, models and data. Without an evaluation set you can't tell if a change helped. Build a **golden dataset** (real questions + expected answers/sources), run it on every change (like unit tests), and monitor production.
 
-```
- change prompt/model/chunking ──► run eval suite (offline) ──► compare metrics vs baseline
-                                        │ pass gates?
-                                        ▼
-                         canary / A-B in production ──► online metrics + user feedback
-                                        │
-                         failures sampled → added to golden set (flywheel)
+```flow
+cycle: The evaluation flywheel
+Change > New prompt, model, chunking or tool.
+Offline eval suite > Run the golden set; compare metrics against the baseline.
+Pass the gates? > Quality, safety, cost and latency thresholds. Fail → back to change.
+Canary / A-B > Small share of real traffic.
+Online metrics > User feedback, error rates, cost per request.
+Failures → golden set > Sampled bad cases become new test cases.
+exit > Each turn of the loop makes the test set closer to real usage.
 ```
 
 ---

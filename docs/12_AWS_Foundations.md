@@ -23,6 +23,21 @@
 
 ## 1. Mental model: the layers of an AWS application
 
+```flow
+sequence: Follow one request into the VPC
+actors: User, Route 53, CloudFront, ALB (public), ECS task (private), RDS (data)
+User -> Route 53: resolve app.example.com
+User -> CloudFront: HTTPS request
+> TLS with an ACM cert and WAF rules at the edge. Static files come straight from S3.
+CloudFront -> ALB (public): /api/* forwarded
+> The ALB has nodes in public subnets in every AZ.
+ALB (public) -> ECS task (private): to a healthy target
+> Tasks have no public IP. Outbound internet goes via NAT; AWS services via VPC endpoints.
+ECS task (private) -> RDS (data): SQL query
+> The database is in private data subnets. A standby in another AZ is kept in sync for failover.
+ECS task (private) --> User: response back through ALB and CloudFront
+```
+
 ```
                                  Internet users
                                        │
@@ -219,12 +234,12 @@ Route 53 Resolver provides DNS at VPC+2; private hosted zones for internal names
 | **Session policy** | AssumeRole call | further restrict a session |
 
 **Evaluation logic (simplified):**
-```
- 1. Explicit DENY anywhere?                      → DENY
- 2. SCP / RCP / boundary / session policy allow it? (all applicable must allow) → else DENY
- 3. Identity policy OR resource policy allows it? → ALLOW   (same account)
-    Cross-account: BOTH the caller's identity policy AND the resource policy must allow
- 4. Otherwise                                     → implicit DENY (default)
+```flow
+pipeline: How IAM evaluates a request (stop at the first match)
+Explicit Deny anywhere? > Any policy with a matching Deny → DENIED. Deny always wins.
+Guardrails allow it? > SCP, RCP, permissions boundary and session policy: every applicable one must allow, otherwise DENIED.
+Identity or resource policy allows? > Same account: either one allowing is enough → ALLOWED. Cross-account: BOTH the caller's identity policy and the resource policy must allow.
+Otherwise > Implicit DENY. Nothing is allowed unless something allows it.
 ```
 KMS is special: the **key policy** must allow use (identity policies alone aren't enough unless the key policy delegates to IAM).
 
@@ -234,10 +249,17 @@ KMS is special: the **key policy** must allow use (identity policies alone aren'
 
 **Short answer:** A principal calls `sts:AssumeRole` (or `AssumeRoleWithWebIdentity` for OIDC, `AssumeRoleWithSAML`) and receives **temporary credentials** (access key + secret + session token, expiring in 15 min–12 h). Prefer them over long-lived access keys: auto-expiry, no secret rotation, clear audit trail (CloudTrail shows role session name).
 
-```
- ECS task ──(task role via container credentials endpoint)──► temp creds ──► S3
- GitLab job ──(OIDC JWT)──► AssumeRoleWithWebIdentity ──► temp creds ──► deploy
- Account A role ──AssumeRole──► Account B role (trust policy allows A) ──► B resources
+```flow
+sequence: Getting temporary credentials (three common paths)
+actors: Caller, STS, Target resource
+Caller -> STS: ECS task: task role via the container credentials endpoint
+STS --> Caller: temporary credentials (expire, auto-refreshed)
+Caller -> STS: GitLab job: AssumeRoleWithWebIdentity(OIDC JWT)
+> The role's trust policy checks the token's issuer, audience and project/branch claims. No stored AWS keys.
+Caller -> STS: Account A role: AssumeRole into Account B
+> B's role trust policy must allow A, and A's policy must allow sts:AssumeRole.
+STS --> Caller: temporary credentials
+Caller -> Target resource: call S3 / deploy / B's resources
 ```
 
 ---
@@ -268,11 +290,18 @@ Grant access based on **tags**: `"Condition": {"StringEquals": {"aws:ResourceTag
 
 **Short answer:** KMS manages keys (KMS keys never leave the HSMs unencrypted). **Envelope encryption:** KMS generates a **data key**; you encrypt data locally with the data key, and store the data key **encrypted by the KMS key** next to the data. To decrypt, call KMS to decrypt the data key.
 
-```
- GenerateDataKey(KMS key) → { plaintext data key, encrypted data key }
- encrypt file with plaintext key (AES-256) → discard plaintext key
- store: [ciphertext file] + [encrypted data key]
- decrypt: KMS.Decrypt(encrypted data key) → plaintext key → decrypt file
+```flow
+sequence: Envelope encryption with KMS
+actors: App, KMS, Storage
+App -> KMS: GenerateDataKey(KMS key)
+KMS --> App: plaintext data key + encrypted data key
+> The KMS key itself never leaves KMS.
+App -> App: encrypt file with the plaintext key (AES-256), then discard the plaintext key
+App -> Storage: store ciphertext + encrypted data key
+> They are stored together; the encrypted key is useless without KMS.
+App -> KMS: later: Decrypt(encrypted data key)
+> IAM and the key policy decide who may decrypt; every call is logged in CloudTrail.
+KMS --> App: plaintext data key → decrypt file
 ```
 Why: large data never goes to KMS, fewer KMS calls, access controlled by key policy + CloudTrail-audited. S3/EBS/RDS/Secrets Manager do this for you with SSE-KMS. AWS-managed vs **customer-managed keys** (control key policy, rotation, cross-account).
 
@@ -339,8 +368,12 @@ Agent streaming (SSE for minutes) usually fits ALB → ECS, or API Gateway REST 
 
 Route 53: domains + DNS (public/private hosted zones), **alias records** to ALB/CloudFront (free, zone apex), routing policies (simple, weighted, latency, failover, geolocation) + health checks. **ACM** issues free public TLS certs with auto-renewal (DNS validation); certificates for CloudFront must be in `us-east-1`.
 
-```
- app.example.com ─(Route 53 alias)─► CloudFront (ACM cert us-east-1) ─► ALB (ACM cert in region) ─► ECS
+```flow
+pipeline: DNS and TLS for app.example.com
+Route 53 alias > app.example.com points at the CloudFront distribution.
+CloudFront > Its ACM certificate must be in us-east-1 (CloudFront is global).
+ALB > A separate ACM certificate in the ALB's own Region.
+ECS > Traffic inside the VPC (re-encrypt to the task if required).
 ```
 
 ---

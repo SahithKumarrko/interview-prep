@@ -38,10 +38,13 @@
 ```
 
 **Instance lifecycle:**
-```
- pending → running ⇄ stopping/stopped (EBS-backed: disk kept, no compute charge, public IP changes)
-               │  ⇄ hibernate (RAM saved to EBS)
-               └─► shutting-down → terminated (root EBS deleted by default; instance store always lost)
+```flow
+pipeline: EC2 instance states
+pending > Booting from the AMI; user data runs on first boot.
+running > Billed for compute.
+stopping → stopped > EBS-backed only: disk kept, no compute charge, public IP changes on restart. (Or hibernate: RAM saved to EBS.)
+shutting-down > Terminate requested.
+terminated > Root EBS deleted by default; instance store data is always lost.
 ```
 
 ---
@@ -287,11 +290,14 @@ Default metrics: CPU, network, disk I/O, status checks (5-min; 1-min with detail
 
 ### Q28. Incident response for a compromised instance
 
-1. **Contain:** don't terminate (evidence). Replace SGs with an isolation SG (no inbound/outbound), detach from ASG/target group (set standby / protect from scale-in), revoke role sessions (deny policy with `aws:TokenIssueTime` condition).
-2. **Preserve:** EBS snapshots, memory capture if possible, collect logs (CloudTrail, VPC Flow Logs, GuardDuty findings).
-3. **Investigate:** what was accessed with the role credentials (CloudTrail), lateral movement.
-4. **Eradicate & recover:** rebuild from a clean golden AMI, rotate any secrets the instance could read, patch root cause.
-5. **Lessons learned:** automate with SSM Automation / GuardDuty → EventBridge → Lambda.
+```flow
+pipeline: Incident response for a compromised instance
+Contain > Don't terminate (that destroys evidence). Swap in an isolation security group, detach from the ASG/target group, revoke role sessions (deny with an `aws:TokenIssueTime` condition).
+Preserve > EBS snapshots, memory capture if possible, logs: CloudTrail, VPC Flow Logs, GuardDuty findings.
+Investigate > What did the role credentials access (CloudTrail)? Any lateral movement?
+Eradicate & recover > Rebuild from a clean golden AMI, rotate every secret the instance could read, patch the root cause.
+Lessons learned > Automate it: GuardDuty → EventBridge → Lambda / SSM Automation.
+```
 
 ---
 

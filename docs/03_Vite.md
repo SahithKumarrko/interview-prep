@@ -21,6 +21,19 @@
 
 **Vite is a build tool, not a UI framework.** React decides *what* to render; Vite turns your source files (JSX, TypeScript, CSS, images) into something a browser can load — quickly in development, optimally in production.
 
+```flow
+pipeline: Vite in development vs production
+stage: Development (vite dev)
+Browser requests a module > The browser loads `index.html`, which imports `/src/main.tsx` as a native ES module.
+Transform on demand > Vite transforms only the files the browser asks for (TS/JSX → JS), so startup is instant even in big apps.
+Pre-bundled deps > `node_modules` are pre-bundled once (many files → few, CommonJS → ESM) and cached.
+HMR on save > Edit a file → over a WebSocket, only that module is swapped; component state is kept.
+stage: Production (vite build)
+Rolldown bundles > Bundles, tree-shakes and minifies the whole app (Vite 8+ uses the Rust-based Rolldown).
+Split + fingerprint > Code is split at dynamic `import()` boundaries; files get content hashes like `index-a1b2c3.js`.
+dist/ uploaded > Static files only: deploy to S3 + CloudFront, Nginx or any static host.
+```
+
 ```
                          ┌───────────────────── DEVELOPMENT (vite / vite dev) ─────────────────────┐
   src/main.tsx           │                                                                          │
@@ -75,10 +88,18 @@ npm run preview  # vite preview → serve dist/ locally to check the build
 
 **Short answer:** The browser loads `index.html`, which has `<script type="module" src="/src/main.tsx">`. The browser then requests each `import` as a separate HTTP request; Vite intercepts, transforms that one file (TS→JS, JSX→JS, CSS→JS module), and returns it. Untouched files are never processed.
 
-```
-Browser: GET /src/main.tsx ─► Vite transforms → JS with `import App from "/src/App.tsx"`
-Browser: GET /src/App.tsx  ─► Vite transforms → ...
-Browser: GET /node_modules/.vite/deps/react.js ─► pre-bundled dependency (cached)
+```flow
+sequence: Native ESM dev server: files are transformed only when requested
+actors: Browser, Vite dev server
+Browser -> Vite dev server: GET /src/main.tsx
+Vite dev server --> Browser: JS with import App from "/src/App.tsx"
+> Vite compiles TSX → JS on the fly and rewrites imports to URLs the browser can fetch.
+Browser -> Vite dev server: GET /src/App.tsx
+Vite dev server --> Browser: transformed App.tsx
+> The browser follows imports itself, one module at a time. Nothing is bundled in dev.
+Browser -> Vite dev server: GET /node_modules/.vite/deps/react.js
+Vite dev server --> Browser: pre-bundled dependency (cached)
+> Dependencies were pre-bundled once, so React loads as one file with long-lived caching.
 ```
 
 **Pitfall:** Dev ≠ production. In dev, files are separate modules; in prod, they're bundled. Bugs like circular-import ordering or case-sensitive paths can show up only in one of them — always test `vite build && vite preview`.
@@ -97,9 +118,16 @@ Browser: GET /node_modules/.vite/deps/react.js ─► pre-bundled dependency (ca
 
 **Short answer:** **Hot Module Replacement** — when you save a file, Vite sends a WebSocket message; the browser fetches just that module and swaps it into the running page without a full reload. **React Fast Refresh** (via `@vitejs/plugin-react`) re-renders the edited components while **keeping their state**.
 
-```
-save Button.tsx → Vite: "Button.tsx changed" (WebSocket) → browser imports Button.tsx?t=123
-               → Fast Refresh re-renders Button, preserves useState values
+```flow
+sequence: Hot Module Replacement with React Fast Refresh
+actors: You, Vite, Browser
+You -> Vite: save Button.tsx
+Vite -> Browser: WebSocket: "Button.tsx changed"
+> Vite works out which module changed and tells the browser over the HMR WebSocket.
+Browser -> Vite: import Button.tsx?t=123
+> The browser re-imports just that module (the timestamp busts the cache).
+Browser -> Browser: Fast Refresh re-renders Button
+> Only Button re-renders and its `useState` values are kept. No full page reload.
 ```
 
 **When it falls back to full reload:** the file exports non-components alongside components, you changed a module with no HMR boundary (e.g. `main.tsx`), or a syntax error.
@@ -224,9 +252,16 @@ Load order (later wins): `.env` → `.env.local` → `.env.[mode]` → `.env.[mo
 
 **Short answer:** `server.proxy` forwards `/api/*` from the Vite dev server to your backend so the browser sees one origin (no CORS during dev). It **does not exist in the built app**. In production you need real routing: CloudFront behaviour, ALB rule, API Gateway, or Nginx.
 
-```
-DEV:   browser ─► localhost:5173/api/chat ─(Vite proxy)─► localhost:8000/chat
-PROD:  browser ─► app.example.com/api/chat ─(CloudFront behaviour /api/*)─► ALB ─► FastAPI
+```flow
+sequence: Same /api path, different routing in dev and prod
+actors: Browser, Vite proxy, CloudFront, ALB, FastAPI
+Browser -> Vite proxy: DEV: localhost:5173/api/chat
+Vite proxy -> FastAPI: forwards to localhost:8000/chat
+> In dev the Vite server proxies /api, so the browser sees one origin and CORS never comes up.
+Browser -> CloudFront: PROD: app.example.com/api/chat
+CloudFront -> ALB: behaviour /api/* → ALB origin
+ALB -> FastAPI: route to a healthy task
+> In production there is no Vite. CloudFront (or an ALB/API Gateway) does the routing, so the same relative /api path works in both.
 ```
 
 ---
@@ -346,6 +381,20 @@ Plain `.css` imports are injected (dev) and extracted into hashed files (build).
 
 ### Q23. Deploying a Vite React SPA on AWS
 
+```flow
+pipeline: Build and serve a Vite SPA on AWS
+stage: GitLab CI
+Install (lockfile) > `npm ci`: exact versions from the lockfile.
+Typecheck · lint · test > `tsc --noEmit`, eslint, vitest.
+vite build > Produces fingerprinted files in dist/.
+Upload dist/ to S3 > Hashed assets first, index.html last, then invalidate index.html in CloudFront.
+stage: A user request
+CloudFront (TLS, WAF, headers) > HTTPS with an ACM cert, WAF rules, CSP/HSTS response headers.
+/assets/* → S3 > Cached for a year (`immutable`), safe because file names change when content changes.
+/api/* → ALB → FastAPI > Never cached.
+Everything else → index.html > `no-cache`, so users always get the latest app; 403/404 from S3 map to index.html for SPA routes.
+```
+
 ```
  GitLab CI: install (lockfile) → typecheck → lint → test → vite build → upload dist/
                                                                            │
@@ -405,11 +454,14 @@ The same artifact (tagged by git SHA) is promoted dev → staging → prod.
 
 ### Q28. Atomic, cache-safe releases
 
-1. Upload **new hashed assets first** (old ones stay).
-2. Then upload new `index.html` (`no-cache`).
-3. Keep previous assets for some days — users with an old tab open still request old chunks.
-4. Invalidate `index.html` in CloudFront.
-5. Rollback = re-point `index.html` to the previous build.
+```flow
+pipeline: Atomic, cache-safe release
+Upload new hashed assets > Upload first. Old assets stay in place.
+Upload new index.html > With `Cache-Control: no-cache`, so browsers always revalidate it.
+Keep old assets for days > Users with an old tab open still request the old chunks.
+Invalidate index.html > In CloudFront, so the edge serves the new HTML.
+Rollback = re-point index.html > Just serve the previous build's index.html again.
+```
 
 If you delete old chunks immediately, users with the old HTML get **chunk load errors** on navigation. Handle `vite:preloadError` to reload the page gracefully:
 ```ts
@@ -444,10 +496,22 @@ Visualise the bundle → find the biggest modules (PDF viewer, syntax highlighte
 
 ### Q32. Design a frontend CI/CD quality gate
 
-```
-lockfile install (npm ci) → tsc --noEmit → eslint → vitest → npm audit / dependency scan
-  → vite build → bundle size budget check → upload artifact (dist/, tagged with SHA)
-  → deploy to staging → Playwright smoke tests → manual/automatic promote same artifact to prod
+```flow
+pipeline: Frontend CI/CD quality gate
+stage: Verify
+npm ci > Reproducible install from the lockfile.
+tsc --noEmit > Type errors fail the build (Vite itself only strips types).
+eslint > Lint rules, including React hooks rules.
+vitest > Unit and component tests.
+Dependency scan > `npm audit` / SCA for vulnerable packages.
+stage: Build
+vite build > One build, tagged with the commit SHA.
+Bundle size budget > Fail if the main chunk grows past the agreed limit.
+Upload artifact > The same dist/ is promoted through every environment (build once, deploy many).
+stage: Release
+Deploy to staging > Upload to the staging bucket.
+Playwright smoke tests > Real browser checks of the critical flows.
+Promote to prod > Manual or automatic promotion of the same artifact.
 ```
 Only protected branches/tags can deploy; deployment credentials via OIDC (no long-lived AWS keys).
 

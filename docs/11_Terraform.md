@@ -22,6 +22,16 @@
 
 **Terraform is declarative:** you describe the **desired end state**; Terraform computes the difference from reality and makes API calls to close the gap.
 
+```flow
+pipeline: plan and apply
+Read config (*.tf) > The desired state.
+Read state > What Terraform created and last saw.
+Refresh > Read real AWS to detect drift.
+Plan = diff > `+` create, `~` update in place, `-/+` replace, `-` destroy. Review this carefully.
+Apply > The provider plugin calls AWS APIs in dependency order.
+Update state > The state file now matches reality (stored remotely with locking).
+```
+
 ```
    *.tf files (desired state)          terraform.tfstate (what TF created & last saw)        Real AWS
   ┌──────────────────────────┐        ┌────────────────────────────────────┐        ┌─────────────────┐

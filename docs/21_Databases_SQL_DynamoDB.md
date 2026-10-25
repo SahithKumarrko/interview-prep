@@ -21,15 +21,14 @@
 
 ## 1. Mental model: what happens when you run a query
 
-```
- app (FastAPI) ── connection pool ──► DB server
-                                        │
-     SQL text ──► parser ──► planner/optimizer ──► executor ──► storage
-                               │  "use index on       │          ├─ table (heap) pages
-                               │   orders(user_id)?   │          ├─ index pages (B-tree)
-                               │   or scan all rows?" │          └─ write-ahead log (WAL) → durability
-                               ▼                      ▼
-                       picks cheapest plan     reads pages (from memory cache or disk)
+```flow
+pipeline: What happens when you run a query
+App borrows a connection > From the pool; opening new connections is expensive.
+Parser > SQL text → a syntax tree.
+Planner / optimizer > Picks the cheapest plan: "use the index on orders(user_id), or scan all rows?" Based on table statistics.
+Executor > Runs the plan, reading table (heap) and index (B-tree) pages from memory, or from disk if they aren't cached.
+Write-ahead log > Writes are logged first, so committed data survives a crash.
+Rows returned > The connection goes back to the pool.
 ```
 
 **Three ideas explain most database interview questions:**
@@ -80,8 +79,15 @@ WHERE o.id IS NULL;
 
 **Short answer:** `WHERE` filters **rows before grouping**; `HAVING` filters **groups after aggregation**.
 
-```
-Logical order:  FROM/JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT
+```flow
+pipeline: Logical order of a SELECT
+FROM / JOIN > Build the combined row set.
+WHERE > Filter rows (no aggregates here).
+GROUP BY > Form groups.
+HAVING > Filter groups (aggregates allowed).
+SELECT > Compute output columns and aliases. This is why a SELECT alias can't be used in WHERE.
+ORDER BY > Sort (aliases allowed here).
+LIMIT > Take the first n.
 ```
 ```sql
 -- customers with more than 3 paid orders this year
@@ -170,6 +176,14 @@ SET status = EXCLUDED.status, updated_at = EXCLUDED.updated_at;
 ### Q08. What is an index and how does a B-tree work?
 
 **Short answer:** An index is a separate sorted structure that maps column values → row locations, so the database can find rows without scanning the whole table. The default is a **B-tree**: a shallow balanced tree (3–4 levels even for millions of rows), giving O(log n) lookups and ordered range scans.
+
+```flow
+pipeline: Looking up user_id = 70 with a B-tree
+Root page [50 | 100] > 70 is between 50 and 100 → follow the middle pointer.
+Internal page [60 | 70 | 80] > Narrow down to the leaf holding 70.
+Leaf page > Sorted keys with row pointers: found 70.
+Fetch the row > About 3–4 page reads instead of scanning millions of rows. For ranges, walk the linked leaves until the end of the range.
+```
 
 ```
                      [ 50 | 100 ]                    ← root
@@ -318,10 +332,16 @@ Fix: UPDATE t SET count = count + 1 (atomic), or SELECT ... FOR UPDATE, or optim
 
 **Short answer:** Writes take **row locks** held until commit. `SELECT ... FOR UPDATE` locks rows you read so nobody changes them before you write. A **deadlock** is two transactions each waiting for a lock the other holds; the DB detects it and kills one.
 
-```
-T1 locks account A → wants B
-T2 locks account B → wants A      → deadlock → DB aborts one ("deadlock detected")
-Fix: always lock in the same order (e.g. by ascending id), keep transactions short, retry on deadlock errors.
+```flow
+sequence: How a deadlock happens
+actors: T1, Account A, Account B, T2
+T1 -> Account A: lock A
+T2 -> Account B: lock B
+T1 -> Account B: wants B (waits for T2)
+T2 -> Account A: wants A (waits for T1)
+> Each transaction waits for the other forever: a deadlock.
+T2 --> T2: DB detects it and aborts T2 ("deadlock detected")
+> Fix: always lock rows in the same order (e.g. ascending id), keep transactions short, and retry the aborted one.
 ```
 
 **Job-queue trick:** `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 10` lets many workers grab different pending jobs from one table without blocking each other.

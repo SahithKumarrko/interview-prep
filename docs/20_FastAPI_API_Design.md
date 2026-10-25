@@ -23,26 +23,16 @@
 
 **FastAPI = Starlette (ASGI web toolkit) + Pydantic (validation) + type-hint-driven dependency injection + automatic OpenAPI docs.** It runs on an ASGI server such as **Uvicorn**.
 
-```
- Client ──HTTP──► ALB ──► Uvicorn worker (event loop)
-                              │ ASGI
-                              ▼
-            ┌──────────────── Middleware stack (outer → inner) ───────────────┐
-            │ CORS · request-id/trace · GZip · auth context · timing/logging   │
-            └───────────────────────────────┬──────────────────────────────────┘
-                                            ▼
-                         Router: match method + path → path operation
-                                            ▼
-            Dependencies resolved (Depends): get_db session, get_current_user (JWT),
-            authorise resource, rate-limit … (cached per request, yield = cleanup)
-                                            ▼
-            Request parsing & validation (Pydantic): path/query/header/body → 422 on error
-                                            ▼
-            Your endpoint function (async def or def → threadpool)
-                                            ▼
-            response_model validation/serialisation → JSON / StreamingResponse / SSE
-                                            ▼
-            Exception handlers (HTTPException, custom) · background tasks after response
+```flow
+pipeline: The life of a FastAPI request
+Client → ALB → Uvicorn > The request lands on a worker's event loop (ASGI).
+Middleware (outer → inner) > CORS, request id/trace, GZip, auth context, timing/logging.
+Router > Matches method + path to a path operation.
+Dependencies (Depends) > DB session, current user from the JWT, resource authorisation, rate limits. Cached per request; `yield` dependencies clean up afterwards.
+Validation (Pydantic) > Path, query, headers and body are parsed and validated. Invalid → 422.
+Your endpoint > `async def` runs on the event loop; plain `def` runs in a threadpool.
+response_model > The output is validated and serialised → JSON, StreamingResponse or SSE.
+Exception handlers + background tasks > Errors become HTTP responses; background tasks run after the response is sent.
 ```
 
 **`async def` vs `def` endpoints:**
@@ -359,6 +349,20 @@ Production details: heartbeat comments every ~15 s (keep proxies/ALB from idling
 ---
 
 ### Q21. Resilient async jobs API
+
+```flow
+sequence: Resilient async jobs API
+actors: Client, API, Queue, Worker
+Client -> API: POST /v1/jobs (Idempotency-Key)
+API -> API: validate + authZ, insert job PENDING
+API -> Queue: enqueue (outbox / SQS)
+API --> Client: 202 {job_id, status_url}
+Worker -> Queue: receive
+Worker -> Worker: claim job (conditional update), process, heartbeat progress
+> Retries with backoff; poison messages go to the DLQ; a final state is always written.
+Client -> API: GET /v1/jobs/{id} or SSE /events
+API --> Client: status, progress, presigned result links
+```
 
 ```
  POST /v1/jobs (Idempotency-Key) → validate + authZ → insert job PENDING → enqueue (outbox/SQS) → 202 {job_id, status_url}

@@ -24,6 +24,16 @@
 
 **An agent = an LLM in a loop that can use tools to reach a goal.** Instead of answering once, it decides the next step, acts, observes the result and repeats until done.
 
+```flow
+cycle: The agent loop
+Build context > System prompt + goal + memory + the list of tools.
+LLM decides > Answer now, or request a tool call like search_tickets(q="VPN").
+Policy gate > Your code checks: allowed tool? valid args? user authorised? needs approval?
+Execute tool > Call the API, database or MCP server.
+Observe > The tool result is added to the context for the next decision.
+exit > Final answer, max steps, budget used up, or an error.
+```
+
 ```
                 ┌──────────────────────────────────────────────────────────┐
                 │                    AGENT RUNTIME (your code)              │
@@ -132,10 +142,13 @@ Modern APIs implement this natively via **tool calling** (structured tool reques
 
 **Short answer:** **Planner** decomposes the goal into steps; **executor** performs steps with tools; **critic/verifier** checks results against requirements (citations valid? tests pass?). Separation improves complex tasks but adds latency, cost and more places to fail — use only if evaluation shows a gain.
 
-```
-goal ─► Planner ─► [step1, step2, step3] ─► Executor (tools) ─► Critic ── ok ──► answer
-                         ▲                                       │
-                         └───────────── revise plan ◄── fail ────┘
+```flow
+cycle: Planner, executor, critic
+Planner > Turns the goal into explicit steps [step1, step2, step3].
+Executor > Runs each step with tools.
+Critic > Checks the result against the goal and evidence.
+Revise plan > If the critic fails it, the planner revises the plan (bounded number of rounds).
+exit > The critic passes → final answer. Or the round limit is hit → stop and report.
 ```
 
 ---
@@ -220,17 +233,19 @@ while True:
 
 **Short answer:** Approval is a **security workflow**, not "the model asked 'are you sure?'".
 
-```
- agent proposes action ──► persist {action_id, tool, args, args_hash, requester, status=PENDING}
-                                 │
-                                 ▼
-                     UI shows exact diff/impact to an authorised approver
-                                 │ approve (authenticated, bound to action_id + args_hash)
-                                 ▼
-          executor re-checks: still authorised? args unchanged? not already executed?
-                                 │
-                                 ▼
-               execute once (idempotency key = action_id) → status=EXECUTED → resume agent
+```flow
+sequence: Human approval done properly
+actors: Agent, Approval store, Approver, Executor
+Agent -> Approval store: persist {action_id, tool, args, args_hash, PENDING}
+> The proposed action is saved durably, so it survives restarts and can be audited.
+Approval store -> Approver: show exact diff / impact
+> The approver sees exactly what will happen, not a summary the model wrote.
+Approver -> Approval store: approve (authenticated, bound to action_id + args_hash)
+> Approval is tied to these exact arguments. If the args change, the approval no longer matches.
+Executor -> Approval store: re-check: still authorised? args unchanged? not executed yet?
+Executor -> Executor: execute once (idempotency key = action_id)
+> Even if a retry happens, the side effect occurs once.
+Executor --> Agent: status=EXECUTED → resume agent
 ```
 The approval must survive restarts (durable storage / LangGraph `interrupt` with a checkpointer).
 
@@ -377,6 +392,22 @@ Namespace every memory by verified tenant/user, check ACLs on every read/write, 
 **Short answer:** An open standard (originated by Anthropic, now governed in the open with the Linux Foundation's Agentic AI Foundation) for connecting AI applications to tools and data. Like "USB-C for AI": build an MCP server once, and any MCP-compatible client (Claude, IDEs, agent frameworks, AgentCore Gateway) can use it.
 
 **Architecture:**
+```flow
+sequence: An MCP tool call
+actors: LLM, Host app, MCP client, MCP server, Jira
+Host app -> MCP client: connect to server (stdio or Streamable HTTP)
+MCP client -> MCP server: initialize + tools/list
+MCP server --> MCP client: tools: get_issue, create_issue
+> The host now knows which tools exist and their JSON schemas.
+Host app -> LLM: prompt + tool schemas
+LLM --> Host app: call get_issue(key="OPS-12")
+Host app -> MCP client: tools/call get_issue
+MCP client -> MCP server: JSON-RPC request
+MCP server -> Jira: REST API call (server's own auth)
+MCP server --> MCP client: result content
+MCP client --> Host app: tool result → back to the LLM
+```
+
 ```
  ┌────────────────────── HOST (AI app: IDE, chat app, agent) ──────────────────────┐
  │                                                                                  │
@@ -437,10 +468,16 @@ Namespace every memory by verified tenant/user, check ACLs on every read/write, 
 
 **Short answer:** An open protocol (started by Google, now a Linux Foundation project) for **agents to talk to other agents** across vendors/frameworks. An agent publishes an **Agent Card** (JSON describing skills, endpoint, auth). Clients send **tasks/messages**; the remote agent works (possibly long-running, streaming updates) and returns **artifacts**.
 
-```
- Your orchestrator agent ── discovers Agent Card ──► Travel agent (other team/vendor)
-                         ── send task "book flight" ─►  works opaquely (own tools, own model)
-                         ◄── status updates / artifacts ─
+```flow
+sequence: Agent-to-agent (A2A) delegation
+actors: Your orchestrator, Travel agent
+Your orchestrator -> Travel agent: fetch Agent Card
+> The Agent Card describes the remote agent: skills, endpoint and auth requirements.
+Your orchestrator -> Travel agent: send task "book flight"
+Travel agent -> Travel agent: works opaquely (own tools, own model)
+> You don't see its internals; it's another team's or vendor's agent.
+Travel agent --> Your orchestrator: status updates
+Travel agent --> Your orchestrator: artifacts (booking confirmation)
 ```
 
 ---
@@ -469,10 +506,17 @@ They complement each other: an agent uses MCP for its tools and A2A to delegate 
 
 **Short answer:** Authenticate the user at the entry point; propagate **verified** identity (signed token or trusted context) to tools; each tool authorises the **end user** for the specific resource. Use service credentials scoped to minimum permissions. Never trust a `user_id` the model wrote.
 
-```
- Browser ─JWT─► API (verify Cognito/Okta token) ─► Agent runtime (user context attached)
-             ─► Gateway (inbound auth, tool allowlist per role)
-             ─► Tool (OAuth token for *this user* via token vault, or scoped service role + user check)
+```flow
+sequence: Carrying the user's identity through an agent chain
+actors: Browser, API, Agent runtime, Gateway, Tool
+Browser -> API: request + JWT
+API -> API: verify Cognito/Okta token
+> Issuer, audience and expiry are checked; the user and tenant come from the claims.
+API -> Agent runtime: invoke with user context attached
+Agent runtime -> Gateway: tool call (inbound auth)
+Gateway -> Gateway: tool allowlist for this user's role
+Gateway -> Tool: OAuth token for *this user* (token vault)
+> Or a scoped service role plus an explicit user check. The tool never runs with more power than the user has, which avoids the confused-deputy problem.
 ```
 **Confused deputy:** a privileged agent tricked into doing something the user isn't allowed to do. Fix: authorise as the user, not as the agent.
 
@@ -480,11 +524,14 @@ They complement each other: an agent uses MCP for its tools and A2A to delegate 
 
 ### Q33. Agent threat model — trust boundaries
 
-```
- [User input] ─untrusted─┐
- [Retrieved docs/web] ───┼──► LLM ──► proposed actions ──► [Policy gate] ──► tools ──► external systems
- [Tool outputs] ─────────┤                                     ▲
- [Memory] ───────────────┘                         deterministic checks, approvals
+```flow
+pipeline: Where the trust boundaries are
+Untrusted inputs > User input, retrieved docs and web pages, tool outputs, memory. All of it can contain injected instructions.
+LLM > Reasons over everything. Treat its output as untrusted too.
+Proposed actions > The model only proposes.
+Policy gate > Deterministic checks outside the model: allowlists, argument validation, authorisation, approvals.
+Tools > Run with least privilege.
+External systems > Real side effects happen only after the gate.
 ```
 Threats: direct/indirect prompt injection, data exfiltration (via tool calls, URLs, markdown images), privilege misuse, SSRF via fetch tools, excessive agency, memory poisoning, secrets in logs, runaway cost (DoS). Controls: least privilege, policy outside the model, sandboxed code execution, egress allowlists, approvals, redaction, budgets, red-team tests.
 
@@ -562,17 +609,16 @@ Detect repeated similar calls; cap per-tool attempts; improve tool feedback ("0 
 
 ### Q43. Build an agent pipeline handling 100–300 document requests per minute
 
-```
- Client ─► API (auth, validation, quota) ─► 202 + job_id
-              │ put file in S3, job row in DynamoDB
-              ▼
-           SQS queue ─► Step Functions / workers (bounded concurrency to Textract & LLM)
-              │            ├─ OCR (async Textract jobs, SNS completion)
-              │            ├─ LLM extraction/agent reasoning (rate-limited, retries w/ backoff)
-              │            └─ validation + human review queue for low confidence
-              ▼
-           results in S3/DynamoDB ─► progress events (SSE/WebSocket) ─► client
-           failures ─► DLQ + alarms
+```flow
+pipeline: Agent pipeline for 100–300 documents per minute
+API > Auth, validation, quota → 202 + job_id immediately.
+S3 + job row > File in S3, job row in DynamoDB.
+SQS > Buffers bursts; nothing is lost if workers are busy.
+Workers / Step Functions > Bounded concurrency towards Textract and the LLM.
+OCR > Async Textract jobs; SNS signals completion.
+LLM extraction > Rate-limited, retries with backoff on throttling.
+Validate > Schema + business rules; low confidence → human review queue.
+Results + progress > Results in S3/DynamoDB; progress events pushed to the client over SSE/WebSocket. Failures → DLQ + alarms.
 ```
 Never keep the HTTP request open for minutes; bound concurrency to downstream quotas; idempotent job processing.
 

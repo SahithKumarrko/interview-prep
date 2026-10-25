@@ -24,16 +24,19 @@
 
 **Core idea:** `UI = f(state)`. You describe *what* the UI should look like for the current state; React figures out *how* to change the DOM.
 
-```
-   Trigger                 Render phase (pure, can be paused/redone)      Commit phase (sync)
- ┌─────────────┐         ┌────────────────────────────────────────┐     ┌──────────────────────┐
- │ setState()  │         │ React calls your component functions    │     │ React applies the     │
- │ new props   │ ──────► │ → new element tree (virtual DOM)        │ ──► │ minimal DOM changes    │
- │ context     │         │ → diff with previous tree               │     │ → runs ref callbacks   │
- │ change      │         │   (reconciliation)                      │     │ → useLayoutEffect      │
- └─────────────┘         └────────────────────────────────────────┘     │ → browser paints       │
-                                                                         │ → useEffect runs       │
-                                                                         └──────────────────────┘
+```flow
+pipeline: How React updates the screen
+stage: Trigger
+setState / new props / context change > Something changed. React schedules a re-render of that component (and, by default, its children).
+stage: Render phase (pure, can be paused or redone)
+Call your components > React calls your function components again. They must be pure: same props + state → same JSX, no side effects.
+Build new element tree > The result is a lightweight description of the UI (the "virtual DOM").
+Diff with previous tree > Reconciliation finds the minimal set of changes, using element type and `key` to match items.
+stage: Commit phase (synchronous)
+Apply DOM changes > Only the changed DOM nodes are touched.
+Refs + useLayoutEffect > Run before the browser paints (use for measuring layout).
+Browser paints > The user sees the new UI.
+useEffect runs > After paint: subscriptions, fetching, syncing with external systems.
 ```
 
 **Rules that follow from this:**
@@ -220,9 +223,13 @@ const fileRef = useRef(null);
 
 **Short answer:** (1) Call hooks only at the **top level** of a component or custom hook — not inside loops, conditions or nested functions. (2) Call them only from React functions. Reason: React stores hook state in an ordered list per component and matches them **by call order** each render.
 
-```
-Render 1: useState(A) → slot 0, useState(B) → slot 1, useEffect → slot 2
-Render 2 with an `if` skipping first hook: useState(B) reads slot 0 → gets A's value ❌
+```flow
+pipeline: Why hooks can't be called conditionally
+Render 1 > React stores hook state in a list, one slot per hook call, in call order.
+useState(A) → slot 0 > First hook call reads/writes slot 0.
+useState(B) → slot 1 > Second call → slot 1. useEffect → slot 2.
+Render 2 skips a hook > An `if` skipped the first `useState` this time.
+useState(B) reads slot 0 > The calls shifted: B now reads A's slot and gets A's value. State is silently mixed up. That's why hooks must run in the same order every render.
 ```
 
 ```jsx
@@ -262,10 +269,18 @@ dispatch({ type: "progress", pct: 40 });
 **Short answer:** It **synchronises your component with an external system** (WebSocket, browser API, third-party widget, non-React state) after the commit. It runs after paint, re-runs when dependencies change, and its **cleanup** runs before the next run and on unmount.
 
 **Lifecycle:**
-```
-mount:        render → commit → paint → effect(sessionId=A)
-deps change:  render → commit → paint → cleanup(A) → effect(sessionId=B)
-unmount:      cleanup(B)
+```flow
+pipeline: useEffect lifecycle when sessionId changes A → B
+stage: Mount
+Render > Component renders with sessionId=A.
+Commit + paint > DOM updated, browser paints.
+effect(A) > Effect runs after paint: e.g. subscribe to session A.
+stage: Dependency changes to B
+Render + commit + paint > Re-render with sessionId=B.
+cleanup(A) > React first runs the previous effect's cleanup: unsubscribe from A. This prevents stale listeners and leaks.
+effect(B) > Then runs the new effect: subscribe to B.
+stage: Unmount
+cleanup(B) > Final cleanup when the component leaves the screen.
 ```
 
 **Example:**
@@ -586,10 +601,17 @@ useEffect(() => {
 
 **Short answer:** Show the expected result immediately, send the request, then **confirm or roll back**. Needs a temporary ID and a reconciliation step.
 
-```
-user sends message → add {id: "tmp-1", status: "pending"} → POST
-   ├─ 201 {id: "m-42"} → replace tmp-1 with m-42, status "sent"
-   └─ error           → mark tmp-1 "failed", show Retry
+```flow
+sequence: Optimistic message send
+actors: User, React UI, API
+User -> React UI: sends message
+React UI -> React UI: add {id: "tmp-1", status: pending}
+> The message appears instantly with a temporary id. The UI doesn't wait for the server.
+React UI -> API: POST /messages
+API --> React UI: 201 {id: "m-42"}
+> Success: replace tmp-1 with the real id m-42 and mark it "sent".
+React UI -> React UI: on error: mark tmp-1 failed + Retry
+> If the POST fails, keep the message but show it as failed with a Retry button. Never silently drop user input.
 ```
 
 ---
@@ -731,6 +753,21 @@ All config embedded in the bundle is **public**. Use build-time env vars only fo
 ---
 
 ### Q42. Design a UI for a long-running job (e.g., document extraction)
+
+```flow
+sequence: Long-running job UI that survives reloads
+actors: React, Backend
+React -> Backend: POST /jobs
+Backend --> React: 202 {jobId}
+> The backend persists the job first. The server, not the browser, is the source of truth.
+React -> Backend: subscribe SSE /jobs/{id}/events
+Backend --> React: progress events (with event ids)
+> queued → running (progress %) → partial → succeeded / failed / cancelled.
+React -> Backend: reconnect with Last-Event-ID
+> If the stream drops, the browser resumes from the last event id instead of starting over.
+React -> Backend: on page reload: GET /jobs/{id}
+> After a refresh the UI rebuilds from the server state. Fallback when SSE isn't possible: poll GET /jobs/{id}.
+```
 
 ```
  states: queued → running(progress %) → partial → succeeded

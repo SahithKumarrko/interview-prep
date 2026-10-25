@@ -23,6 +23,17 @@
 
 **Step Functions = a managed state machine.** You describe steps (states) and transitions in **Amazon States Language (ASL, JSON)**; Step Functions runs them, remembers where each execution is, passes data between steps, and handles retries, timeouts, branching, parallelism and waiting — for up to a year.
 
+```flow
+pipeline: Document workflow, state by state
+StartExecution({docId}) > A Standard workflow starts.
+RegisterJob > DynamoDB PutItem with a condition: claims the job once (idempotent).
+StartOCR > Textract + `.waitForTaskToken`: the workflow pauses at no cost until Textract's completion event calls SendTaskSuccess.
+ExtractFields (Map) > For each page chunk (MaxConcurrency 10): LLM extraction with Retry on throttling (backoff + jitter).
+CheckQuality (Choice) > Confidence < 0.8 → HumanReview with a task token; a reviewer approves in the UI.
+SaveResults > Store the output.
+Succeed > Any error along the way is caught → MarkFailed + notify → Fail.
+```
+
 ```
                         Document processing workflow (Standard)
  StartExecution(input: {docId})
@@ -159,6 +170,14 @@ sfn.start_execution(stateMachineArn=ARN, name=f"doc-{doc_hash}", input=json.dump
 - **JSONPath (original):** `InputPath` → `Parameters` → (task) → `ResultSelector` → `ResultPath` → `OutputPath`. Powerful but confusing; limited transformations (intrinsic functions like `States.Format`).
 - **JSONata (newer, recommended for new workflows):** fields `Arguments` (what to send) and `Output` (what to pass on) using `{% expression %}`, with rich transformations (math, string, filtering, dates) and `$states.input`, `$states.result`, `$states.context`.
 
+```flow
+pipeline: JSONata data flow (the simpler model)
+State input > Available as `$states.input`.
+Arguments > Build exactly what the task receives with JSONata expressions.
+Task runs > The service call.
+Output > Shape what goes to the next state from `$states.result` (and save values with `Assign` variables). The older JSONPath model needed five fields for this: InputPath, Parameters, ResultSelector, ResultPath, OutputPath.
+```
+
 ```
  JSONPath data flow                                        JSONata data flow
  input ─InputPath─► Parameters ─► TASK ─► ResultSelector   input ─► Arguments ─► TASK ─► Output
@@ -225,6 +244,19 @@ Order matters: first matching retrier/catcher wins; put `States.ALL` last. Don't
 
 **Short answer:** Distributed steps can't share one database transaction. On failure, run **compensating actions** in reverse to undo completed steps.
 
+```flow
+sequence: Saga: compensating when a later step fails
+actors: Workflow, Inventory, Payments, Shipping
+Workflow -> Inventory: ReserveInventory
+Workflow -> Payments: ChargePayment
+Workflow -> Shipping: CreateShipment
+Shipping --> Workflow: fails
+> No global transaction exists, so undo the completed steps in reverse order.
+Workflow -> Payments: RefundPayment (compensation)
+Workflow -> Inventory: ReleaseInventory (compensation)
+> Compensations must be idempotent, retried and logged.
+```
+
 ```
  ReserveInventory ─► ChargePayment ─► CreateShipment
         │                 │ fail            │ fail
@@ -259,13 +291,16 @@ Also **AWS SDK integrations** (`arn:aws:states:::aws-sdk:dynamodb:getItem`, thou
 
 ### Q16. Task tokens and the callback pattern (human approval)
 
-```
- Step Functions ── state "WaitForApproval" (.waitForTaskToken, HeartbeatSeconds/TimeoutSeconds)
-     │  sends {token, docId, summary} to SQS / Lambda → stores token in DynamoDB → emails reviewer
-     ▼  (execution paused — no compute cost)
- Reviewer clicks Approve in app ─► API verifies reviewer identity & permission
-     ─► sfn.send_task_success(taskToken=token, output='{"approved": true, "by": "u7"}')
- Step Functions resumes at next state
+```flow
+sequence: Human approval with a task token
+actors: Step Functions, Notifier, Reviewer, Your API
+Step Functions -> Notifier: WaitForApproval (.waitForTaskToken) sends {token, docId, summary}
+> The execution pauses with no compute cost. Set HeartbeatSeconds/TimeoutSeconds so it can't wait forever.
+Notifier -> Notifier: store token in DynamoDB, email reviewer
+Reviewer -> Your API: clicks Approve
+Your API -> Your API: verify reviewer identity + permission
+Your API -> Step Functions: SendTaskSuccess(token, {approved: true, by: "u7"})
+Step Functions -> Step Functions: resumes at the next state
 ```
 **Security:** the task token is a capability — store it server-side, never expose it to untrusted clients, verify the approver before calling `SendTaskSuccess`.
 
@@ -274,10 +309,20 @@ Also **AWS SDK integrations** (`arn:aws:states:::aws-sdk:dynamodb:getItem`, thou
 ### Q17. Orchestrating asynchronous Textract
 
 Textract async APIs (`StartDocumentAnalysis`) finish later and notify SNS. Pattern:
-1. Task: `aws-sdk:textract:startDocumentAnalysis` with `ClientRequestToken` (idempotent) and `NotificationChannel` (SNS).
-2. Store `JobId` → task token mapping (or use `.waitForTaskToken` via a Lambda that records the token).
-3. SNS → Lambda: on completion, look up token → `SendTaskSuccess`.
-4. Fetch results (paginated `GetDocumentAnalysis`) → save to S3.
+```flow
+sequence: Waiting for an async Textract job without polling
+actors: Step Functions, Lambda, Textract, SNS
+Step Functions -> Lambda: task with .waitForTaskToken
+Lambda -> Textract: startDocumentAnalysis(ClientRequestToken, NotificationChannel=SNS)
+> ClientRequestToken makes retries start the same job, not a new one.
+Lambda -> Lambda: store JobId → task token mapping
+> The workflow is now paused at no cost.
+Textract -> SNS: job complete
+SNS -> Lambda: notification (JobId)
+Lambda -> Step Functions: look up token → SendTaskSuccess
+Step Functions -> Textract: fetch results (paginated GetDocumentAnalysis) → save to S3
+> Alternative: a polling loop (Wait + GetDocumentAnalysis + Choice). Simpler, but more state transitions.
+```
 Alternative: polling loop with `Wait` + `GetDocumentAnalysis` + `Choice` (simpler, more transitions).
 
 ---
@@ -393,14 +438,18 @@ The task token was never returned: worker crashed, SNS/SQS message lost or went 
 
 ### Q32. Resilient Textract pipeline for 300 requests/min
 
-```
- S3 upload ─► EventBridge ─► SQS (buffer) ─► EventBridge Pipe / Lambda starts Standard execution
-                                              name = doc hash (dedupe)
- Workflow: register job (DynamoDB conditional) ─► Textract async start (ClientRequestToken)
-   ─► wait for SNS callback (token, timeout 30 min) ─► Map pages (MaxConcurrency to fit Bedrock quota)
-   ─► LLM extraction with Retry/backoff on throttling ─► validate ─► low confidence → human review token
-   ─► save to S3/DynamoDB ─► EventBridge "DocumentProcessed"
- Catch → mark failed + DLQ + alarm; redrive after fixes
+```flow
+pipeline: Resilient Textract pipeline for 300 requests/min
+S3 upload → EventBridge > Event for every new document.
+SQS buffer > Smooths bursts.
+Start execution (name = doc hash) > The same document can't start two executions.
+Register job > DynamoDB conditional write.
+Textract async start > ClientRequestToken makes the start idempotent.
+Wait for callback > Task token; timeout 30 min.
+Map over pages > MaxConcurrency sized to the Bedrock quota.
+LLM extraction > Retry with backoff on throttling.
+Validate > Low confidence → human review token.
+Save + publish > S3/DynamoDB, then EventBridge "DocumentProcessed". Catch → mark failed + DLQ + alarm; redrive after the fix.
 ```
 Talk about quotas (Textract TPS, Bedrock tokens/min), concurrency caps, idempotency, payload references, cost (transitions).
 

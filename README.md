@@ -10,6 +10,7 @@ Plain HTML, CSS and JavaScript. No framework and no build step for the site itse
 - Search across all courses (`Ctrl K` / `⌘ K` or `/`)
 - Progress tracking: mark questions reviewed, bookmark them, see progress per course
 - Flashcards per course, across all courses or from bookmarks, with "knew it / shaky / didn't know" ratings that bring missed cards back
+- Animated step-by-step diagrams for flows, pipelines and loops (97 across the courses)
 - Dark and light themes, mobile layout, deep links to every question (`#/c/<course>/<Q05>`)
 - Progress lives in your browser's localStorage; export and import it as a JSON file to move devices
 
@@ -21,6 +22,8 @@ assets/css/app.css       styles and themes
 assets/js/app.js         router, views, flashcards, search palette
 assets/js/store.js       progress / bookmarks / theme (localStorage)
 assets/js/search.js      in-memory search index
+assets/js/flow.js        parser + player for animated ```flow diagrams
+assets/css/flow.css      diagram styles
 assets/vendor/           marked 12.0.2, highlight.js 11.9.0 (+ dockerfile grammar), vendored for offline use
 data/index.json          course list (generated)
 data/courses/*.json      one file per course (generated)
@@ -53,6 +56,26 @@ Markdown conventions the parser relies on:
 - Sections as `## N. Section title`
 - Questions as `### Qnn. Question title`, with IDs unique within the file
 - An optional `**Short answer:**` paragraph, which is used on flashcards. Without it, the first paragraph is used.
+
+## Animated diagrams
+
+Flows such as request paths, pipelines and loops are written as ` ```flow ` blocks in the markdown. The app renders them as animated, step-by-step diagrams with a caption for each step, and play/pause and step controls. Animation starts when a diagram scrolls into view and is off when the system's reduced-motion setting is on. On GitHub the same block reads as plain text.
+
+````
+```flow
+sequence: Tool calling end to end
+actors: User, App, LLM
+User -> App: "Where is my order?"
+App -> LLM: messages + tool schemas
+> Caption shown while this step is active.
+LLM --> App: tool_use get_order(A12)
+```
+````
+
+- `sequence:` actors as columns; `A -> B: label` is a request and `A --> B: label` a reply (dashed). `A -> A: label` is a step inside A.
+- `pipeline:` one step per line as `Label > caption`; `stage: Name` starts a group.
+- `cycle:` steps around a ring as `Label > caption`; `exit > ...` says when the loop stops.
+- A line starting with `>` adds a caption to the step above it.
 
 ## Publish on GitHub Pages
 

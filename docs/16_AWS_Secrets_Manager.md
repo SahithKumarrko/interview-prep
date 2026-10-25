@@ -162,11 +162,12 @@ Conditions such as `aws:SourceVpce` (only through your VPC endpoint), `aws:Sourc
 
 ### Q15. The four steps of a rotation function
 
-```
- 1. createSecret  – generate new value, store as AWSPENDING version
- 2. setSecret     – set the new credential in the target system (ALTER USER … PASSWORD …)
- 3. testSecret    – log in with AWSPENDING to verify it works
- 4. finishSecret  – move AWSCURRENT label to the new version (old becomes AWSPREVIOUS)
+```flow
+pipeline: The four rotation steps (each must be idempotent)
+createSecret > Generate a new value and store it as the AWSPENDING version.
+setSecret > Set that credential in the target system, e.g. `ALTER USER … PASSWORD …`.
+testSecret > Log in with AWSPENDING to prove it works.
+finishSecret > Move the AWSCURRENT label to the new version; the old one becomes AWSPREVIOUS. If any step fails, AWSCURRENT stays on the old version, so apps keep working.
 ```
 Each step must be **idempotent** (rotation can retry). If any step fails, AWSCURRENT stays on the old version, so apps keep working.
 
@@ -272,14 +273,17 @@ Per-tenant secrets named and tagged by tenant (`prod/tenants/t-42/jira`), ABAC p
 
 ### Q27. Design: agent calling Jira and Confluence securely
 
-```
- User (Okta) ─► API ─► AgentCore Runtime (agent) ─► AgentCore Gateway (MCP)
-                                                   │ outbound auth via Identity credential provider
-                                                   ▼
-                              3LO OAuth: token for THIS user (consented once) from token vault
-                              → Jira/Confluence enforce the user's own permissions
- Fallback service account (2LO/API token) only for read-only org-wide content, stored in
- Secrets Manager/token vault, rotated, scoped minimal; never shared with the model.
+```flow
+sequence: Agent calling Jira as the user
+actors: User, API, Agent (Runtime), Gateway, Token vault, Jira
+User -> API: request (Okta JWT)
+API -> Agent (Runtime): invoke with user context
+Agent (Runtime) -> Gateway: tool call (MCP)
+Gateway -> Token vault: outbound auth: token for THIS user
+> 3LO OAuth: the user consented once; the token is stored in AgentCore Identity's vault, never shown to the model.
+Token vault --> Gateway: user's access token
+Gateway -> Jira: API call as the user
+> Jira enforces the user's own permissions. A service account is only a fallback for read-only org-wide content, kept in Secrets Manager and rotated.
 ```
 Benefits: least privilege (user's own rights), no static secrets in code, centralised revocation, audit.
 

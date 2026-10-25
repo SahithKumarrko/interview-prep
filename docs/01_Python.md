@@ -322,6 +322,16 @@ funcs = [lambda i=i: i for i in range(3)]
 **Short answer:** A decorator is a function that takes a function and returns a new function (usually a wrapper). `@deco` above `def f` is just `f = deco(f)`. Use `functools.wraps` to keep the original name/docstring.
 
 **Explanation:**
+```flow
+pipeline: What happens when you call a decorated function
+Caller calls fetch() > `fetch` is now the wrapper: `@timed` ran `fetch = timed(fetch)` once, at definition time.
+wrapper(*args, **kwargs) > The wrapper receives the original arguments unchanged.
+Before logic > Runs first: start a timer, check auth, open a span, log the call.
+Original fetch() > The wrapper calls the real function it captured in its closure.
+After logic > Runs after (in `finally` if it must always run): stop timer, log duration.
+Result returned > The caller gets the original return value; `functools.wraps` keeps the name and docstring.
+```
+
 ```
 @timed            ≡    def fetch(...): ...
 def fetch(...):        fetch = timed(fetch)
@@ -829,16 +839,21 @@ with ProcessPoolExecutor() as ex:                       # CPU-heavy OCR post-pro
 **Short answer:** asyncio runs many coroutines on **one thread**. An event loop runs a coroutine until it hits `await` on something not ready (network, sleep), then switches to another ready coroutine. It is **cooperative**: a coroutine that never awaits (CPU loop, blocking call) freezes everything.
 
 **Explanation:**
-```
- Event loop (single thread)
- ┌────────────────────────────────────────────────────────────┐
- │ ready queue: [task A] [task B] [task C]                     │
- │                                                            │
- │ run A ──► A awaits HTTP ──► park A, register socket        │
- │ run B ──► B awaits DB   ──► park B                         │
- │ run C ──► C finishes                                       │
- │ OS says "A's socket has data" ──► A back to ready queue    │
- └────────────────────────────────────────────────────────────┘
+```flow
+sequence: One thread, many tasks: how the event loop interleaves work
+actors: Event loop, Task A, Task B, OS
+Event loop -> Task A: run A
+> The loop picks A from the ready queue and runs it until it hits an `await`.
+Task A -> OS: await HTTP response
+> A starts network I/O and yields control. A is parked; its socket is registered with the OS.
+Event loop -> Task B: run B
+> The single thread is free, so the loop runs B straight away instead of waiting for A.
+Task B -> OS: await DB query
+> B also yields at its `await`. Now both A and B are waiting on I/O at the same time.
+OS --> Event loop: A's socket has data
+> The OS reports that A's I/O is ready (epoll/kqueue/IOCP).
+Event loop -> Task A: resume A
+> A goes back on the ready queue and continues right after its `await`. Concurrency without threads: tasks take turns at every `await`.
 ```
 
 **Example:**
@@ -1015,9 +1030,14 @@ for stat in top: print(stat)     # shows which lines allocate the most
 
 **Short answer:** Retry **only transient errors** (timeouts, 429, 5xx), use **exponential backoff with jitter** and a max attempt/time budget, respect `Retry-After`, and make side-effecting operations **idempotent** (idempotency keys). Add circuit breakers so a dead dependency isn't hammered.
 
-```
-attempt 1 fails → wait ~1s ± jitter → attempt 2 fails → wait ~2s → ~4s → give up → DLQ/alert
-Without jitter: 1000 clients retry at the exact same second → "thundering herd"
+```flow
+pipeline: Exponential backoff with jitter
+Attempt 1 fails > A transient error (timeout, 429, 503). Only retry operations that are safe to repeat (idempotent).
+Wait ~1 s ± jitter > Random jitter spreads clients out, so 1,000 clients don't all retry in the same second (the "thundering herd").
+Attempt 2 fails > Still failing, so back off further.
+Wait ~2 s, then ~4 s > The delay doubles each time, up to a cap; respect a `Retry-After` header if the server sends one.
+Give up > Stop after max attempts or when the request's total deadline is used up.
+DLQ / alert > Park the work in a dead-letter queue and alarm, instead of retrying forever.
 ```
 
 ```python
@@ -1088,9 +1108,17 @@ table.update_item(
 
 Propagate a correlation/trace ID through every hop (OpenTelemetry does this), and redact tokens/PII.
 
-```
-Browser ─► FastAPI ─► AgentCore agent ─► Lambda tool ─► S3
- trace_id=abc  span1        span2              span3        span4
+```flow
+sequence: One request, one trace ID
+actors: Browser, FastAPI, Agent, Lambda tool, S3
+Browser -> FastAPI: request (trace_id=abc)
+> The first hop starts the trace (or reads a `traceparent` header). Span 1 = the API handler.
+FastAPI -> Agent: invoke (traceparent header)
+> The trace context travels in a header, so the agent's work becomes span 2 under the same trace.
+Agent -> Lambda tool: tool call
+> Span 3. Every hop forwards the same trace ID.
+Lambda tool -> S3: GetObject
+> Span 4. In the trace viewer you see one waterfall: exactly where the time went and which hop failed.
 ```
 
 ---
@@ -1136,18 +1164,17 @@ async def get_doc(id: str):
 
 ### Q50. Design a safe concurrent document-processing worker
 
-```
-  S3 upload ─► SQS queue ─► Worker (ECS task, asyncio)
-                              │ 1. receive message {job_id}
-                              │ 2. claim job: DynamoDB conditional write (idempotent)
-                              │ 3. stream file from S3 (don't load all pages)
-                              │ 4. Semaphore(10) around Textract/LLM calls
-                              │ 5. checkpoint progress per page in DynamoDB
-                              │ 6. retry transient errors with backoff
-                              │ 7. delete message on success
-                              ▼
-                       failures > N ─► Dead-Letter Queue ─► alarm
-  SIGTERM (deploy/scale-in) → stop receiving, finish in-flight, exit cleanly
+```flow
+pipeline: A safe concurrent document worker
+S3 upload > A user uploads a file; S3 sends an event.
+SQS queue > The queue buffers bursts and redelivers messages if a worker crashes.
+Receive {job_id} > The worker (ECS task, asyncio) long-polls for a message.
+Claim job > DynamoDB conditional write: only one worker can claim this job_id, so duplicate deliveries are harmless (idempotent).
+Stream file from S3 > Process page by page; don't load a 500-page PDF into memory.
+Semaphore(10) > Limits in-flight Textract/LLM calls so you stay inside API quotas.
+Checkpoint per page > Save progress in DynamoDB, so a retry continues instead of starting over.
+Retry with backoff > Transient errors retry with jitter; permanent errors fail fast.
+Delete message > Only after success. Too many failures → dead-letter queue + alarm. On SIGTERM: stop receiving, finish in-flight work, exit.
 ```
 
 Key points to say: idempotent claim, bounded concurrency, streaming I/O, checkpointing, DLQ for poison messages, graceful shutdown, metrics (queue depth, age of oldest message, failures).

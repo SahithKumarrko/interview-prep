@@ -22,6 +22,21 @@
 
 ## 1. Mental model: how a GitLab pipeline runs
 
+```flow
+pipeline: From git push to a finished job
+stage: GitLab server
+Trigger > Push, merge request, tag, schedule or API call.
+Read .gitlab-ci.yml > Plus includes/components; `workflow:rules` decide whether a pipeline is created at all.
+Create pipeline + jobs > Each job's `rules` decide whether it's included; `needs` and stages set the order.
+Queue jobs > Jobs wait for a runner with matching tags. Protected deploy jobs may need manual approval.
+stage: GitLab Runner
+Runner picks up job > Your EC2/EKS runner or a GitLab-hosted one polls for work.
+Clean container > Started from the job's `image:` (docker / kubernetes executor).
+Clone + restore > Repo at the commit SHA, cache restored, artifacts from earlier jobs downloaded.
+Run script > before_script + script.
+Upload results > Artifacts, reports and cache; logs streamed back to GitLab.
+```
+
 ```
  git push / MR / tag / schedule / API trigger
             │
@@ -551,14 +566,20 @@ Runner disk full from Docker images/cache → prune policies, ephemeral autoscal
 
 ### Q40. Design an ideal pipeline for an AI service (FastAPI + LangGraph agent)
 
-```
- MR pipeline:   lint (ruff) ─┬─ type check (mypy) ─┬─ unit tests (fake LLM) ──┐
-                             ├─ SAST / secret / dependency scan              ├─► terraform plan (read-only role)
-                             └─ build image (SHA) ─► container scan ─► SBOM ─┘     + policy check
-                                                    └─► LLM eval suite (golden set, cost/latency budget)
- main pipeline: same + push signed image ─► deploy dev (auto) ─► integration/smoke tests
-                ─► deploy staging (auto) ─► eval + load test ─► deploy prod (manual, protected env,
-                   approvals, resource_group, canary/blue-green, auto-rollback on alarms)
+```flow
+pipeline: Ideal pipeline for an AI service
+stage: Merge request pipeline (parallel jobs)
+Lint + type check > ruff, mypy.
+Unit tests (fake LLM) > Fast, deterministic, no model calls.
+Security scans > SAST, secret detection, dependency scan.
+Build image (SHA) > Then container scan + SBOM.
+LLM eval suite > Golden set with quality, cost and latency budgets.
+Terraform plan > Read-only role + policy checks.
+stage: Main branch pipeline
+Push signed image > Same image promoted everywhere.
+Deploy dev → tests > Automatic deploy + integration/smoke tests.
+Deploy staging → eval + load > Evaluation and load tests against a real environment.
+Deploy prod > Manual, protected environment, approvals, `resource_group`, canary or blue/green, auto-rollback on alarms.
 ```
 Credentials via OIDC per environment; prompts/model IDs/tool schemas versioned with the code; eval results attached as MR reports.
 

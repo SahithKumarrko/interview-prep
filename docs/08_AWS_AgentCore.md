@@ -96,18 +96,22 @@ Building an agent locally is easy. Running it for thousands of users needs: isol
 
 ### Q04. How do the services fit together for one request?
 
-```
- 1. User logs in (Okta) → React gets JWT
- 2. React → your API (or directly) → InvokeAgentRuntime(runtimeArn, runtimeSessionId, payload)
-       Runtime inbound auth validates JWT (issuer, audience, client) or IAM SigV4
- 3. Runtime routes to the session's microVM (creates one on first call)
- 4. Agent code (LangGraph) runs → loads context from Memory
- 5. Agent calls tools through Gateway (MCP) — Gateway inbound auth checks the agent's token
-       Policy engine evaluates the tool call (Cedar) → allow/deny
-       Gateway outbound auth gets credentials from Identity token vault (OAuth for this user / API key / IAM)
-       → Lambda / OpenAPI API / MCP server / SaaS
- 6. Agent writes events to Memory; streams response back
- 7. Every step emits OTel spans → Observability (CloudWatch); Evaluations score sessions
+```flow
+sequence: One request through AgentCore
+actors: User, React/API, Runtime, Agent, Memory, Gateway, Tool
+User -> React/API: log in with Okta → JWT
+React/API -> Runtime: InvokeAgentRuntime(runtimeArn, sessionId, payload)
+> Inbound auth validates the JWT (issuer, audience, client) or IAM SigV4.
+Runtime -> Agent: route to this session's microVM
+> A microVM is created on the first call for the session.
+Agent -> Memory: load context
+Agent -> Gateway: tool call (MCP)
+> Gateway checks the agent's token; the Policy engine evaluates the call with Cedar rules → allow or deny.
+Gateway -> Tool: call with outbound credentials
+> From the Identity token vault: OAuth for this user, an API key, or IAM. Targets: Lambda, OpenAPI, MCP servers, SaaS.
+Agent -> Memory: write events
+Agent --> User: stream response
+> Every step emits OTel spans to Observability; Evaluations score sampled sessions.
 ```
 
 ---
@@ -178,9 +182,14 @@ agentcore invoke '{"prompt": "hello", "thread_id": "t-1"}'
 
 The **next invoke with the same session ID** provisions a fresh microVM — in-memory state and local disk are gone **unless** you configured **session storage** (persistent filesystem directory) or keep state externally (AgentCore Memory, LangGraph checkpointer in Postgres/DynamoDB, S3).
 
-```
- invoke(s1) → [provision microVM] → Active → Idle ──15 min──► Stopped ──invoke(s1)──► new microVM
-                                                └── 8 h max lifetime ──► Stopped
+```flow
+pipeline: Runtime session lifecycle
+invoke(s1) > First call for session s1.
+Provision microVM > A dedicated, isolated microVM is created for this session.
+Active > Processing requests.
+Idle > No requests. Still alive, state in memory.
+Stopped > After 15 minutes idle, or 8 hours maximum lifetime. In-memory state is gone.
+invoke(s1) again > Gets a brand-new microVM, so durable state must live in Memory or a checkpointer.
 ```
 **Session ID rules:** unique per user/conversation, **at least 33 characters** (e.g., UUID), reuse it for follow-ups (stickiness avoids cold starts). A brief `409 RetryableConflictException` can occur while a session is being provisioned/stopped — retry with backoff.
 
@@ -299,11 +308,14 @@ Return a generator from your entrypoint → Runtime streams SSE to the caller; o
 
 ### Q17. How does Gateway convert an API into tools?
 
-1. Create a gateway (choose inbound authorizer).
-2. Add a **target**: upload an OpenAPI/Smithy spec or point at a Lambda with a tool schema.
-3. Attach a **credential provider** for outbound auth (API key, OAuth client, or IAM role).
-4. Gateway exposes each operation as an MCP tool, named like `targetName___operationName`.
-5. Agents call `tools/list` and `tools/call` on the gateway URL.
+```flow
+pipeline: Turning an API into MCP tools with Gateway
+Create gateway > Choose the inbound authorizer (JWT or IAM).
+Add a target > Upload an OpenAPI/Smithy spec, or point at a Lambda with a tool schema.
+Attach credential provider > Outbound auth: API key, OAuth client, or IAM role.
+Operations become tools > Each operation is exposed as an MCP tool, named like `targetName___operationName`.
+Agents call the gateway > `tools/list` and `tools/call` on the gateway URL. The agent never sees the backend credentials.
+```
 
 ```python
 # Agent side (LangChain MCP adapters) – the agent only knows the gateway URL
@@ -362,6 +374,17 @@ They combine well: host the custom MCP server on **Runtime** (MCP protocol) and 
 
 ### Q23. 2LO vs 3LO (machine vs user-delegated)
 
+```flow
+sequence: 3LO: the agent acts as the user
+actors: User, Agent, AgentCore Identity, Google/Slack/GitHub
+Agent -> AgentCore Identity: need a token for this user
+AgentCore Identity --> User: consent URL
+User -> Google/Slack/GitHub: sign in + consent in browser
+Google/Slack/GitHub --> AgentCore Identity: token for the USER (stored in token vault)
+Agent -> Google/Slack/GitHub: "read MY calendar" with the user's token
+> The API enforces the user's own permissions. 2LO is different: the agent uses its own client_id/secret and acts as a service identity (internal APIs, batch jobs).
+```
+
 ```
  2LO (machine-to-machine)                        3LO (on behalf of a user)
  agent ─client_id/secret─► IdP ─► token          user ─consents in browser─► IdP ─► token for USER
@@ -415,12 +438,15 @@ Validate the user at the edge; pass identity as **verified claims** (JWT propaga
 - **Short-term memory:** raw conversation **events** (turns, tool results) per `actorId` + `sessionId` — for multi-turn context.
 - **Long-term memory:** asynchronously **extracted records** stored in **namespaces** — via strategies.
 
-```
- agent ─CreateEvent(actorId=u1, sessionId=s9, "I prefer window seats")─► short-term events
-                                                                              │ async extraction
-                                                                              ▼ (strategies)
-                                         long-term records: /users/u1/preferences → "prefers window seats"
- next session ─RetrieveMemoryRecords(namespace, query="seat preference")──────┘
+```flow
+sequence: Short-term events become long-term memory
+actors: Agent, Short-term events, Extraction strategy, Long-term records
+Agent -> Short-term events: CreateEvent(actorId=u1, sessionId=s9, "I prefer window seats")
+Short-term events -> Extraction strategy: async extraction
+> Runs in the background with the strategies you configured: user preference, semantic facts, summaries.
+Extraction strategy -> Long-term records: /users/u1/preferences → "prefers window seats"
+Agent -> Long-term records: next session: RetrieveMemoryRecords(namespace, "seat preference")
+Long-term records --> Agent: "prefers window seats"
 ```
 
 ---
@@ -528,6 +554,22 @@ Expose retrieval as a tool: a Bedrock Knowledge Base (via a Lambda/OpenAPI targe
 ## 9. Architecture, security & trade-offs
 
 ### Q40. End-to-end reference architecture (React → API → AgentCore → tools)
+
+```flow
+sequence: Walk one chat request through the reference architecture
+actors: User, React, FastAPI (ECS), AgentCore Runtime, Gateway, Tools
+User -> React: OIDC login via Okta → JWT
+React -> FastAPI (ECS): HTTPS/SSE + JWT
+FastAPI (ECS) -> FastAPI (ECS): verify JWT, rate-limit, check conversation ownership
+> Maps the user to their session/thread; conversations live in DynamoDB.
+FastAPI (ECS) -> AgentCore Runtime: InvokeAgentRuntime
+> LangGraph agent in a per-session microVM; checkpoints in Aurora, Memory keyed by the user's sub.
+AgentCore Runtime -> Gateway: MCP + workload token
+Gateway -> Gateway: inbound JWT, Cedar policy, PII-redacting interceptor
+Gateway -> Tools: IAM → Lambda · OAuth 3LO → Jira · API key → internal API
+Tools --> React: results stream back up the chain
+> One trace ID across API → Runtime → Gateway → tools.
+```
 
 ```
  ┌─────────┐  OIDC login   ┌────────┐

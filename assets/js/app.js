@@ -1,5 +1,6 @@
 import { store } from "./store.js";
 import { buildIndex, search, snippet } from "./search.js";
+import { renderFlow, initFlows } from "./flow.js";
 
 /* ---------- data ---------- */
 
@@ -58,6 +59,7 @@ marked.use({
   renderer: {
     code(code, info) {
       const lang = (info || "").trim().split(/\s+/)[0].toLowerCase();
+      if (lang === "flow") return renderFlow(code);
       if (!lang) {
         return `<figure class="plate"><button class="copy-btn" type="button" aria-label="Copy diagram">${ICON.copy}</button><pre class="diagram">${esc(code)}</pre></figure>`;
       }
@@ -84,6 +86,7 @@ const plain = (text) => (text || "").replace(/[`*]/g, "");        // titles wher
 
 // Style the lead paragraphs that the docs mark with bold labels.
 function decorate(root) {
+  initFlows(root);
   $$(".md > p", root).forEach((p) => {
     const first = p.firstElementChild;
     if (!first || first.tagName !== "STRONG" || p.firstChild !== first) return;

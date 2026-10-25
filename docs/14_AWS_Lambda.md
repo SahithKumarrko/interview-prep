@@ -24,6 +24,18 @@
 
 **Lambda = upload a function, AWS runs it on demand in isolated environments, scales automatically, bills per request + GB-second.**
 
+```flow
+pipeline: Cold start vs warm start
+Event arrives > API Gateway, SQS, S3, EventBridge…
+Free warm environment? > Yes → invoke the handler immediately (warm, fast). No → cold start.
+Create microVM > Firecracker microVM for this function version.
+Download code > Zip or container image.
+Start runtime > Python, Node, Java…
+Run INIT code > Imports, SDK clients, config — code outside the handler, which is reused later.
+INVOKE handler > handler(event, context). One environment serves one request at a time.
+Stay warm > Reused for later events, then frozen and eventually recycled.
+```
+
 ```
  Event source ─► Lambda service ─► find a FREE warm execution environment for this function version?
  (API GW, SQS,                         │ yes ──────────────────────────────► INVOKE handler (warm, fast)
@@ -41,8 +53,13 @@
 ```
 
 **Execution environment lifecycle:**
-```
- INIT (≤10 s, extensions + runtime + your global code) → INVOKE → INVOKE → … (frozen between) → SHUTDOWN
+```flow
+pipeline: Execution environment lifecycle
+INIT > Up to 10 s: extensions, runtime, and your global code.
+INVOKE > The handler runs for one event.
+INVOKE again > Reuses the warm environment; global variables survive between invokes.
+Frozen between invokes > No CPU while idle; background threads pause.
+SHUTDOWN > Recycled after idle time or for updates.
 ```
 **Key implications:**
 - Put expensive setup (SDK clients, DB connection, model loading) **outside the handler** → reused while warm.
@@ -273,9 +290,13 @@ Each concurrent environment opens its own connections → 500 concurrent functio
 
 **Short answer:** Publishing creates an immutable **version** (`:7`) of code+config. An **alias** (`prod`) is a pointer to a version and can **split traffic** between two versions (weighted). Event sources/API Gateway point at the alias → deploy = move alias.
 
-```
- prod alias ─► v7 (90%)  ┐   CodeDeploy canary: 10% for 5 min, alarms OK → 100% v8
-           └─► v8 (10%)  ┘   alarm fires → back to 100% v7
+```flow
+pipeline: Canary release with an alias
+prod alias → v7 100% > Clients always call the alias, never a version number.
+Shift 10% to v8 > CodeDeploy weights the alias: 90% v7, 10% v8.
+Watch alarms 5 min > Errors, throttles, duration.
+Alarm? roll back > Instantly back to 100% v7.
+100% v8 > Alarms stayed green, so the alias moves fully to v8.
 ```
 `$LATEST` is mutable — don't point production at it.
 
@@ -411,11 +432,15 @@ Expected with at-least-once delivery, made worse by: visibility timeout shorter 
 
 ### Q38. Handle spiky 300 documents/min events
 
-```
- S3 upload ─► EventBridge/S3 notification ─► SQS (buffer) ─► Lambda (ESM max concurrency = N)
-            ─► start async Textract job (ClientRequestToken = doc hash) ─► SNS on completion
-            ─► SQS ─► Lambda: fetch results → LLM extraction (bounded concurrency, retries) → DynamoDB/S3
- failures ─► DLQ + alarm; status per doc in DynamoDB; or Step Functions/Distributed Map for orchestration
+```flow
+pipeline: Handling spiky 300 documents/min with Lambda
+S3 upload > Event via EventBridge or an S3 notification.
+SQS buffer > Absorbs spikes.
+Lambda (max concurrency N) > The event source mapping caps concurrency so downstream quotas aren't overrun.
+Start async Textract > ClientRequestToken = document hash, so retries don't start duplicate jobs.
+SNS → SQS on completion > Textract signals when it's done.
+Lambda: LLM extraction > Bounded concurrency, retries with backoff.
+Save to DynamoDB/S3 > Status per document. Failures → DLQ + alarm.
 ```
 Key: buffer, cap concurrency to Textract/Bedrock quotas, idempotent starts, async service APIs instead of waiting inside Lambda.
 

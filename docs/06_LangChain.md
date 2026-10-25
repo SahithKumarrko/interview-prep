@@ -40,6 +40,15 @@ LangChain is a **framework of standard interfaces + integrations** so you can sw
 ```
 
 **What an agent built with `create_agent` looks like inside** (it compiles to a LangGraph graph):
+```flow
+cycle: create_agent loop with middleware hooks
+before_model > Hook: trim history, inject context, enforce budgets.
+Model call > wrap_model_call: retries, fallbacks, model switching.
+after_model > Hook: inspect the response, guardrails, human-in-the-loop pauses.
+Tool calls? > Yes → run tools (wrap_tool_call) and loop back. No → finish.
+exit > No tool calls left → after_agent → END. Agent-level hooks: before_agent once at START, after_agent once at the end.
+```
+
 ```
           ┌───────────────── middleware hooks ─────────────────┐
  START ─► before_agent ─► before_model ─► [ MODEL ] ─► after_model ─┐
@@ -385,10 +394,14 @@ agent = create_agent(model, tools=[search_policies], system_prompt="Answer from 
 
 ### Q20. Document-selective RAG (user picks specific documents)
 
-1. API receives `doc_ids` from the user; **authorise** each against user/tenant on the server.
-2. Pass allowed IDs into the retriever **filter** (pre-retrieval), not into the prompt text.
-3. Retrieve → rerank → generate with citations (`doc_id`, page).
-4. If evidence is weak, answer "not found in selected documents".
+```flow
+pipeline: Document-selective RAG
+Receive doc_ids > The user picks documents in the UI.
+Authorise each id > On the server, against the user and tenant. Never trust the client's list.
+Filter in the retriever > Pass allowed IDs as a pre-retrieval filter, not as prompt text.
+Retrieve → rerank → generate > Answer with citations (doc_id, page).
+Weak evidence? > Reply "not found in the selected documents" instead of guessing.
+```
 
 ---
 
