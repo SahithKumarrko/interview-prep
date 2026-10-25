@@ -1,0 +1,286 @@
+{
+ "slug": "22-design-principles-patterns",
+ "num": 22,
+ "title": "Software Design: OOP, SOLID, Design Patterns & Microservice Patterns",
+ "full_title": "Software Design: OOP, SOLID, Design Patterns & Microservice Patterns: L2 → L3 Interview Preparation",
+ "group": "Design & Coding",
+ "accent": "#2dd4bf",
+ "updated": "25 October 2026",
+ "level": "OOP principles → SOLID → classic patterns in Python → distributed/microservice patterns → design review scenarios",
+ "source": "docs/22_Design_Principles_Patterns.md",
+ "question_count": 35,
+ "section_count": 8,
+ "sections": [
+  {
+   "id": "mental-model-why-design-principles-exist",
+   "num": 1,
+   "title": "Mental model: why design principles exist",
+   "intro_md": "**All of these principles answer one question: when requirements change, how much code do I have to touch, and how much can break?**\n\n```\n           HIGH COUPLING (bad)                          LOW COUPLING, HIGH COHESION (good)\n ┌──────────┐   knows internals of   ┌──────────┐       ┌──────────┐  depends on   ┌───────────┐\n │ Agent    │──────────────────────► │ Bedrock  │       │ Agent    │─────────────► │ LLMClient │ (interface)\n │ service  │  boto3 calls, retry    │ SDK code │       │ service  │               └─────▲─────┘\n └──────────┘  logic, JSON parsing   └──────────┘       └──────────┘          ┌──────────┴─────────┐\n change provider → rewrite agent service                                 BedrockClient    FakeClient (tests)\n                                                        change provider → add one class; agent untouched\n```\n- **Coupling** = how much one module depends on another's details. Lower is better.\n- **Cohesion** = how focused one module is on one job. Higher is better.\n- Patterns are **named, proven shapes** for common problems — vocabulary for design discussions, not goals in themselves.",
+   "questions": []
+  },
+  {
+   "id": "oop-core-principles",
+   "num": 2,
+   "title": "OOP & core principles",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "The four pillars of OOP",
+     "short_md": "class Account: def __init__(self): self._balance = 0            # \"private\" by convention def deposit(self, amount: int) -> None: if amount <= 0: raise ValueError(\"amount must be positive\")   # invariant protected self._balance += amount @property def balance(self) -> int: return self._balance        # read-only view",
+     "body_md": "| Pillar | Meaning | Python example |\n|---|---|---|\n| **Encapsulation** | keep data + behaviour together, hide internals | `_balance` attribute changed only via `deposit()` |\n| **Abstraction** | expose *what* it does, hide *how* | `storage.save(doc)` — caller doesn't know it's S3 |\n| **Inheritance** | a class reuses/extends another | `class PdfParser(Parser)` |\n| **Polymorphism** | same call, different behaviour per type | `for p in parsers: p.parse(f)` |\n\n```python\nclass Account:\n    def __init__(self):\n        self._balance = 0            # \"private\" by convention\n    def deposit(self, amount: int) -> None:\n        if amount <= 0:\n            raise ValueError(\"amount must be positive\")   # invariant protected\n        self._balance += amount\n    @property\n    def balance(self) -> int:\n        return self._balance        # read-only view\n```"
+    },
+    {
+     "id": "Q02",
+     "title": "Composition over inheritance",
+     "short_md": "Prefer building objects **from** other objects (\"has-a\") over deep class hierarchies (\"is-a\"). Inheritance couples the child to the parent's internals; composition lets you swap parts.",
+     "body_md": "**Short answer:** Prefer building objects **from** other objects (\"has-a\") over deep class hierarchies (\"is-a\"). Inheritance couples the child to the parent's internals; composition lets you swap parts.\n\n```python\n# ❌ inheritance explosion: RetryingBedrockClient, CachingBedrockClient, CachingRetryingBedrockClient...\n# ✅ composition: wrap behaviours around any client\nclass RetryingClient:\n    def __init__(self, inner, attempts=3):\n        self.inner, self.attempts = inner, attempts\n    def invoke(self, prompt):\n        for i in range(self.attempts):\n            try:\n                return self.inner.invoke(prompt)\n            except ThrottlingError:\n                time.sleep(2 ** i)\n        raise\n\nclient = RetryingClient(CachingClient(BedrockClient()))\n```\nUse inheritance for true \"is-a\" with a stable base (e.g. exception hierarchies, framework base classes)."
+    },
+    {
+     "id": "Q03",
+     "title": "DRY, KISS, YAGNI",
+     "short_md": "- **DRY** (Don't Repeat Yourself): one source of truth for each piece of *knowledge* (not every similar-looking line). Duplicating code twice is fine; abstract on the third time when the shape is clear. - **KISS** (Keep It Simple): the simplest design that meets requirements. - **YAGNI** (You Aren't Gonna Need It): don't build for imagined future needs.",
+     "body_md": "- **DRY** (Don't Repeat Yourself): one source of truth for each piece of *knowledge* (not every similar-looking line). Duplicating code twice is fine; abstract on the third time when the shape is clear.\n- **KISS** (Keep It Simple): the simplest design that meets requirements.\n- **YAGNI** (You Aren't Gonna Need It): don't build for imagined future needs.\n\n**Pitfall:** wrong abstraction is worse than duplication — merging two things that only *look* alike creates coupling that breaks when they diverge."
+    },
+    {
+     "id": "Q04",
+     "title": "Interfaces in Python: ABC vs Protocol",
+     "short_md": "Python has no `interface` keyword. **ABC** = nominal (classes must inherit and implement abstract methods; error at instantiation). **Protocol** = structural (any class with matching methods fits; checked by mypy/pyright). Use Protocols for ports like `LLMClient` so third-party classes fit without inheriting. Details in 01 Q20.",
+     "body_md": "Python has no `interface` keyword. **ABC** = nominal (classes must inherit and implement abstract methods; error at instantiation). **Protocol** = structural (any class with matching methods fits; checked by mypy/pyright). Use Protocols for ports like `LLMClient` so third-party classes fit without inheriting. Details in 01 Q20."
+    }
+   ]
+  },
+  {
+   "id": "solid",
+   "num": 3,
+   "title": "SOLID",
+   "intro_md": "**SOLID = five principles for classes/modules that are easy to change.** Examples use one domain: a document-processing service.",
+   "questions": [
+    {
+     "id": "Q05",
+     "title": "S — Single Responsibility Principle",
+     "short_md": "A class should have **one reason to change** — one owner/stakeholder.",
+     "body_md": "**Short answer:** A class should have **one reason to change** — one owner/stakeholder.\n\n```python\n# ❌ one class changes when the parsing rules, the storage, OR the email template changes\nclass InvoiceProcessor:\n    def parse(self, pdf): ...\n    def save_to_s3(self, data): ...\n    def email_finance(self, data): ...\n\n# ✅ separate reasons to change; a small coordinator wires them\nclass InvoiceParser:    def parse(self, pdf) -> Invoice: ...\nclass InvoiceRepository: def save(self, inv: Invoice) -> None: ...\nclass FinanceNotifier:  def notify(self, inv: Invoice) -> None: ...\n\nclass ProcessInvoice:                      # use case / service\n    def __init__(self, parser, repo, notifier): ...\n    def __call__(self, pdf):\n        inv = self.parser.parse(pdf); self.repo.save(inv); self.notifier.notify(inv)\n```"
+    },
+    {
+     "id": "Q06",
+     "title": "O — Open/Closed Principle",
+     "short_md": "Open for **extension**, closed for **modification** — add new behaviour by adding code, not by editing a growing `if/elif` chain.",
+     "body_md": "**Short answer:** Open for **extension**, closed for **modification** — add new behaviour by adding code, not by editing a growing `if/elif` chain.\n\n```python\n# ❌ every new file type edits this function\ndef extract(doc):\n    if doc.type == \"pdf\": ...\n    elif doc.type == \"docx\": ...\n    elif doc.type == \"xlsx\": ...      # risk of breaking pdf while adding xlsx\n\n# ✅ registry: new type = new class + one registration line\nEXTRACTORS: dict[str, Extractor] = {}\ndef register(kind):\n    def deco(cls):\n        EXTRACTORS[kind] = cls(); return cls\n    return deco\n\n@register(\"pdf\")\nclass PdfExtractor:  def extract(self, doc): ...\n\ndef extract(doc):\n    return EXTRACTORS[doc.type].extract(doc)\n```"
+    },
+    {
+     "id": "Q07",
+     "title": "L — Liskov Substitution Principle",
+     "short_md": "A subclass must be usable anywhere its parent is expected **without surprising the caller** — same contract: accepts at least the same inputs, returns the same kind of output, doesn't throw new unexpected errors.",
+     "body_md": "**Short answer:** A subclass must be usable anywhere its parent is expected **without surprising the caller** — same contract: accepts at least the same inputs, returns the same kind of output, doesn't throw new unexpected errors.\n\n```python\nclass Storage:\n    def save(self, key: str, data: bytes) -> None: ...\n\nclass ReadOnlyStorage(Storage):\n    def save(self, key, data):\n        raise NotImplementedError     # ❌ violates LSP: code expecting Storage now breaks\n```\nFix: split interfaces (`Reader`, `Writer`) so read-only storage simply doesn't claim to be a writer. Classic textbook example: Square inheriting Rectangle breaks `set_width`."
+    },
+    {
+     "id": "Q08",
+     "title": "I — Interface Segregation Principle",
+     "short_md": "Clients shouldn't depend on methods they don't use. Prefer several small interfaces over one fat one.",
+     "body_md": "**Short answer:** Clients shouldn't depend on methods they don't use. Prefer several small interfaces over one fat one.\n\n```python\nfrom typing import Protocol\nclass DocReader(Protocol):\n    def get(self, doc_id: str) -> bytes: ...\nclass DocWriter(Protocol):\n    def put(self, doc_id: str, data: bytes) -> None: ...\n\ndef summarise(reader: DocReader, doc_id: str): ...   # needs only read → easy to fake, least privilege\n```\nThe same idea applies to agent tools: give an agent a narrow `read_ticket` tool, not a `jira_admin` tool with 40 operations."
+    },
+    {
+     "id": "Q09",
+     "title": "D — Dependency Inversion Principle",
+     "short_md": "High-level business logic should depend on **abstractions**, not on concrete infrastructure. Infrastructure implements the abstraction. Combined with **dependency injection** (pass dependencies in, don't create them inside), this makes code testable and swappable.",
+     "body_md": "**Short answer:** High-level business logic should depend on **abstractions**, not on concrete infrastructure. Infrastructure implements the abstraction. Combined with **dependency injection** (pass dependencies in, don't create them inside), this makes code testable and swappable.\n\n```python\nclass LLMClient(Protocol):\n    def complete(self, prompt: str) -> str: ...\n\nclass TicketTriage:                                 # business logic: knows nothing about Bedrock\n    def __init__(self, llm: LLMClient):\n        self.llm = llm\n    def triage(self, text: str) -> str:\n        return self.llm.complete(f\"Classify: {text}\")\n\n# production\ntriage = TicketTriage(BedrockLLM(model_id=...))\n# test\nclass FakeLLM:\n    def complete(self, prompt): return \"billing\"\nassert TicketTriage(FakeLLM()).triage(\"charged twice\") == \"billing\"\n```\nFastAPI's `Depends` (20 Q10) is DI at the framework level; \"ports and adapters\" / hexagonal architecture (01 Q48) is DIP at the architecture level."
+    }
+   ]
+  },
+  {
+   "id": "classic-design-patterns-in-python",
+   "num": 4,
+   "title": "Classic design patterns in Python",
+   "intro_md": "**Three families (Gang of Four):** *Creational* (how objects are made), *Structural* (how objects are combined), *Behavioural* (how objects interact). In Python many patterns are simpler because functions are first-class objects.",
+   "questions": [
+    {
+     "id": "Q10",
+     "title": "Singleton — and why it's usually a module",
+     "short_md": "Ensures one instance (e.g. one config, one connection pool). In Python a **module is already a singleton** (imported once), so a module-level object or `functools.cache` on a factory is the idiomatic version.",
+     "body_md": "**Short answer:** Ensures one instance (e.g. one config, one connection pool). In Python a **module is already a singleton** (imported once), so a module-level object or `functools.cache` on a factory is the idiomatic version.\n\n```python\n# settings.py\nfrom functools import cache\n@cache\ndef get_settings() -> Settings:\n    return Settings()          # created once, reused everywhere\n```\n**Pitfall:** singletons are global state — hard to test and unsafe to mutate across threads. Prefer creating once at startup (FastAPI lifespan) and injecting."
+    },
+    {
+     "id": "Q11",
+     "title": "Factory (and Abstract Factory)",
+     "short_md": "A function/class that decides **which concrete class to create**, so callers don't hard-code it.",
+     "body_md": "**Short answer:** A function/class that decides **which concrete class to create**, so callers don't hard-code it.\n\n```python\ndef make_llm(provider: str, **kw) -> LLMClient:\n    match provider:\n        case \"bedrock\": return BedrockLLM(**kw)\n        case \"openai\":  return OpenAILLM(**kw)\n        case \"fake\":    return FakeLLM()\n        case _: raise ValueError(f\"unknown provider {provider}\")\n\nllm = make_llm(settings.llm_provider, model_id=settings.model_id)\n```\nLangChain's `init_chat_model(\"provider:model\")` is a factory. **Abstract factory** = a factory for a *family* of related objects (e.g. AWS vs local: storage + queue + secrets together)."
+    },
+    {
+     "id": "Q12",
+     "title": "Builder",
+     "short_md": "Constructs a complex object step by step, often with a fluent API, separating construction from the final object. Python's keyword arguments and dataclasses remove most needs for it; it's still useful for complex, validated, multi-step construction.",
+     "body_md": "**Short answer:** Constructs a complex object step by step, often with a fluent API, separating construction from the final object. Python's keyword arguments and dataclasses remove most needs for it; it's still useful for complex, validated, multi-step construction.\n\n```python\ngraph = StateGraph(State)                 # LangGraph's StateGraph is a builder:\ngraph.add_node(\"plan\", plan)\ngraph.add_edge(START, \"plan\")\napp = graph.compile(checkpointer=saver)  # build() → immutable runnable object\n```"
+    },
+    {
+     "id": "Q13",
+     "title": "Strategy",
+     "short_md": "Define a family of interchangeable algorithms and choose one at runtime. In Python, a strategy is often just a function passed in.",
+     "body_md": "**Short answer:** Define a family of interchangeable algorithms and choose one at runtime. In Python, a strategy is often just a function passed in.\n\n```python\ndef fixed_chunks(text, size=1000): ...\ndef by_headings(text): ...\ndef semantic_chunks(text): ...\n\nCHUNKERS = {\"fixed\": fixed_chunks, \"headings\": by_headings, \"semantic\": semantic_chunks}\n\ndef index_document(text, strategy=\"headings\"):\n    for chunk in CHUNKERS[strategy](text):\n        embed_and_store(chunk)\n```\nOther examples: retry/backoff policies, pricing rules, model routing (cheap vs strong model)."
+    },
+    {
+     "id": "Q14",
+     "title": "Observer / pub-sub",
+     "short_md": "Subjects notify subscribers when something happens, without knowing who they are. In-process it's callbacks/event hooks; across services it becomes pub/sub (SNS, EventBridge).",
+     "body_md": "**Short answer:** Subjects notify subscribers when something happens, without knowing who they are. In-process it's callbacks/event hooks; across services it becomes pub/sub (SNS, EventBridge).\n\n```python\nclass EventBus:\n    def __init__(self): self._subs: dict[str, list] = defaultdict(list)\n    def subscribe(self, event, fn): self._subs[event].append(fn)\n    def publish(self, event, payload):\n        for fn in self._subs[event]: fn(payload)\n\nbus.subscribe(\"job.completed\", send_email)\nbus.subscribe(\"job.completed\", update_dashboard)\nbus.publish(\"job.completed\", {\"job_id\": \"123\"})\n```\nLangChain callbacks and React state subscriptions are observers."
+    },
+    {
+     "id": "Q15",
+     "title": "Adapter and Facade",
+     "short_md": "- **Adapter:** converts one interface into the one your code expects. E.g. wrap a vendor SDK so it matches your `LLMClient` Protocol; MCP servers are adapters that turn APIs into a standard tool interface. - **Facade:** a simple front over a complicated subsystem. E.g. `DocumentService.ingest(file)` hides upload → Textract → chunk → embed → index.",
+     "body_md": "- **Adapter:** converts one interface into the one your code expects. E.g. wrap a vendor SDK so it matches your `LLMClient` Protocol; MCP servers are adapters that turn APIs into a standard tool interface.\n- **Facade:** a simple front over a complicated subsystem. E.g. `DocumentService.ingest(file)` hides upload → Textract → chunk → embed → index."
+    },
+    {
+     "id": "Q16",
+     "title": "Decorator pattern (vs Python `@decorator`)",
+     "short_md": "The pattern wraps an object to add behaviour while keeping the same interface (the `RetryingClient` in Q02). Python's `@decorator` syntax applies the same idea to **functions** — logging, retries, caching, auth checks.",
+     "body_md": "**Short answer:** The pattern wraps an object to add behaviour while keeping the same interface (the `RetryingClient` in Q02). Python's `@decorator` syntax applies the same idea to **functions** — logging, retries, caching, auth checks.\n\n```python\ndef timed(fn):\n    @functools.wraps(fn)\n    def wrapper(*a, **kw):\n        t = time.perf_counter()\n        try: return fn(*a, **kw)\n        finally: log.info(\"%s took %.1f ms\", fn.__name__, (time.perf_counter() - t) * 1000)\n    return wrapper\n```"
+    },
+    {
+     "id": "Q17",
+     "title": "Repository and Unit of Work",
+     "short_md": "**Repository** = a collection-like interface for loading/saving domain objects, hiding the database. **Unit of Work** = groups changes into one transaction and commits/rolls back together.",
+     "body_md": "**Short answer:** **Repository** = a collection-like interface for loading/saving domain objects, hiding the database. **Unit of Work** = groups changes into one transaction and commits/rolls back together.\n\n```python\nclass DocumentRepo(Protocol):\n    def get(self, doc_id: str) -> Document | None: ...\n    def add(self, doc: Document) -> None: ...\n\nclass SqlDocumentRepo:\n    def __init__(self, session): self.session = session\n    def get(self, doc_id): return self.session.get(DocumentRow, doc_id)\n    def add(self, doc): self.session.add(doc)\n\nasync with uow:                      # Unit of Work wraps the session/transaction\n    doc = uow.documents.get(doc_id)\n    doc.mark_processed()\n    await uow.commit()\n```\nBusiness logic gets tested with an in-memory repo; SQLAlchemy's `Session` is itself a unit of work."
+    },
+    {
+     "id": "Q18",
+     "title": "Command and Chain of Responsibility",
+     "short_md": "- **Command:** turn a request into an object (`{\"action\": \"refund\", \"order\": \"A12\", \"amount\": 50}`) that can be queued, logged, retried, approved or undone. Agent **tool calls** are commands — which is why you can validate and require approval before executing them. - **Chain of Responsibility:** pass a request along a chain of handlers, each may handle/modify/stop it. **Middleware** in FastAPI and LangChain v1 agents is this pattern (auth → rate limit → logging → handler).",
+     "body_md": "- **Command:** turn a request into an object (`{\"action\": \"refund\", \"order\": \"A12\", \"amount\": 50}`) that can be queued, logged, retried, approved or undone. Agent **tool calls** are commands — which is why you can validate and require approval before executing them.\n- **Chain of Responsibility:** pass a request along a chain of handlers, each may handle/modify/stop it. **Middleware** in FastAPI and LangChain v1 agents is this pattern (auth → rate limit → logging → handler)."
+    },
+    {
+     "id": "Q19",
+     "title": "Template Method",
+     "short_md": "A base class defines the fixed steps of an algorithm; subclasses fill in specific steps.",
+     "body_md": "**Short answer:** A base class defines the fixed steps of an algorithm; subclasses fill in specific steps.\n\n```python\nclass Ingestor(ABC):\n    def run(self, src):                 # fixed skeleton\n        raw = self.fetch(src)\n        text = self.extract(raw)        # varies per source\n        return self.index(self.chunk(text))\n    @abstractmethod\n    def extract(self, raw): ...\n```\nPython alternative: pass the varying step as a function (strategy) — often simpler."
+    }
+   ]
+  },
+  {
+   "id": "microservice-distributed-system-patterns",
+   "num": 5,
+   "title": "Microservice & distributed-system patterns",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q20",
+     "title": "Monolith vs modular monolith vs microservices",
+     "short_md": "**L3 answer:** \"Start modular; split a service out when there's a concrete reason — different scaling profile (GPU/agent workers vs API), different release cadence, separate team ownership, or a fault-isolation/security boundary.\" Microservices are an organisational scaling tool, not a default.",
+     "body_md": "| | Monolith | Modular monolith | Microservices |\n|---|---|---|---|\n| Deploy | one unit | one unit, strong internal module boundaries | many independent units |\n| Pros | simple dev, testing, transactions | simple + clean boundaries; easy to split later | independent deploy/scale, team autonomy, fault isolation |\n| Cons | tangles as it grows | discipline needed | network failures, distributed data, ops/observability cost |\n\n**L3 answer:** \"Start modular; split a service out when there's a concrete reason — different scaling profile (GPU/agent workers vs API), different release cadence, separate team ownership, or a fault-isolation/security boundary.\" Microservices are an organisational scaling tool, not a default."
+    },
+    {
+     "id": "Q21",
+     "title": "Domain-Driven Design basics: bounded contexts",
+     "short_md": "Split a system by **business capability**, where each area (bounded context) has its own model and language. \"Document\" means a file in *Ingestion*, a set of chunks in *Search*, and a billable unit in *Billing*. Service boundaries usually follow bounded contexts; each owns its data (**database per service** — other services use its API/events, not its tables).",
+     "body_md": "**Short answer:** Split a system by **business capability**, where each area (bounded context) has its own model and language. \"Document\" means a file in *Ingestion*, a set of chunks in *Search*, and a billable unit in *Billing*. Service boundaries usually follow bounded contexts; each owns its data (**database per service** — other services use its API/events, not its tables)."
+    },
+    {
+     "id": "Q22",
+     "title": "API Gateway and Backend-for-Frontend (BFF)",
+     "short_md": "- **API Gateway:** single entry point → routing, auth (JWT validation), rate limits, TLS, request validation. (AWS API Gateway, ALB + middleware.) - **BFF:** a backend tailored to one frontend (web vs mobile) that aggregates downstream calls and shapes responses, so the UI doesn't make 6 calls. A FastAPI layer between React and AgentCore is effectively a BFF.",
+     "body_md": "- **API Gateway:** single entry point → routing, auth (JWT validation), rate limits, TLS, request validation. (AWS API Gateway, ALB + middleware.)\n- **BFF:** a backend tailored to one frontend (web vs mobile) that aggregates downstream calls and shapes responses, so the UI doesn't make 6 calls. A FastAPI layer between React and AgentCore is effectively a BFF."
+    },
+    {
+     "id": "Q23",
+     "title": "Resilience patterns: timeout, retry, circuit breaker, bulkhead",
+     "short_md": "timeout              retry (backoff + jitter)       circuit breaker caller ──► every call has  ──►  only for transient,       ──►  CLOSED: calls flow a deadline           idempotent operations          too many failures → OPEN: fail fast with a retry budget            after cool-down → HALF-OPEN: try a few bulkhead: separate pools/queues/concurrency limits per dependency, so one slow dependency can't use every worker",
+     "body_md": "```\n            timeout              retry (backoff + jitter)       circuit breaker\n caller ──► every call has  ──►  only for transient,       ──►  CLOSED: calls flow\n            a deadline           idempotent operations          too many failures → OPEN: fail fast\n                                 with a retry budget            after cool-down → HALF-OPEN: try a few\n bulkhead: separate pools/queues/concurrency limits per dependency, so one slow dependency can't use every worker\n```\n\n```python\nclass CircuitBreaker:\n    def __init__(self, threshold=5, cooldown=30):\n        self.fails, self.threshold, self.cooldown, self.opened_at = 0, threshold, cooldown, None\n    def call(self, fn, *a, **kw):\n        if self.opened_at and time.monotonic() - self.opened_at < self.cooldown:\n            raise CircuitOpenError(\"dependency unavailable\")       # fail fast, use fallback\n        try:\n            result = fn(*a, **kw)\n        except Exception:\n            self.fails += 1\n            if self.fails >= self.threshold:\n                self.opened_at = time.monotonic()\n            raise\n        self.fails, self.opened_at = 0, None                       # success → close\n        return result\n```\n**Why it matters for LLM apps:** when a model provider is degraded, a breaker switches to a fallback model or a \"try later\" message instead of piling up slow requests (18 Q25)."
+    },
+    {
+     "id": "Q24",
+     "title": "Saga pattern (distributed transactions)",
+     "short_md": "A business transaction across services is split into **local transactions**, each with a **compensating action** that undoes it if a later step fails. No global lock or two-phase commit.",
+     "body_md": "**Short answer:** A business transaction across services is split into **local transactions**, each with a **compensating action** that undoes it if a later step fails. No global lock or two-phase commit.\n\n```\nBook trip:   reserve flight ──► reserve hotel ──► charge card\n                                                     ✗ fails\nCompensate:  cancel flight  ◄── cancel hotel  ◄──────┘\n```\n| Style | How | Trade-off |\n|---|---|---|\n| **Orchestration** | a coordinator (Step Functions, LangGraph) calls each step and its compensation | clear flow, central visibility; coordinator is a dependency |\n| **Choreography** | each service reacts to events and emits the next | loose coupling; flow is hard to see/debug |\n\nCompensations must be idempotent and may not perfectly undo (an email can't be unsent → design \"send\" as the last step). Step Functions implementation: 15 Q13."
+    },
+    {
+     "id": "Q25",
+     "title": "Transactional outbox",
+     "short_md": "Solves \"I updated my DB and need to publish an event, but either could fail\" (dual-write problem). Write the event into an **outbox table in the same DB transaction** as the business change; a separate relay publishes outbox rows to the queue and marks them sent.",
+     "body_md": "**Short answer:** Solves \"I updated my DB and need to publish an event, but either could fail\" (dual-write problem). Write the event into an **outbox table in the same DB transaction** as the business change; a separate relay publishes outbox rows to the queue and marks them sent.\n\n```\nBEGIN;\n  UPDATE orders SET status='PAID' WHERE id=12;\n  INSERT INTO outbox(id, type, payload) VALUES (uuid, 'order.paid', '{...}');\nCOMMIT;                     ← both or neither\nrelay (poller or CDC / DynamoDB Streams) → EventBridge/SQS → consumers (must be idempotent: at-least-once)\n```"
+    },
+    {
+     "id": "Q26",
+     "title": "CQRS (Command Query Responsibility Segregation)",
+     "short_md": "Use **different models for writes (commands) and reads (queries)**. The write side keeps normalised, validated data; one or more read models are denormalised for fast queries and updated from events.",
+     "body_md": "**Short answer:** Use **different models for writes (commands) and reads (queries)**. The write side keeps normalised, validated data; one or more read models are denormalised for fast queries and updated from events.\n\n```\nPOST /orders ──► write model (Postgres, validation) ──event──► projector ──► read model\nGET /dashboard ◄───────────────────────────────────────────────── (DynamoDB / OpenSearch / cache)\n```\nUse when reads and writes have very different shapes/scale (dashboards, search). Cost: eventual consistency between sides and more moving parts — don't use it for simple CRUD."
+    },
+    {
+     "id": "Q27",
+     "title": "Event sourcing",
+     "short_md": "Store the **sequence of events** (`DocumentUploaded`, `ExtractionCompleted`, `ApprovedBy(u42)`) as the source of truth, and derive current state by replaying them. Gives a full audit trail and time travel.",
+     "body_md": "**Short answer:** Store the **sequence of events** (`DocumentUploaded`, `ExtractionCompleted`, `ApprovedBy(u42)`) as the source of truth, and derive current state by replaying them. Gives a full audit trail and time travel.\n\nCosts: event schema versioning, replay time (use snapshots), harder queries (usually paired with CQRS read models). LangGraph checkpoints are similar in spirit — a history of state snapshots you can replay or fork (07 Q14)."
+    },
+    {
+     "id": "Q28",
+     "title": "Strangler fig, sidecar, anti-corruption layer",
+     "short_md": "- **Strangler fig:** migrate a legacy system piece by piece behind a router until the old one can be removed (18 Q27). - **Sidecar:** a helper container next to the app in the same task/pod (log router, proxy, OTel collector) — ECS sidecars (13 Q07). - **Anti-corruption layer:** an adapter between your clean model and a messy legacy/vendor model so its concepts don't leak into your code.",
+     "body_md": "- **Strangler fig:** migrate a legacy system piece by piece behind a router until the old one can be removed (18 Q27).\n- **Sidecar:** a helper container next to the app in the same task/pod (log router, proxy, OTel collector) — ECS sidecars (13 Q07).\n- **Anti-corruption layer:** an adapter between your clean model and a messy legacy/vendor model so its concepts don't leak into your code."
+    },
+    {
+     "id": "Q29",
+     "title": "Sync vs async communication; idempotent consumers",
+     "short_md": "Synchronous (HTTP/gRPC) is simple but couples availability — if B is down, A fails. Asynchronous (queues/events) decouples and buffers spikes but adds eventual consistency and at-least-once delivery → every consumer must be **idempotent** (dedupe by message/operation ID). See 18 Q08–Q10.",
+     "body_md": "Synchronous (HTTP/gRPC) is simple but couples availability — if B is down, A fails. Asynchronous (queues/events) decouples and buffers spikes but adds eventual consistency and at-least-once delivery → every consumer must be **idempotent** (dedupe by message/operation ID). See 18 Q08–Q10."
+    },
+    {
+     "id": "Q30",
+     "title": "The Twelve-Factor App (headline list)",
+     "short_md": "Codebase in VCS · explicit dependencies · **config in environment** · backing services as attached resources · build/release/run separated · **stateless processes** · port binding · scale by processes · **disposability** (fast start, graceful SIGTERM) · dev/prod parity · logs as event streams · admin tasks as one-off processes. Containers on ECS follow these naturally (10 Q22).",
+     "body_md": "Codebase in VCS · explicit dependencies · **config in environment** · backing services as attached resources · build/release/run separated · **stateless processes** · port binding · scale by processes · **disposability** (fast start, graceful SIGTERM) · dev/prod parity · logs as event streams · admin tasks as one-off processes. Containers on ECS follow these naturally (10 Q22)."
+    }
+   ]
+  },
+  {
+   "id": "scenario-design-review-questions",
+   "num": 6,
+   "title": "Scenario & design-review questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q31",
+     "title": "Refactor a 2,000-line `agent_service.py` that does everything",
+     "short_md": "1. Add characterisation tests around current behaviour first. 2. Identify responsibilities: HTTP handling, auth, prompt building, LLM calls, tool execution, persistence, notifications. 3. Extract by responsibility (SRP) behind small interfaces (ISP/DIP): `LLMClient`, `ToolRegistry`, `JobRepository`, `Notifier`. 4. Replace `if tool == ...` chains with a registry (OCP). 5. Inject dependencies at startup; tests use fakes. 6. Do it incrementally, one extraction per PR, behaviour unchanged.",
+     "body_md": "1. Add characterisation tests around current behaviour first.\n2. Identify responsibilities: HTTP handling, auth, prompt building, LLM calls, tool execution, persistence, notifications.\n3. Extract by responsibility (SRP) behind small interfaces (ISP/DIP): `LLMClient`, `ToolRegistry`, `JobRepository`, `Notifier`.\n4. Replace `if tool == ...` chains with a registry (OCP).\n5. Inject dependencies at startup; tests use fakes.\n6. Do it incrementally, one extraction per PR, behaviour unchanged."
+    },
+    {
+     "id": "Q32",
+     "title": "\"Should we split our FastAPI app into microservices?\"",
+     "short_md": "Ask what problem it solves: Are parts scaling differently (CPU-heavy extraction vs I/O-heavy API)? Different teams blocked on one release train? Different security boundaries? If not, keep a modular monolith and fix module boundaries first. If yes, split the **one** part with the clearest boundary (e.g. document-extraction workers behind a queue), with its own data and contract tests.",
+     "body_md": "Ask what problem it solves: Are parts scaling differently (CPU-heavy extraction vs I/O-heavy API)? Different teams blocked on one release train? Different security boundaries? If not, keep a modular monolith and fix module boundaries first. If yes, split the **one** part with the clearest boundary (e.g. document-extraction workers behind a queue), with its own data and contract tests."
+    },
+    {
+     "id": "Q33",
+     "title": "Add a new LLM provider without touching business logic",
+     "short_md": "Define an `LLMClient` Protocol (DIP), implement an adapter per provider (Adapter), choose via a factory from config (Factory), wrap with retry + circuit breaker + fallback (Decorator/composition), and run the eval suite against the new provider before switching traffic.",
+     "body_md": "Define an `LLMClient` Protocol (DIP), implement an adapter per provider (Adapter), choose via a factory from config (Factory), wrap with retry + circuit breaker + fallback (Decorator/composition), and run the eval suite against the new provider before switching traffic."
+    },
+    {
+     "id": "Q34",
+     "title": "Two services must stay consistent: job status in Postgres and a notification event",
+     "short_md": "Dual-write risk → transactional outbox (Q25); consumers idempotent by event ID; monitoring on outbox lag; a reconciliation job for drift.",
+     "body_md": "Dual-write risk → transactional outbox (Q25); consumers idempotent by event ID; monitoring on outbox lag; a reconciliation job for drift."
+    },
+    {
+     "id": "Q35",
+     "title": "How do you avoid over-engineering in a design review?",
+     "short_md": "Tie every abstraction to a current requirement or a likely, cheap-to-support change; count the moving parts; prefer boring managed services; ask \"what's the simplest version we could ship and measure?\" Patterns are justified by the change they make easy — name that change.",
+     "body_md": "Tie every abstraction to a current requirement or a likely, cheap-to-support change; count the moving parts; prefer boring managed services; ask \"what's the simplest version we could ship and measure?\" Patterns are justified by the change they make easy — name that change."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 7,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| Coupling / cohesion | depend on little; each module does one thing |\n| Composition > inheritance | wrap and combine; inherit only for true is-a |\n| SRP | one reason to change |\n| OCP | extend by adding code (registry), not editing if/elif |\n| LSP | subclasses keep the parent's contract |\n| ISP | small, focused interfaces (and tools) |\n| DIP + DI | logic depends on abstractions; inject implementations |\n| Singleton | in Python: module object / cached factory; inject it |\n| Factory | choose concrete class from config |\n| Strategy | swap algorithms (often just functions) |\n| Observer | publish events to subscribers |\n| Adapter / Facade | convert interface / simplify subsystem |\n| Repository / UoW | hide DB; one transaction per use case |\n| Command / Chain | requests as objects (tool calls); middleware chains |\n| Circuit breaker | fail fast when a dependency is down |\n| Saga | local txns + compensations; orchestrated or choreographed |\n| Outbox | event row in same txn → relay publishes |\n| CQRS | separate write and read models |\n| Event sourcing | events are the source of truth |\n| Microservices | split for scaling/team/isolation reasons, not by default |",
+   "questions": []
+  },
+  {
+   "id": "references",
+   "num": null,
+   "title": "References",
+   "intro_md": "- Refactoring Guru (patterns with examples): https://refactoring.guru/design-patterns\n- Martin Fowler — Microservices, CQRS, Event Sourcing, Strangler Fig: https://martinfowler.com/microservices/\n- microservices.io pattern catalogue (saga, outbox, API gateway): https://microservices.io/patterns/\n- The Twelve-Factor App: https://12factor.net/\n- AWS Prescriptive Guidance — cloud design patterns: https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/introduction.html",
+   "questions": []
+  }
+ ]
+}

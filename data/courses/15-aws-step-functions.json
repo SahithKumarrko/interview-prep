@@ -1,0 +1,302 @@
+{
+ "slug": "15-aws-step-functions",
+ "num": 15,
+ "title": "AWS Step Functions",
+ "full_title": "AWS Step Functions: L2 → L3 Interview Preparation",
+ "group": "AWS",
+ "accent": "#a78bfa",
+ "updated": "24 October 2026",
+ "level": "state machine basics → integration patterns → resilient large-scale workflows",
+ "source": "docs/15_AWS_Step_Functions.md",
+ "question_count": 35,
+ "section_count": 10,
+ "sections": [
+  {
+   "id": "mental-model-a-workflow-engine-with-memory",
+   "num": 1,
+   "title": "Mental model: a workflow engine with memory",
+   "intro_md": "**Step Functions = a managed state machine.** You describe steps (states) and transitions in **Amazon States Language (ASL, JSON)**; Step Functions runs them, remembers where each execution is, passes data between steps, and handles retries, timeouts, branching, parallelism and waiting — for up to a year.\n\n```\n                        Document processing workflow (Standard)\n StartExecution(input: {docId})\n        │\n        ▼\n ┌───────────────┐   Task: DynamoDB PutItem (claim job, idempotent)\n │ RegisterJob   │\n └──────┬────────┘\n        ▼\n ┌───────────────┐   Task: Textract StartDocumentAnalysis + .waitForTaskToken\n │ StartOCR      │   (pauses until Textract completion event calls SendTaskSuccess)\n └──────┬────────┘\n        ▼\n ┌───────────────┐   Map: for each page chunk (MaxConcurrency 10)\n │ ExtractFields │──► Lambda/Bedrock: LLM extraction  [Retry: throttling, backoff+jitter]\n └──────┬────────┘\n        ▼\n ┌───────────────┐   Choice: confidence < 0.8 ?\n │ CheckQuality  │──── yes ──► HumanReview (task token → reviewer UI → SendTaskSuccess)\n └──────┬────────┘                                   │\n        │ no ◄────────────────────────────────────────┘\n        ▼\n ┌───────────────┐           any error ──Catch──► ┌──────────────┐ ─► Fail\n │ SaveResults   │                                │ MarkFailed   │\n └──────┬────────┘                                │ + notify     │\n        ▼                                         └──────────────┘\n     Succeed\n```\n\n**Why use it instead of code?** Visible execution history per run, built-in retries/catch/timeouts, durable waits (no compute billed while waiting), 200+ AWS service integrations without Lambda glue, and auditability.",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "What is Step Functions and when do you use it?",
+     "short_md": "A serverless orchestration service for coordinating multiple steps/services into workflows with built-in state, error handling and visual monitoring. Use for multi-step business processes, long-running jobs, human approvals, ETL/document pipelines, microservice orchestration (sagas), and fan-out processing.",
+     "body_md": "**Short answer:** A serverless orchestration service for coordinating multiple steps/services into workflows with built-in state, error handling and visual monitoring. Use for multi-step business processes, long-running jobs, human approvals, ETL/document pipelines, microservice orchestration (sagas), and fan-out processing.\n\n**When not:** a single short function, very high-frequency trivial event processing (cost), or logic that's simpler as code (consider Lambda durable functions)."
+    },
+    {
+     "id": "Q02",
+     "title": "Standard vs Express workflows",
+     "short_md": "**Pattern:** Standard parent orchestrates; Express children do high-volume short sub-steps (e.g., inside Distributed Map).",
+     "body_md": "| | **Standard** | **Express** |\n|---|---|---|\n| Max duration | **1 year** | **5 minutes** |\n| Execution semantics | **exactly-once** step execution (per workflow) | **at-least-once** (async) / at-most-once (sync) |\n| Pricing | per **state transition** | per request + duration/memory |\n| History | full execution history in console/API (90 days) | CloudWatch Logs only |\n| Supports `.sync` / `.waitForTaskToken` | ✅ | ❌ (only request-response) |\n| Throughput | high but lower | very high (100k+/s) |\n| Use | long, auditable, human-in-loop, non-idempotent steps | high-volume, short event processing, streaming transforms, sync API backends |\n\n**Pattern:** Standard parent orchestrates; Express children do high-volume short sub-steps (e.g., inside Distributed Map)."
+    },
+    {
+     "id": "Q03",
+     "title": "State types",
+     "short_md": "| State | Purpose |\n|---|---|\n| **Task** | do work: call a service (Lambda, DynamoDB, ECS, Bedrock, HTTP endpoint, any AWS SDK API) |\n| **Choice** | branch based on data |\n| **Parallel** | fixed set of branches run concurrently |\n| **Map** | run the same steps for each item (inline or distributed) |\n| **Wait** | pause for seconds or until a timestamp |\n| **Pass** | pass/transform data (testing, shaping) |\n| **Succeed / Fail** | end execution successfully / with error + cause |",
+     "body_md": "| State | Purpose |\n|---|---|\n| **Task** | do work: call a service (Lambda, DynamoDB, ECS, Bedrock, HTTP endpoint, any AWS SDK API) |\n| **Choice** | branch based on data |\n| **Parallel** | fixed set of branches run concurrently |\n| **Map** | run the same steps for each item (inline or distributed) |\n| **Wait** | pause for seconds or until a timestamp |\n| **Pass** | pass/transform data (testing, shaping) |\n| **Succeed / Fail** | end execution successfully / with error + cause |"
+    },
+    {
+     "id": "Q04",
+     "title": "A minimal state machine (JSONata)",
+     "short_md": "{ \"Comment\": \"Classify a document\", \"QueryLanguage\": \"JSONata\", \"StartAt\": \"Classify\", \"States\": { \"Classify\": { \"Type\": \"Task\", \"Resource\": \"arn:aws:states:::lambda:invoke\", \"Arguments\": { \"FunctionName\": \"classify-doc\", \"Payload\": { \"docId\": \"{% $states.input.docId %}\" } }, \"Output\": \"{% $states.result.Payload %}\", \"Retry\": [{ \"ErrorEquals\": [\"Lambda.TooManyRequestsException\", \"States.Timeout\"], \"IntervalSeconds\": 2, \"BackoffRate\": 2, \"MaxAttempts\": 4, \"JitterStrategy\": \"FULL\" }], \"Next\": \"IsInvoice\" }, \"IsInvoice\": { \"Type\": \"Choice\", \"Choices\": [{ \"Condition\": \"{% $states.input.type = 'inv…",
+     "body_md": "```json\n{\n  \"Comment\": \"Classify a document\",\n  \"QueryLanguage\": \"JSONata\",\n  \"StartAt\": \"Classify\",\n  \"States\": {\n    \"Classify\": {\n      \"Type\": \"Task\",\n      \"Resource\": \"arn:aws:states:::lambda:invoke\",\n      \"Arguments\": { \"FunctionName\": \"classify-doc\", \"Payload\": { \"docId\": \"{% $states.input.docId %}\" } },\n      \"Output\": \"{% $states.result.Payload %}\",\n      \"Retry\": [{ \"ErrorEquals\": [\"Lambda.TooManyRequestsException\", \"States.Timeout\"],\n                  \"IntervalSeconds\": 2, \"BackoffRate\": 2, \"MaxAttempts\": 4, \"JitterStrategy\": \"FULL\" }],\n      \"Next\": \"IsInvoice\"\n    },\n    \"IsInvoice\": {\n      \"Type\": \"Choice\",\n      \"Choices\": [{ \"Condition\": \"{% $states.input.type = 'invoice' %}\", \"Next\": \"ProcessInvoice\" }],\n      \"Default\": \"Done\"\n    },\n    \"ProcessInvoice\": { \"Type\": \"Task\", \"Resource\": \"arn:aws:states:::lambda:invoke\",\n                        \"Arguments\": { \"FunctionName\": \"process-invoice\", \"Payload\": \"{% $states.input %}\" },\n                        \"End\": true },\n    \"Done\": { \"Type\": \"Succeed\" }\n  }\n}\n```"
+    },
+    {
+     "id": "Q05",
+     "title": "How do you start executions?",
+     "short_md": "API Gateway (direct integration `StartExecution` / `StartSyncExecution` for Express), EventBridge rules (S3 upload event, schedules via EventBridge Scheduler), SDK calls from apps, other state machines (nested), SQS via EventBridge Pipes, Step Functions `InvokeHarness`-style integrations for agents.",
+     "body_md": "API Gateway (direct integration `StartExecution` / `StartSyncExecution` for Express), EventBridge rules (S3 upload event, schedules via EventBridge Scheduler), SDK calls from apps, other state machines (nested), SQS via EventBridge Pipes, Step Functions `InvokeHarness`-style integrations for agents."
+    },
+    {
+     "id": "Q06",
+     "title": "Idempotent workflow starts",
+     "short_md": "Standard executions use a unique **execution `name`** per state machine (reusing the same name for a running/recent execution is rejected/returns the existing one). Use a business key (`doc-<hash>`) as the name so duplicate events don't start duplicate workflows. Express doesn't dedupe — make steps idempotent.",
+     "body_md": "**Short answer:** Standard executions use a unique **execution `name`** per state machine (reusing the same name for a running/recent execution is rejected/returns the existing one). Use a business key (`doc-<hash>`) as the name so duplicate events don't start duplicate workflows. Express doesn't dedupe — make steps idempotent.\n\n```python\nsfn.start_execution(stateMachineArn=ARN, name=f\"doc-{doc_hash}\", input=json.dumps({\"docId\": doc_id}))\n# ExecutionAlreadyExists → already started → safe to ignore\n```"
+    },
+    {
+     "id": "Q07",
+     "title": "Timeouts",
+     "short_md": "`TimeoutSeconds` on Task states (and the whole machine), **`HeartbeatSeconds`** for callback/activity tasks (worker must send heartbeats, otherwise `States.HeartbeatTimeout`). Always set timeouts on callback tasks — otherwise a lost token waits up to a year.",
+     "body_md": "`TimeoutSeconds` on Task states (and the whole machine), **`HeartbeatSeconds`** for callback/activity tasks (worker must send heartbeats, otherwise `States.HeartbeatTimeout`). Always set timeouts on callback tasks — otherwise a lost token waits up to a year."
+    }
+   ]
+  },
+  {
+   "id": "data-flow-jsonata-variables-jsonpath",
+   "num": 3,
+   "title": "Data flow: JSONata, variables, JSONPath",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q08",
+     "title": "JSONPath vs JSONata",
+     "short_md": "Two query languages for moving/transforming data between states.\n- **JSONPath (original):** `InputPath` → `Parameters` → (task) → `ResultSelector` → `ResultPath` → `OutputPath`. Powerful but confusing; limited transformations (intrinsic functions like `States.Format`).\n- **JSONata (newer, recommended for new workflows):** fields `Arguments` (what to send) and `Output` (what to pass on) using `{% expression %}`, with rich transformations (math, string, filtering, dates) and `$states.input`, `$states.result`, `$states.context`.",
+     "body_md": "**Short answer:** Two query languages for moving/transforming data between states.\n- **JSONPath (original):** `InputPath` → `Parameters` → (task) → `ResultSelector` → `ResultPath` → `OutputPath`. Powerful but confusing; limited transformations (intrinsic functions like `States.Format`).\n- **JSONata (newer, recommended for new workflows):** fields `Arguments` (what to send) and `Output` (what to pass on) using `{% expression %}`, with rich transformations (math, string, filtering, dates) and `$states.input`, `$states.result`, `$states.context`.\n\n```\n JSONPath data flow                                        JSONata data flow\n input ─InputPath─► Parameters ─► TASK ─► ResultSelector   input ─► Arguments ─► TASK ─► Output\n      ─► ResultPath (merge into input) ─► OutputPath ─►         ($states.input)   ($states.result)\n```\nSet `\"QueryLanguage\": \"JSONata\"` at top level or per state."
+    },
+    {
+     "id": "Q09",
+     "title": "Variables (`Assign`)",
+     "short_md": "States can store values in **variables** with `Assign`, and later states can read them (`$docId`) — no need to thread everything through each state's output.",
+     "body_md": "**Short answer:** States can store values in **variables** with `Assign`, and later states can read them (`$docId`) — no need to thread everything through each state's output.\n\n```json\n\"RegisterJob\": {\n  \"Type\": \"Task\",\n  \"Resource\": \"arn:aws:states:::dynamodb:putItem\",\n  \"Arguments\": { \"TableName\": \"jobs\", \"Item\": { \"pk\": { \"S\": \"{% $states.input.docId %}\" } } },\n  \"Assign\": { \"docId\": \"{% $states.input.docId %}\", \"startedAt\": \"{% $now() %}\" },\n  \"Next\": \"StartOCR\"\n}\n... later: \"Payload\": { \"docId\": \"{% $docId %}\" }\n```\nScope: variables are visible in later states; Map/Parallel inner states can read outer variables but outer can't see inner assignments directly."
+    },
+    {
+     "id": "Q10",
+     "title": "Payload size limits and large data",
+     "short_md": "Max **256 KB** payload per state input/output (and execution history event). Large data → store in **S3** (or DynamoDB) and pass a **reference** (bucket/key). Distributed Map can read items directly from S3 and write results to S3 (`ResultWriter`).",
+     "body_md": "Max **256 KB** payload per state input/output (and execution history event). Large data → store in **S3** (or DynamoDB) and pass a **reference** (bucket/key). Distributed Map can read items directly from S3 and write results to S3 (`ResultWriter`)."
+    },
+    {
+     "id": "Q11",
+     "title": "Context object",
+     "short_md": "`$states.context` (JSONata) / `$$` (JSONPath): execution ID/name, start time, state name, retry count, task token (`$states.context.Task.Token`), Map item index/value. Use execution name/ID as an idempotency key for downstream calls.",
+     "body_md": "`$states.context` (JSONata) / `$$` (JSONPath): execution ID/name, start time, state name, retry count, task token (`$states.context.Task.Token`), Map item index/value. Use execution name/ID as an idempotency key for downstream calls."
+    }
+   ]
+  },
+  {
+   "id": "error-handling",
+   "num": 4,
+   "title": "Error handling",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q12",
+     "title": "`Retry` and `Catch`",
+     "short_md": "`Retry` re-attempts a failed state for matching errors with backoff; `Catch` routes to a fallback state when retries are exhausted or for non-retryable errors, optionally keeping error info.",
+     "body_md": "**Short answer:** `Retry` re-attempts a failed state for matching errors with backoff; `Catch` routes to a fallback state when retries are exhausted or for non-retryable errors, optionally keeping error info.\n\n```json\n\"Retry\": [\n  { \"ErrorEquals\": [\"ThrottlingException\", \"States.Timeout\"], \"IntervalSeconds\": 1,\n    \"BackoffRate\": 2.0, \"MaxAttempts\": 5, \"MaxDelaySeconds\": 30, \"JitterStrategy\": \"FULL\" },\n  { \"ErrorEquals\": [\"States.TaskFailed\"], \"MaxAttempts\": 1 }\n],\n\"Catch\": [\n  { \"ErrorEquals\": [\"ValidationError\"], \"Next\": \"RejectDocument\" },\n  { \"ErrorEquals\": [\"States.ALL\"], \"Output\": { \"error\": \"{% $states.errorOutput %}\" }, \"Next\": \"MarkFailed\" }\n]\n```\nOrder matters: first matching retrier/catcher wins; put `States.ALL` last. Don't retry permanent errors (validation, AccessDenied).\n\n**Built-in error names:** `States.ALL`, `States.Timeout`, `States.HeartbeatTimeout`, `States.TaskFailed`, `States.Permissions`, `States.DataLimitExceeded`, plus service errors (e.g., `Lambda.ServiceException`)."
+    },
+    {
+     "id": "Q13",
+     "title": "Compensation (saga pattern)",
+     "short_md": "Distributed steps can't share one database transaction. On failure, run **compensating actions** in reverse to undo completed steps.",
+     "body_md": "**Short answer:** Distributed steps can't share one database transaction. On failure, run **compensating actions** in reverse to undo completed steps.\n\n```\n ReserveInventory ─► ChargePayment ─► CreateShipment\n        │                 │ fail            │ fail\n        │                 ▼                 ▼\n        │           RefundPayment ◄── CancelShipment...\n        ▼\n  ReleaseInventory  (compensations: idempotent, retried, logged)\n```\nImplement with `Catch` on each step routing to compensation states. Compensations must be idempotent."
+    },
+    {
+     "id": "Q14",
+     "title": "Redrive",
+     "short_md": "Failed Standard executions can be **redriven** from the failed state (not from scratch) after fixing the cause — keeps completed steps' results. Distributed Map supports redrive of failed child executions.",
+     "body_md": "Failed Standard executions can be **redriven** from the failed state (not from scratch) after fixing the cause — keeps completed steps' results. Distributed Map supports redrive of failed child executions."
+    }
+   ]
+  },
+  {
+   "id": "integration-patterns",
+   "num": 5,
+   "title": "Integration patterns",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q15",
+     "title": "Three service integration patterns",
+     "short_md": "Also **AWS SDK integrations** (`arn:aws:states:::aws-sdk:dynamodb:getItem`, thousands of APIs) and **HTTP Task** (call any HTTPS API with EventBridge connection auth).",
+     "body_md": "| Pattern | Resource suffix | Behaviour |\n|---|---|---|\n| **Request Response** | (none) `arn:aws:states:::sqs:sendMessage` | call API, move on immediately |\n| **Run a Job (.sync)** | `arn:aws:states:::ecs:runTask.sync` | start a job and **wait until it completes** (ECS, Batch, Glue, CodeBuild, nested Step Functions, Bedrock jobs…) |\n| **Wait for Callback (.waitForTaskToken)** | `arn:aws:states:::sqs:sendMessage.waitForTaskToken` | pass a **task token** to an external worker/human; pause until `SendTaskSuccess/Failure(token)` |\n\nAlso **AWS SDK integrations** (`arn:aws:states:::aws-sdk:dynamodb:getItem`, thousands of APIs) and **HTTP Task** (call any HTTPS API with EventBridge connection auth)."
+    },
+    {
+     "id": "Q16",
+     "title": "Task tokens and the callback pattern (human approval)",
+     "short_md": "Step Functions ── state \"WaitForApproval\" (.waitForTaskToken, HeartbeatSeconds/TimeoutSeconds) │  sends {token, docId, summary} to SQS / Lambda → stores token in DynamoDB → emails reviewer ▼  (execution paused — no compute cost) Reviewer clicks Approve in app ─► API verifies reviewer identity & permission ─► sfn.send_task_success(taskToken=token, output='{\"approved\": true, \"by\": \"u7\"}') Step Functions resumes at next state",
+     "body_md": "```\n Step Functions ── state \"WaitForApproval\" (.waitForTaskToken, HeartbeatSeconds/TimeoutSeconds)\n     │  sends {token, docId, summary} to SQS / Lambda → stores token in DynamoDB → emails reviewer\n     ▼  (execution paused — no compute cost)\n Reviewer clicks Approve in app ─► API verifies reviewer identity & permission\n     ─► sfn.send_task_success(taskToken=token, output='{\"approved\": true, \"by\": \"u7\"}')\n Step Functions resumes at next state\n```\n**Security:** the task token is a capability — store it server-side, never expose it to untrusted clients, verify the approver before calling `SendTaskSuccess`."
+    },
+    {
+     "id": "Q17",
+     "title": "Orchestrating asynchronous Textract",
+     "short_md": "Textract async APIs (`StartDocumentAnalysis`) finish later and notify SNS. Pattern: 1. Task: `aws-sdk:textract:startDocumentAnalysis` with `ClientRequestToken` (idempotent) and `NotificationChannel` (SNS). 2. Store `JobId` → task token mapping (or use `.waitForTaskToken` via a Lambda that records the token). 3. SNS → Lambda: on completion, look up token → `SendTaskSuccess`. 4. Fetch results (paginated `GetDocumentAnalysis`) → save to S3. Alternative: polling loop with `Wait` + `GetDocumentAnalysis` + `Choice` (simpler, more transitions).",
+     "body_md": "Textract async APIs (`StartDocumentAnalysis`) finish later and notify SNS. Pattern:\n1. Task: `aws-sdk:textract:startDocumentAnalysis` with `ClientRequestToken` (idempotent) and `NotificationChannel` (SNS).\n2. Store `JobId` → task token mapping (or use `.waitForTaskToken` via a Lambda that records the token).\n3. SNS → Lambda: on completion, look up token → `SendTaskSuccess`.\n4. Fetch results (paginated `GetDocumentAnalysis`) → save to S3.\nAlternative: polling loop with `Wait` + `GetDocumentAnalysis` + `Choice` (simpler, more transitions)."
+    },
+    {
+     "id": "Q18",
+     "title": "Calling Bedrock / LLMs from Step Functions",
+     "short_md": "Optimised integration `arn:aws:states:::bedrock:invokeModel` (and Converse via SDK integration) — good for **deterministic, bounded** LLM steps (classify, extract, summarise) with Retry on throttling. Store large prompts/outputs in S3.",
+     "body_md": "Optimised integration `arn:aws:states:::bedrock:invokeModel` (and Converse via SDK integration) — good for **deterministic, bounded** LLM steps (classify, extract, summarise) with Retry on throttling. Store large prompts/outputs in S3."
+    },
+    {
+     "id": "Q19",
+     "title": "Should an LLM agent loop live in Step Functions?",
+     "short_md": "Usually **not the inner reasoning loop** — agent loops are dynamic, chatty (many transitions = cost, payload limits), and better handled by LangGraph/Strands/AgentCore. **Do** use Step Functions to orchestrate the **business process around the agent**: start job, call agent (AgentCore/Lambda), human approval with task tokens, compensation, notifications. Express workflows can work for short bounded loops.",
+     "body_md": "**Short answer:** Usually **not the inner reasoning loop** — agent loops are dynamic, chatty (many transitions = cost, payload limits), and better handled by LangGraph/Strands/AgentCore. **Do** use Step Functions to orchestrate the **business process around the agent**: start job, call agent (AgentCore/Lambda), human approval with task tokens, compensation, notifications. Express workflows can work for short bounded loops."
+    }
+   ]
+  },
+  {
+   "id": "parallelism-parallel-map-distributed-map",
+   "num": 6,
+   "title": "Parallelism: Parallel, Map, Distributed Map",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q20",
+     "title": "Parallel vs Map",
+     "short_md": "- **Parallel** — a **fixed** set of different branches (e.g., OCR + virus scan + metadata extraction at once); waits for all; output = array of branch outputs; if one branch fails (uncaught), the state fails. - **Map** — same sub-workflow for **each item** of an array (dynamic count).",
+     "body_md": "- **Parallel** — a **fixed** set of different branches (e.g., OCR + virus scan + metadata extraction at once); waits for all; output = array of branch outputs; if one branch fails (uncaught), the state fails.\n- **Map** — same sub-workflow for **each item** of an array (dynamic count)."
+    },
+    {
+     "id": "Q21",
+     "title": "Map concurrency controls",
+     "short_md": "`MaxConcurrency` (inline Map default 0 = as many as possible, practically limited ~40) caps parallel iterations → protect rate-limited downstreams (Bedrock, Textract). Combine with Retry + jitter. `ToleratedFailurePercentage/Count` lets a Map succeed when some items fail.",
+     "body_md": "`MaxConcurrency` (inline Map default 0 = as many as possible, practically limited ~40) caps parallel iterations → protect rate-limited downstreams (Bedrock, Textract). Combine with Retry + jitter. `ToleratedFailurePercentage/Count` lets a Map succeed when some items fail."
+    },
+    {
+     "id": "Q22",
+     "title": "Distributed Map",
+     "short_md": "Map mode for **massive scale**: each item (or batch) runs as a **child workflow execution** (Express or Standard), up to **10,000 parallel** child executions, reading items directly from **S3** (objects list, CSV/JSON/JSONL, manifest) and writing results to S3. Use for processing millions of documents/records.",
+     "body_md": "**Short answer:** Map mode for **massive scale**: each item (or batch) runs as a **child workflow execution** (Express or Standard), up to **10,000 parallel** child executions, reading items directly from **S3** (objects list, CSV/JSON/JSONL, manifest) and writing results to S3. Use for processing millions of documents/records.\n\n```json\n\"ProcessAllDocs\": {\n  \"Type\": \"Map\",\n  \"ItemReader\": { \"Resource\": \"arn:aws:states:::s3:listObjectsV2\",\n                  \"Arguments\": { \"Bucket\": \"incoming-docs\", \"Prefix\": \"2026-10/\" } },\n  \"ItemBatcher\": { \"MaxItemsPerBatch\": 20 },\n  \"MaxConcurrency\": 200,\n  \"ToleratedFailurePercentage\": 2,\n  \"ItemProcessor\": {\n    \"ProcessorConfig\": { \"Mode\": \"DISTRIBUTED\", \"ExecutionType\": \"EXPRESS\" },\n    \"StartAt\": \"Extract\", \"States\": { \"Extract\": { \"Type\": \"Task\", \"...\": \"...\" , \"End\": true } }\n  },\n  \"ResultWriter\": { \"Resource\": \"arn:aws:states:::s3:putObject\",\n                    \"Arguments\": { \"Bucket\": \"results\", \"Prefix\": \"run-1/\" } },\n  \"End\": true\n}\n```"
+    },
+    {
+     "id": "Q23",
+     "title": "Nested workflows — pitfalls",
+     "short_md": "Child state machines (`states:startExecution.sync:2`) improve modularity and reuse, but: more executions to trace, limits on history size, permissions for the parent to start children, harder debugging across executions, and cost multiplication. Use clear naming and pass correlation IDs.",
+     "body_md": "Child state machines (`states:startExecution.sync:2`) improve modularity and reuse, but: more executions to trace, limits on history size, permissions for the parent to start children, harder debugging across executions, and cost multiplication. Use clear naming and pass correlation IDs."
+    }
+   ]
+  },
+  {
+   "id": "operations-versions-testing-security-cost",
+   "num": 7,
+   "title": "Operations: versions, testing, security, cost",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q24",
+     "title": "Versions and aliases",
+     "short_md": "Publish immutable **versions** of a state machine; **aliases** point to versions and can split traffic (e.g., 90/10) for safe rollout. In-flight executions keep running on the version they started with.",
+     "body_md": "Publish immutable **versions** of a state machine; **aliases** point to versions and can split traffic (e.g., 90/10) for safe rollout. In-flight executions keep running on the version they started with."
+    },
+    {
+     "id": "Q25",
+     "title": "Testing state machines",
+     "short_md": "**TestState API** — test a single state (with mocked input/permissions) without deploying; Step Functions Local / mocked service integrations for local tests; unit-test Lambda code separately; integration tests in a sandbox account; validate ASL with `aws stepfunctions validate-state-machine-definition`.",
+     "body_md": "**TestState API** — test a single state (with mocked input/permissions) without deploying; Step Functions Local / mocked service integrations for local tests; unit-test Lambda code separately; integration tests in a sandbox account; validate ASL with `aws stepfunctions validate-state-machine-definition`."
+    },
+    {
+     "id": "Q26",
+     "title": "IAM for Step Functions",
+     "short_md": "The state machine's **execution role** must allow each integration (`lambda:InvokeFunction` on specific ARNs, `dynamodb:PutItem`, `ecs:RunTask` + `iam:PassRole` for task roles, `events:PutRule` etc. for `.sync`). Callers need `states:StartExecution`. Callback workers need `states:SendTaskSuccess/Failure/Heartbeat`. Least privilege per state machine.",
+     "body_md": "The state machine's **execution role** must allow each integration (`lambda:InvokeFunction` on specific ARNs, `dynamodb:PutItem`, `ecs:RunTask` + `iam:PassRole` for task roles, `events:PutRule` etc. for `.sync`). Callers need `states:StartExecution`. Callback workers need `states:SendTaskSuccess/Failure/Heartbeat`. Least privilege per state machine."
+    },
+    {
+     "id": "Q27",
+     "title": "Preventing secrets leakage in execution history",
+     "short_md": "Execution history stores **inputs/outputs of every state** (visible to anyone with `states:GetExecutionHistory`). Don't pass secrets or raw PII through state data — pass references; fetch secrets inside tasks (Lambda/HTTP Task with EventBridge connections storing credentials in Secrets Manager); encrypt with customer-managed KMS keys; restrict console/API access; for Express, control logging level (`includeExecutionData`).",
+     "body_md": "Execution history stores **inputs/outputs of every state** (visible to anyone with `states:GetExecutionHistory`). Don't pass secrets or raw PII through state data — pass references; fetch secrets inside tasks (Lambda/HTTP Task with EventBridge connections storing credentials in Secrets Manager); encrypt with customer-managed KMS keys; restrict console/API access; for Express, control logging level (`includeExecutionData`)."
+    },
+    {
+     "id": "Q28",
+     "title": "Cost considerations",
+     "short_md": "Standard: **per state transition** — chatty loops (polling every 5 s for an hour) and big Maps get expensive → use callbacks instead of polling, batch items, use Express children for high-volume steps. Express: per request + duration × memory — cheap for short, high-volume. Waiting in Standard is free of compute; waiting in Lambda isn't.",
+     "body_md": "Standard: **per state transition** — chatty loops (polling every 5 s for an hour) and big Maps get expensive → use callbacks instead of polling, batch items, use Express children for high-volume steps. Express: per request + duration × memory — cheap for short, high-volume. Waiting in Standard is free of compute; waiting in Lambda isn't."
+    },
+    {
+     "id": "Q29",
+     "title": "Observability",
+     "short_md": "Console execution graph + event history (Standard), CloudWatch metrics (`ExecutionsFailed`, `ExecutionsTimedOut`, `ExecutionThrottled`), CloudWatch Logs (Express and optional for Standard), X-Ray tracing, EventBridge events on execution status changes → alerts.",
+     "body_md": "Console execution graph + event history (Standard), CloudWatch metrics (`ExecutionsFailed`, `ExecutionsTimedOut`, `ExecutionThrottled`), CloudWatch Logs (Express and optional for Standard), X-Ray tracing, EventBridge events on execution status changes → alerts."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 8,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q30",
+     "title": "A workflow failed — how do you troubleshoot?",
+     "short_md": "Open the execution → find the failed state → read **error + cause** → check the input to that state → check the downstream service logs (Lambda logs via request ID) → common causes: `States.Permissions` (execution role), payload > 256 KB (`States.DataLimitExceeded`), JSONata/JSONPath expression error, timeout, throttling without retry. Fix → **redrive** from failure.",
+     "body_md": "Open the execution → find the failed state → read **error + cause** → check the input to that state → check the downstream service logs (Lambda logs via request ID) → common causes: `States.Permissions` (execution role), payload > 256 KB (`States.DataLimitExceeded`), JSONata/JSONPath expression error, timeout, throttling without retry. Fix → **redrive** from failure."
+    },
+    {
+     "id": "Q31",
+     "title": "A Standard execution is stuck \"Running\" for days in a callback state",
+     "short_md": "The task token was never returned: worker crashed, SNS/SQS message lost or went to DLQ, token not stored correctly, approver never acted. Fix: set `TimeoutSeconds` + `HeartbeatSeconds`, alert on long-running executions, DLQ monitoring for the callback queue, admin path to `SendTaskFailure`.",
+     "body_md": "The task token was never returned: worker crashed, SNS/SQS message lost or went to DLQ, token not stored correctly, approver never acted. Fix: set `TimeoutSeconds` + `HeartbeatSeconds`, alert on long-running executions, DLQ monitoring for the callback queue, admin path to `SendTaskFailure`."
+    },
+    {
+     "id": "Q32",
+     "title": "Resilient Textract pipeline for 300 requests/min",
+     "short_md": "S3 upload ─► EventBridge ─► SQS (buffer) ─► EventBridge Pipe / Lambda starts Standard execution name = doc hash (dedupe) Workflow: register job (DynamoDB conditional) ─► Textract async start (ClientRequestToken) ─► wait for SNS callback (token, timeout 30 min) ─► Map pages (MaxConcurrency to fit Bedrock quota) ─► LLM extraction with Retry/backoff on throttling ─► validate ─► low confidence → human review token ─► save to S3/DynamoDB ─► EventBridge \"DocumentProcessed\" Catch → mark failed + DLQ + alarm; redrive after fixes",
+     "body_md": "```\n S3 upload ─► EventBridge ─► SQS (buffer) ─► EventBridge Pipe / Lambda starts Standard execution\n                                              name = doc hash (dedupe)\n Workflow: register job (DynamoDB conditional) ─► Textract async start (ClientRequestToken)\n   ─► wait for SNS callback (token, timeout 30 min) ─► Map pages (MaxConcurrency to fit Bedrock quota)\n   ─► LLM extraction with Retry/backoff on throttling ─► validate ─► low confidence → human review token\n   ─► save to S3/DynamoDB ─► EventBridge \"DocumentProcessed\"\n Catch → mark failed + DLQ + alarm; redrive after fixes\n```\nTalk about quotas (Textract TPS, Bedrock tokens/min), concurrency caps, idempotency, payload references, cost (transitions)."
+    },
+    {
+     "id": "Q33",
+     "title": "Users want a synchronous API that runs a 3-step workflow in < 10 s",
+     "short_md": "Express workflow with `StartSyncExecution` via API Gateway direct integration; steps with short timeouts; return result directly. If it may exceed API Gateway timeout, switch to async (202 + polling/websocket).",
+     "body_md": "Express workflow with `StartSyncExecution` via API Gateway direct integration; steps with short timeouts; return result directly. If it may exceed API Gateway timeout, switch to async (202 + polling/websocket)."
+    },
+    {
+     "id": "Q34",
+     "title": "A Map over 50,000 items is slow/expensive",
+     "short_md": "Use **Distributed Map** with item batching, Express child workflows, S3 item reader/result writer, sensible `MaxConcurrency`, tolerate a small failure percentage, and redrive failures.",
+     "body_md": "Use **Distributed Map** with item batching, Express child workflows, S3 item reader/result writer, sensible `MaxConcurrency`, tolerate a small failure percentage, and redrive failures."
+    },
+    {
+     "id": "Q35",
+     "title": "Step Functions vs Lambda durable functions vs LangGraph vs SQS workers — how do you choose?",
+     "short_md": "Often combined: Step Functions orchestrates the process; one step invokes a LangGraph agent.",
+     "body_md": "| Need | Choose |\n|---|---|\n| Visual, auditable business workflow; many AWS integrations; human approval; long waits | **Step Functions** |\n| Same, but code-first inside one Lambda | **Lambda durable functions** |\n| LLM agent reasoning with dynamic tool loops, conversation state, HITL | **LangGraph** (on AgentCore/ECS) |\n| Simple high-throughput background jobs | **SQS + workers** |\n\nOften combined: Step Functions orchestrates the process; one step invokes a LangGraph agent."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 9,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| ASL | JSON definition of states & transitions |\n| Standard vs Express | 1 yr, exactly-once, per transition, history vs 5 min, at-least-once, cheap high-volume |\n| States | Task, Choice, Parallel, Map, Wait, Pass, Succeed, Fail |\n| JSONata | `Arguments` / `Output` / `{% %}`; `Assign` variables |\n| Payload | 256 KB → pass S3 references |\n| Retry/Catch | backoff + jitter for transient; catch to compensation |\n| Integration patterns | request-response, `.sync`, `.waitForTaskToken` |\n| Task token | capability; verify approver; set heartbeat/timeout |\n| Map | MaxConcurrency, tolerated failures |\n| Distributed Map | 10k parallel children, S3 reader/writer |\n| Idempotent start | execution name = business key |\n| Saga | compensating steps in reverse |\n| Redrive | resume failed executions from failure point |\n| Secrets | never in state data (history is visible) |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html\n- Standard vs Express: https://docs.aws.amazon.com/step-functions/latest/dg/choosing-workflow-type.html\n- JSONata & variables: https://docs.aws.amazon.com/step-functions/latest/dg/transforming-data.html\n- Service integration patterns: https://docs.aws.amazon.com/step-functions/latest/dg/connect-to-resource.html\n- Distributed Map: https://docs.aws.amazon.com/step-functions/latest/dg/state-map-distributed.html\n- Error handling: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-error-handling.html",
+   "questions": []
+  }
+ ]
+}

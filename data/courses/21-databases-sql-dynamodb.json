@@ -1,0 +1,338 @@
+{
+ "slug": "21-databases-sql-dynamodb",
+ "num": 21,
+ "title": "Databases: SQL, PostgreSQL, DynamoDB & Caching",
+ "full_title": "Databases: SQL, PostgreSQL, DynamoDB & Caching: L2 → L3 Interview Preparation",
+ "group": "Design & Coding",
+ "accent": "#34d399",
+ "updated": "25 October 2026",
+ "level": "SQL basics → indexes & transactions → scaling → DynamoDB design → production scenarios",
+ "source": "docs/21_Databases_SQL_DynamoDB.md",
+ "question_count": 41,
+ "section_count": 10,
+ "sections": [
+  {
+   "id": "mental-model-what-happens-when-you-run-a-query",
+   "num": 1,
+   "title": "Mental model: what happens when you run a query",
+   "intro_md": "```\n app (FastAPI) ── connection pool ──► DB server\n                                        │\n     SQL text ──► parser ──► planner/optimizer ──► executor ──► storage\n                               │  \"use index on       │          ├─ table (heap) pages\n                               │   orders(user_id)?   │          ├─ index pages (B-tree)\n                               │   or scan all rows?\" │          └─ write-ahead log (WAL) → durability\n                               ▼                      ▼\n                       picks cheapest plan     reads pages (from memory cache or disk)\n```\n\n**Three ideas explain most database interview questions:**\n1. **Indexes** decide whether a query touches 10 rows or 10 million.\n2. **Transactions + isolation** decide what concurrent users can see and overwrite.\n3. **Access patterns** decide the schema — especially in DynamoDB, where you design tables *around the queries*, not around the entities.\n\n**Relational vs DynamoDB in one picture:**\n```\nPostgreSQL / Aurora                         DynamoDB\n─────────────────────                       ─────────────────────────────\nflexible queries (JOIN, GROUP BY, ad hoc)   only fast lookups by key you designed\nschema enforced, normalised                 schemaless items, denormalised\nscale up + read replicas                    scales horizontally automatically (partitions)\n\"what questions will I ask?\" → later        \"what questions will I ask?\" → BEFORE you design\n```",
+   "questions": []
+  },
+  {
+   "id": "sql-fundamentals",
+   "num": 2,
+   "title": "SQL fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "Types of JOIN",
+     "short_md": "A JOIN combines rows from two tables on a condition. **INNER** keeps only matches; **LEFT** keeps all left rows (NULLs where no match); **RIGHT** the reverse; **FULL OUTER** keeps everything; **CROSS** is every combination.",
+     "body_md": "**Short answer:** A JOIN combines rows from two tables on a condition. **INNER** keeps only matches; **LEFT** keeps all left rows (NULLs where no match); **RIGHT** the reverse; **FULL OUTER** keeps everything; **CROSS** is every combination.\n\n```\nusers                orders\nid | name            id | user_id | total\n1  | Asha            10 | 1       | 500\n2  | Ravi            11 | 1       | 200\n3  | Meena           12 | 2       | 900\n\nINNER JOIN → Asha 500, Asha 200, Ravi 900          (Meena gone: no orders)\nLEFT JOIN  → Asha 500, Asha 200, Ravi 900, Meena NULL\n```\n```sql\n-- users who have never ordered (classic \"anti-join\")\nSELECT u.id, u.name\nFROM users u LEFT JOIN orders o ON o.user_id = u.id\nWHERE o.id IS NULL;\n```\n\n**Pitfall:** putting a condition on the right table in `WHERE` turns a LEFT JOIN into an INNER JOIN (`WHERE o.status = 'paid'` removes the NULL rows). Put it in the `ON` clause instead."
+    },
+    {
+     "id": "Q02",
+     "title": "`WHERE` vs `HAVING`, and the logical order of a query",
+     "short_md": "`WHERE` filters **rows before grouping**; `HAVING` filters **groups after aggregation**.",
+     "body_md": "**Short answer:** `WHERE` filters **rows before grouping**; `HAVING` filters **groups after aggregation**.\n\n```\nLogical order:  FROM/JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT\n```\n```sql\n-- customers with more than 3 paid orders this year\nSELECT user_id, COUNT(*) AS n, SUM(total) AS spend\nFROM orders\nWHERE status = 'paid' AND created_at >= '2026-01-01'   -- row filter\nGROUP BY user_id\nHAVING COUNT(*) > 3                                     -- group filter\nORDER BY spend DESC;\n```\nThis order explains why you can't use a `SELECT` alias inside `WHERE` (SELECT runs later)."
+    },
+    {
+     "id": "Q03",
+     "title": "Subqueries vs CTEs (`WITH`)",
+     "short_md": "Both let you build a query from smaller queries. A **CTE** names an intermediate result so the query reads top-down; **recursive CTEs** walk hierarchies (org charts, folder trees). Modern Postgres usually inlines simple CTEs, so performance is similar.",
+     "body_md": "**Short answer:** Both let you build a query from smaller queries. A **CTE** names an intermediate result so the query reads top-down; **recursive CTEs** walk hierarchies (org charts, folder trees). Modern Postgres usually inlines simple CTEs, so performance is similar.\n\n```sql\nWITH recent AS (\n  SELECT user_id, SUM(total) AS spend\n  FROM orders WHERE created_at > now() - interval '30 days'\n  GROUP BY user_id\n)\nSELECT u.name, r.spend FROM recent r JOIN users u ON u.id = r.user_id\nWHERE r.spend > 1000;\n```"
+    },
+    {
+     "id": "Q04",
+     "title": "Window functions",
+     "short_md": "Window functions compute a value **across related rows without collapsing them** (unlike GROUP BY). Used for ranking, running totals, \"latest row per group\".",
+     "body_md": "**Short answer:** Window functions compute a value **across related rows without collapsing them** (unlike GROUP BY). Used for ranking, running totals, \"latest row per group\".\n\n```sql\n-- latest order per user\nSELECT * FROM (\n  SELECT o.*, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC) AS rn\n  FROM orders o\n) t WHERE rn = 1;\n\n-- running total per user\nSELECT user_id, created_at, total,\n       SUM(total) OVER (PARTITION BY user_id ORDER BY created_at) AS running_total\nFROM orders;\n```\n| Function | Ties |\n|---|---|\n| `ROW_NUMBER()` | 1,2,3,4 (no ties) |\n| `RANK()` | 1,2,2,4 (gaps) |\n| `DENSE_RANK()` | 1,2,2,3 (no gaps) |\n\nAlso `LAG()/LEAD()` (previous/next row) — e.g. time between a user's orders. Frequently asked: \"second-highest salary per department\" → `DENSE_RANK() ... WHERE rnk = 2`."
+    },
+    {
+     "id": "Q05",
+     "title": "NULL behaviour",
+     "short_md": "NULL means \"unknown\", so `NULL = NULL` is not true — use `IS NULL`. Aggregates ignore NULLs (`COUNT(col)` skips them; `COUNT(*)` doesn't). `NOT IN (subquery)` returns nothing if the subquery contains a NULL — prefer `NOT EXISTS`.",
+     "body_md": "**Short answer:** NULL means \"unknown\", so `NULL = NULL` is not true — use `IS NULL`. Aggregates ignore NULLs (`COUNT(col)` skips them; `COUNT(*)` doesn't). `NOT IN (subquery)` returns nothing if the subquery contains a NULL — prefer `NOT EXISTS`."
+    },
+    {
+     "id": "Q06",
+     "title": "`DELETE` vs `TRUNCATE` vs `DROP`; `UNION` vs `UNION ALL`",
+     "short_md": "- `DELETE` removes chosen rows (logged, can be filtered, fires triggers). `TRUNCATE` empties the whole table fast. `DROP` removes the table itself. - `UNION` removes duplicates (extra sort/hash work); `UNION ALL` keeps all rows — use it when duplicates are impossible or wanted.",
+     "body_md": "- `DELETE` removes chosen rows (logged, can be filtered, fires triggers). `TRUNCATE` empties the whole table fast. `DROP` removes the table itself.\n- `UNION` removes duplicates (extra sort/hash work); `UNION ALL` keeps all rows — use it when duplicates are impossible or wanted."
+    },
+    {
+     "id": "Q07",
+     "title": "Upserts",
+     "short_md": "Insert, or update if the key already exists — atomically. Essential for idempotent writes.",
+     "body_md": "**Short answer:** Insert, or update if the key already exists — atomically. Essential for idempotent writes.\n\n```sql\nINSERT INTO job_status (job_id, status, updated_at)\nVALUES ($1, 'RUNNING', now())\nON CONFLICT (job_id) DO UPDATE\nSET status = EXCLUDED.status, updated_at = EXCLUDED.updated_at;\n```\n**Pitfall:** \"SELECT, then INSERT if missing\" in app code is a race — two requests both see \"missing\". Use a unique constraint + upsert."
+    }
+   ]
+  },
+  {
+   "id": "indexes-query-performance",
+   "num": 3,
+   "title": "Indexes & query performance",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q08",
+     "title": "What is an index and how does a B-tree work?",
+     "short_md": "An index is a separate sorted structure that maps column values → row locations, so the database can find rows without scanning the whole table. The default is a **B-tree**: a shallow balanced tree (3–4 levels even for millions of rows), giving O(log n) lookups and ordered range scans.",
+     "body_md": "**Short answer:** An index is a separate sorted structure that maps column values → row locations, so the database can find rows without scanning the whole table. The default is a **B-tree**: a shallow balanced tree (3–4 levels even for millions of rows), giving O(log n) lookups and ordered range scans.\n\n```\n                     [ 50 | 100 ]                    ← root\n              ┌──────────┼───────────┐\n        [10|20|30]   [60|70|80]   [120|150]          ← internal pages\n           │             │             │\n     leaf pages: sorted keys → row pointers (and linked left↔right for range scans)\n\nWHERE user_id = 70           → walk root → middle → leaf: ~3 page reads instead of millions\nWHERE created_at BETWEEN a,b → find a, then walk the linked leaves until b\n```\n\n**Cost of an index:** every INSERT/UPDATE/DELETE must update it too, and it uses storage. Index for your real queries, not every column."
+    },
+    {
+     "id": "Q09",
+     "title": "Composite indexes and the leftmost-prefix rule",
+     "short_md": "An index on `(a, b, c)` is sorted by a, then b, then c — like a phone book sorted by surname then first name. It helps queries that filter on **a**, **a+b**, or **a+b+c**, but not on **b alone**.",
+     "body_md": "**Short answer:** An index on `(a, b, c)` is sorted by a, then b, then c — like a phone book sorted by surname then first name. It helps queries that filter on **a**, **a+b**, or **a+b+c**, but not on **b alone**.\n\n```sql\nCREATE INDEX idx_orders_user_status_date ON orders (user_id, status, created_at);\n\nWHERE user_id = 7                                   -- ✅ uses index\nWHERE user_id = 7 AND status = 'paid'               -- ✅\nWHERE user_id = 7 AND status = 'paid' ORDER BY created_at DESC LIMIT 20   -- ✅ also avoids sort\nWHERE status = 'paid'                               -- ❌ can't use (not leftmost)\n```\n**Rule of thumb for column order:** equality filters first, then range/sort columns.\n\n**Covering index:** if the index contains every column the query needs (`INCLUDE (total)` in Postgres), the DB answers from the index alone (\"index-only scan\")."
+    },
+    {
+     "id": "Q10",
+     "title": "When does the database NOT use your index?",
+     "short_md": "- Functions on the column: `WHERE lower(email) = ...` → create an **expression index** on `lower(email)`. - Leading wildcard: `LIKE '%abc'` (B-tree can't help; use trigram/full-text index). - Type mismatch / implicit casts (comparing text column to a number). - Low selectivity: `WHERE is_active = true` on 95% of rows — scanning is cheaper. - Stale statistics → planner misestimates (run `ANALYZE`). - `OR` across different columns (sometimes) — rewrite or use separate indexes.",
+     "body_md": "- Functions on the column: `WHERE lower(email) = ...` → create an **expression index** on `lower(email)`.\n- Leading wildcard: `LIKE '%abc'` (B-tree can't help; use trigram/full-text index).\n- Type mismatch / implicit casts (comparing text column to a number).\n- Low selectivity: `WHERE is_active = true` on 95% of rows — scanning is cheaper.\n- Stale statistics → planner misestimates (run `ANALYZE`).\n- `OR` across different columns (sometimes) — rewrite or use separate indexes."
+    },
+    {
+     "id": "Q11",
+     "title": "Reading `EXPLAIN ANALYZE`",
+     "short_md": "`EXPLAIN` shows the plan; `EXPLAIN ANALYZE` runs it and shows actual times and row counts. Look for **Seq Scan on big tables**, **estimated vs actual rows far apart**, expensive **Sort**/**Hash** spilling to disk, and **nested loops over many rows**.",
+     "body_md": "**Short answer:** `EXPLAIN` shows the plan; `EXPLAIN ANALYZE` runs it and shows actual times and row counts. Look for **Seq Scan on big tables**, **estimated vs actual rows far apart**, expensive **Sort**/**Hash** spilling to disk, and **nested loops over many rows**.\n\n```\nEXPLAIN ANALYZE SELECT * FROM orders WHERE user_id = 7 ORDER BY created_at DESC LIMIT 20;\n\nLimit  (actual time=0.05..0.09 rows=20)\n  ->  Index Scan Backward using idx_orders_user_status_date on orders\n        Index Cond: (user_id = 7)                     ← good: index, no separate sort\n```\nBefore the index you'd see `Seq Scan on orders (rows=5,000,000)` + `Sort` — that's the fix target."
+    },
+    {
+     "id": "Q12",
+     "title": "The N+1 query problem",
+     "short_md": "Loading a list with 1 query, then running 1 more query **per item** → N+1 round trips. Fine with 5 rows, terrible with 500.",
+     "body_md": "**Short answer:** Loading a list with 1 query, then running 1 more query **per item** → N+1 round trips. Fine with 5 rows, terrible with 500.\n\n```python\n# ❌ N+1: 1 query for orders + 1 query per order for its user\norders = session.scalars(select(Order).limit(100)).all()\nfor o in orders:\n    print(o.user.name)          # lazy load → 100 extra queries\n\n# ✅ eager load: 2 queries total (or 1 with a JOIN)\norders = session.scalars(\n    select(Order).options(selectinload(Order.user)).limit(100)\n).all()\n```\nDetect it with query logs/APM (many identical queries per request). Also applies to APIs (calling a service per item → batch endpoint)."
+    },
+    {
+     "id": "Q13",
+     "title": "Pagination: OFFSET vs keyset (cursor)",
+     "short_md": "`OFFSET 100000 LIMIT 20` still reads and discards 100,000 rows → slow on deep pages, and rows shift if data changes. **Keyset pagination** remembers the last seen key and continues from it using the index.",
+     "body_md": "**Short answer:** `OFFSET 100000 LIMIT 20` still reads and discards 100,000 rows → slow on deep pages, and rows shift if data changes. **Keyset pagination** remembers the last seen key and continues from it using the index.\n\n```sql\n-- page 1\nSELECT * FROM orders WHERE user_id = 7 ORDER BY created_at DESC, id DESC LIMIT 20;\n-- next page: pass the last row's (created_at, id) as an opaque cursor\nSELECT * FROM orders\nWHERE user_id = 7 AND (created_at, id) < ($last_created_at, $last_id)\nORDER BY created_at DESC, id DESC LIMIT 20;\n```\nAdd a tie-breaker (`id`) so ordering is unique. (API side: 20 Q05.)"
+    }
+   ]
+  },
+  {
+   "id": "transactions-isolation-locking",
+   "num": 4,
+   "title": "Transactions, isolation & locking",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q14",
+     "title": "ACID",
+     "short_md": "async with session.begin():               # one transaction await debit(session, from_acct, 100) await credit(session, to_acct, 100)   # exception here → both rolled back",
+     "body_md": "| Letter | Meaning | Example |\n|---|---|---|\n| **A**tomicity | all statements commit or none | debit + credit both happen or neither |\n| **C**onsistency | constraints hold after commit | no negative balance if a CHECK forbids it |\n| **I**solation | concurrent transactions don't see each other's half-done work (to a chosen degree) | see Q15 |\n| **D**urability | committed = survives a crash | write-ahead log flushed before \"COMMIT OK\" |\n\n```python\nasync with session.begin():               # one transaction\n    await debit(session, from_acct, 100)\n    await credit(session, to_acct, 100)   # exception here → both rolled back\n```"
+    },
+    {
+     "id": "Q15",
+     "title": "Isolation levels and the anomalies they prevent",
+     "short_md": "Isolation is a trade-off between correctness and concurrency. Stronger levels prevent more anomalies but cause more blocking or retries.",
+     "body_md": "**Short answer:** Isolation is a trade-off between correctness and concurrency. Stronger levels prevent more anomalies but cause more blocking or retries.\n\n| Anomaly | What happens |\n|---|---|\n| Dirty read | you read another transaction's **uncommitted** change, which then rolls back |\n| Non-repeatable read | you read a row twice in one transaction and get different values |\n| Phantom read | you re-run a range query and **new rows** appear |\n| Lost update | two transactions read the same value, both write; one write disappears |\n| Write skew | two transactions each check a rule, each update different rows, together break the rule |\n\n| Level | Prevents | Default in |\n|---|---|---|\n| Read Uncommitted | nothing much (Postgres: behaves exactly like Read Committed — never shows uncommitted data) | — |\n| **Read Committed** | dirty reads | **PostgreSQL**, Oracle, SQL Server |\n| **Repeatable Read** | + non-repeatable reads (Postgres: also phantoms via snapshot) | **MySQL InnoDB** |\n| **Serializable** | everything; result equals *some* serial order | opt-in; on failure Postgres raises SQLSTATE `40001` → roll back and retry the **whole** transaction |\n\n**Lost-update example** (two support agents edit a ticket's counter at once):\n```\nT1: SELECT count FROM t WHERE id=1  → 5\nT2: SELECT count FROM t WHERE id=1  → 5\nT1: UPDATE t SET count = 6 ...       (5+1)\nT2: UPDATE t SET count = 6 ...       (5+1)  ← one increment lost\nFix: UPDATE t SET count = count + 1 (atomic), or SELECT ... FOR UPDATE, or optimistic version check (Q17)\n```"
+    },
+    {
+     "id": "Q16",
+     "title": "Locks, `SELECT ... FOR UPDATE`, and deadlocks",
+     "short_md": "Writes take **row locks** held until commit. `SELECT ... FOR UPDATE` locks rows you read so nobody changes them before you write. A **deadlock** is two transactions each waiting for a lock the other holds; the DB detects it and kills one.",
+     "body_md": "**Short answer:** Writes take **row locks** held until commit. `SELECT ... FOR UPDATE` locks rows you read so nobody changes them before you write. A **deadlock** is two transactions each waiting for a lock the other holds; the DB detects it and kills one.\n\n```\nT1 locks account A → wants B\nT2 locks account B → wants A      → deadlock → DB aborts one (\"deadlock detected\")\nFix: always lock in the same order (e.g. by ascending id), keep transactions short, retry on deadlock errors.\n```\n\n**Job-queue trick:** `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 10` lets many workers grab different pending jobs from one table without blocking each other."
+    },
+    {
+     "id": "Q17",
+     "title": "Pessimistic vs optimistic concurrency",
+     "short_md": "UPDATE documents SET body = $1, version = version + 1 WHERE id = $2 AND version = $3;     -- 0 rows updated → someone else saved first → 409 Conflict",
+     "body_md": "| | Pessimistic | Optimistic |\n|---|---|---|\n| How | lock first (`FOR UPDATE`) | no lock; check a `version` column on update |\n| Best when | conflicts are frequent, short transactions | conflicts rare, user think-time between read and write (forms, UIs) |\n| Failure mode | blocking, deadlocks | update affects 0 rows → tell user / retry |\n\n```sql\nUPDATE documents SET body = $1, version = version + 1\nWHERE id = $2 AND version = $3;     -- 0 rows updated → someone else saved first → 409 Conflict\n```\nThis is the DB side of HTTP ETags (20 Q06)."
+    },
+    {
+     "id": "Q18",
+     "title": "Long transactions — why are they dangerous?",
+     "short_md": "Locks held longer → other requests wait; in Postgres, old row versions can't be cleaned (**VACUUM** is blocked) → table bloat; replicas may lag. **Never call an LLM, HTTP API or wait for a user inside a DB transaction.** Read → release → do slow work → short transaction to write (with an optimistic check).",
+     "body_md": "Locks held longer → other requests wait; in Postgres, old row versions can't be cleaned (**VACUUM** is blocked) → table bloat; replicas may lag. **Never call an LLM, HTTP API or wait for a user inside a DB transaction.** Read → release → do slow work → short transaction to write (with an optimistic check)."
+    },
+    {
+     "id": "Q19",
+     "title": "Transactions across services (no distributed transaction)",
+     "short_md": "You can't wrap a DB write + an SQS message + an S3 upload in one ACID transaction. Use the **transactional outbox** (write the event row in the same DB transaction; a relay publishes it), **idempotent consumers**, and **sagas** with compensation (15 Q13, 22 Q24).",
+     "body_md": "**Short answer:** You can't wrap a DB write + an SQS message + an S3 upload in one ACID transaction. Use the **transactional outbox** (write the event row in the same DB transaction; a relay publishes it), **idempotent consumers**, and **sagas** with compensation (15 Q13, 22 Q24)."
+    }
+   ]
+  },
+  {
+   "id": "schema-design-scaling-relational-databases",
+   "num": 5,
+   "title": "Schema design & scaling relational databases",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q20",
+     "title": "Normalisation vs denormalisation",
+     "short_md": "**Normalise** (each fact stored once) to avoid update anomalies; **denormalise** (copy data for faster reads) deliberately when reads dominate and you can keep copies in sync.",
+     "body_md": "**Short answer:** **Normalise** (each fact stored once) to avoid update anomalies; **denormalise** (copy data for faster reads) deliberately when reads dominate and you can keep copies in sync.\n\n```\n1NF: atomic values, no repeating groups     (no \"tags = 'a,b,c'\" column → separate table)\n2NF: no column depends on only part of a composite key\n3NF: no column depends on another non-key column  (don't store customer_city in orders)\n```\nPractical stance: start in ~3NF for OLTP; add denormalised read models, materialised views or caches for hot read paths."
+    },
+    {
+     "id": "Q21",
+     "title": "Keys and constraints",
+     "short_md": "- **Primary key:** unique row identity. Use surrogate keys (bigint identity or UUID); UUIDv7 is time-ordered, so it's friendlier to B-tree inserts than random UUIDv4. - **Foreign key:** enforces relationships (`ON DELETE` behaviour). - **UNIQUE**, **CHECK**, **NOT NULL:** push invariants into the DB — the last line of defence against app bugs and races.",
+     "body_md": "- **Primary key:** unique row identity. Use surrogate keys (bigint identity or UUID); UUIDv7 is time-ordered, so it's friendlier to B-tree inserts than random UUIDv4.\n- **Foreign key:** enforces relationships (`ON DELETE` behaviour).\n- **UNIQUE**, **CHECK**, **NOT NULL:** push invariants into the DB — the last line of defence against app bugs and races."
+    },
+    {
+     "id": "Q22",
+     "title": "Connection pooling",
+     "short_md": "Opening a DB connection is expensive (TCP + TLS + auth + a server process in Postgres). A pool keeps connections open and reuses them. Too many connections hurts the DB (memory, context switching).",
+     "body_md": "**Short answer:** Opening a DB connection is expensive (TCP + TLS + auth + a server process in Postgres). A pool keeps connections open and reuses them. Too many connections hurts the DB (memory, context switching).\n\n```\n10 ECS tasks × 4 workers × pool 10 = 400 connections   ← may exceed max_connections\nLambda at 1,000 concurrency × 1 conn = 1,000           ← use RDS Proxy\n```\n- App: SQLAlchemy `pool_size`, `max_overflow`, `pool_pre_ping=True`, `pool_recycle`.\n- Lambda/bursty: **RDS Proxy** multiplexes many clients onto fewer DB connections, and handles failover faster.\n- Size pools from the DB's limit downward, not from the app upward."
+    },
+    {
+     "id": "Q23",
+     "title": "Read replicas and replication lag",
+     "short_md": "Replicas copy the primary asynchronously and serve read traffic. Because they lag (milliseconds to seconds), a user who just wrote may not see their change if the next read goes to a replica (**read-your-writes** problem).",
+     "body_md": "**Short answer:** Replicas copy the primary asynchronously and serve read traffic. Because they lag (milliseconds to seconds), a user who just wrote may not see their change if the next read goes to a replica (**read-your-writes** problem).\n\nFixes: read from primary for a short time after a write / for that user's own data; route by consistency need; Aurora replicas share storage so lag is usually low but not zero."
+    },
+    {
+     "id": "Q24",
+     "title": "Partitioning vs sharding",
+     "short_md": "Exhaust indexes → caching → read replicas → partitioning → bigger instance **before** sharding. Or choose a DB built to scale horizontally (DynamoDB, Aurora Limitless) for that workload.",
+     "body_md": "| | Partitioning (one DB) | Sharding (many DBs) |\n|---|---|---|\n| What | split one big table into pieces (e.g. by month) inside one database | split data across separate database servers by a shard key (e.g. tenant_id) |\n| Gains | faster pruning, cheap drop of old data | write scale beyond one machine |\n| Costs | little | cross-shard queries/transactions, rebalancing, hot shards, ops complexity |\n\nExhaust indexes → caching → read replicas → partitioning → bigger instance **before** sharding. Or choose a DB built to scale horizontally (DynamoDB, Aurora Limitless) for that workload."
+    },
+    {
+     "id": "Q25",
+     "title": "Zero-downtime schema migrations (expand → migrate → contract)",
+     "short_md": "Old and new app versions run side by side during a deploy, so every migration must work with both.",
+     "body_md": "**Short answer:** Old and new app versions run side by side during a deploy, so every migration must work with both.\n\n```\nRename column \"fullname\" → \"display_name\":\n1. EXPAND   add display_name (nullable); app writes both columns; reads old\n2. MIGRATE  backfill in batches; switch reads to display_name\n3. CONTRACT after all old versions are gone, stop writing fullname, then drop it\n```\nAvoid in one step: dropping/renaming columns used by running code, adding NOT NULL without a default to a big table, long-locking index builds (Postgres: `CREATE INDEX CONCURRENTLY`). Tools: Alembic (20 Q42), Flyway, Liquibase."
+    }
+   ]
+  },
+  {
+   "id": "dynamodb",
+   "num": 6,
+   "title": "DynamoDB",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q26",
+     "title": "DynamoDB data model: partition key, sort key, items",
+     "short_md": "DynamoDB is a serverless key-value/document database. Every item has a **partition key** (decides which physical partition stores it, via a hash) and optionally a **sort key** (orders items inside that partition). You can only *efficiently* fetch by key: `GetItem` (exact key) or `Query` (one partition key + sort key conditions).",
+     "body_md": "**Short answer:** DynamoDB is a serverless key-value/document database. Every item has a **partition key** (decides which physical partition stores it, via a hash) and optionally a **sort key** (orders items inside that partition). You can only *efficiently* fetch by key: `GetItem` (exact key) or `Query` (one partition key + sort key conditions).\n\n```\nTable: Orders      PK = customer_id      SK = order_date#order_id\n┌───────────────┬──────────────────────────┬────────┬────────┐\n│ PK            │ SK                       │ total  │ status │\n├───────────────┼──────────────────────────┼────────┼────────┤\n│ CUST#42       │ 2026-10-01#A12           │ 500    │ PAID   │   ← one partition holds\n│ CUST#42       │ 2026-10-20#B07           │ 120    │ NEW    │     all of customer 42's\n│ CUST#77       │ 2026-09-15#C33           │ 900    │ PAID   │     orders, sorted by date\n└───────────────┴──────────────────────────┴────────┴────────┘\nQuery: PK = CUST#42 AND begins_with(SK, \"2026-10\")   → this month's orders, one fast read\n```\n\n**Limits to know:** item ≤ 400 KB (store big payloads in S3, keep a pointer); a Query/Scan page returns ≤ 1 MB (paginate with `LastEvaluatedKey`); `BatchGetItem` ≤ 100 items / 16 MB; `BatchWriteItem` ≤ 25 put/delete requests (batches are *not* transactions — handle `UnprocessedItems`)."
+    },
+    {
+     "id": "Q27",
+     "title": "Query vs Scan",
+     "short_md": "**Query** reads one partition key's items (fast, cheap). **Scan** reads the *entire table* then filters (slow, expensive, consumes capacity for everything read). `FilterExpression` filters *after* reading, so it doesn't reduce cost.",
+     "body_md": "**Short answer:** **Query** reads one partition key's items (fast, cheap). **Scan** reads the *entire table* then filters (slow, expensive, consumes capacity for everything read). `FilterExpression` filters *after* reading, so it doesn't reduce cost.\n\n**Rule:** if a production path needs Scan, the key design is missing an access pattern → add a GSI or redesign keys."
+    },
+    {
+     "id": "Q28",
+     "title": "Secondary indexes: GSI vs LSI",
+     "short_md": "Need: \"find order by order_id\" (no customer id known) → GSI1: PK = order_id → item       (GSI is updated asynchronously from the table) Need: \"all orders with status NEW, oldest first\" → GSI2: PK = status, SK = created_at  (careful: few statuses = hot partition → shard the key, e.g. NEW#3)",
+     "body_md": "| | GSI (Global) | LSI (Local) |\n|---|---|---|\n| Keys | any new partition + sort key | same partition key, different sort key |\n| When created | any time | only at table creation |\n| Consistency | eventually consistent only | strong or eventual |\n| Capacity | its own | shares the table's |\n\n```\nNeed: \"find order by order_id\" (no customer id known)\n→ GSI1: PK = order_id → item       (GSI is updated asynchronously from the table)\nNeed: \"all orders with status NEW, oldest first\"\n→ GSI2: PK = status, SK = created_at  (careful: few statuses = hot partition → shard the key, e.g. NEW#3)\n```"
+    },
+    {
+     "id": "Q29",
+     "title": "Access-pattern-first design and single-table design",
+     "short_md": "In SQL you model entities then write any query. In DynamoDB you **list every access pattern first**, then choose keys so each pattern is one `GetItem` or `Query`. **Single-table design** stores several entity types in one table with generic keys (`PK`, `SK`) so related items can be fetched together.",
+     "body_md": "**Short answer:** In SQL you model entities then write any query. In DynamoDB you **list every access pattern first**, then choose keys so each pattern is one `GetItem` or `Query`. **Single-table design** stores several entity types in one table with generic keys (`PK`, `SK`) so related items can be fetched together.\n\n```\nAccess patterns for an agent-job service:\n1. get job by id                    → PK=JOB#<id>,      SK=META\n2. list a job's steps in order      → PK=JOB#<id>,      SK=STEP#<n>\n3. list a user's jobs, newest first → GSI1PK=USER#<u>,  GSI1SK=<created_at>\n4. idempotency check                → PK=IDEMP#<key>,   SK=IDEMP  (TTL 24h)\n\nQuery PK=JOB#123 → returns META + all STEP items in one call (no JOIN needed)\n```\n**Trade-off:** single-table is fast and cheap but harder to read and evolve. Multiple tables are fine when entities aren't fetched together — don't force it."
+    },
+    {
+     "id": "Q30",
+     "title": "Conditional writes, atomic counters and transactions",
+     "short_md": "DynamoDB has no locks you hold; instead, a write can carry a **condition** that must be true or the write fails. This gives idempotency and optimistic locking.",
+     "body_md": "**Short answer:** DynamoDB has no locks you hold; instead, a write can carry a **condition** that must be true or the write fails. This gives idempotency and optimistic locking.\n\n```python\n# create only if new (idempotency / dedupe)\ntable.put_item(\n    Item={\"PK\": f\"IDEMP#{key}\", \"SK\": \"IDEMP\", \"result\": \"...\", \"ttl\": expires},\n    ConditionExpression=\"attribute_not_exists(PK)\",\n)   # second request → ConditionalCheckFailedException → return stored result\n\n# optimistic lock\ntable.update_item(\n    Key={\"PK\": \"JOB#123\", \"SK\": \"META\"},\n    UpdateExpression=\"SET #s = :new, version = version + :one\",\n    ConditionExpression=\"version = :expected\",\n    ExpressionAttributeNames={\"#s\": \"status\"},\n    ExpressionAttributeValues={\":new\": \"DONE\", \":one\": 1, \":expected\": 4},\n)\n```\n- **Atomic counter:** `UpdateExpression=\"ADD views :one\"` — no read-modify-write race.\n- **Transactions:** `TransactWriteItems` — all-or-nothing across up to **100 unique items and 4 MB**; two actions can't target the same item; same account and Region only; costs 2× capacity. Use for \"create order + decrement stock\"."
+    },
+    {
+     "id": "Q31",
+     "title": "Partitions, hot keys and throttling",
+     "short_md": "Data is spread across partitions by the hash of the partition key. Each partition has a throughput ceiling (about 3,000 read units and 1,000 write units per second). If one key gets most of the traffic (a **hot partition**), requests throttle even if the table overall has spare capacity.",
+     "body_md": "**Short answer:** Data is spread across partitions by the hash of the partition key. Each partition has a throughput ceiling (about 3,000 read units and 1,000 write units per second). If one key gets most of the traffic (a **hot partition**), requests throttle even if the table overall has spare capacity.\n\n```\nBad key:  PK = \"2026-10-25\" (today's date) → every write today hits ONE partition\nGood key: PK = user_id / job_id (high cardinality, evenly used)\nHot by nature (e.g. one viral item)? → write sharding: PK = \"ITEM#9#\" + random(0..9), read all 10 and merge\n```\nAdaptive capacity helps with uneven load but can't fix a single extreme key."
+    },
+    {
+     "id": "Q32",
+     "title": "Capacity modes, consistency, TTL, Streams",
+     "short_md": "- **On-demand:** pay per request, no planning — default for spiky/unknown traffic. **Provisioned** (+ auto scaling): cheaper for steady, predictable load. - **Reads:** eventually consistent by default (half the cost); strongly consistent reads on the table/LSI only. - **TTL:** set an epoch-seconds attribute; DynamoDB deletes expired items for free (deletion is not instant — filter expired items in reads if exactness matters). Great for sessions, idempotency keys, cache entries. - **Streams:** ordered change log per item → trigger Lambda for outbox-style events, search index updates, audit. - *…",
+     "body_md": "- **On-demand:** pay per request, no planning — default for spiky/unknown traffic. **Provisioned** (+ auto scaling): cheaper for steady, predictable load.\n- **Reads:** eventually consistent by default (half the cost); strongly consistent reads on the table/LSI only.\n- **TTL:** set an epoch-seconds attribute; DynamoDB deletes expired items for free (deletion is not instant — filter expired items in reads if exactness matters). Great for sessions, idempotency keys, cache entries.\n- **Streams:** ordered change log per item → trigger Lambda for outbox-style events, search index updates, audit.\n- **PITR + on-demand backups** for recovery; **global tables** for multi-Region active-active (last-writer-wins conflicts)."
+    },
+    {
+     "id": "Q33",
+     "title": "DynamoDB vs Aurora PostgreSQL — when to pick which?",
+     "short_md": "Many systems use both: Postgres for core business data, DynamoDB for high-volume key-value state. For vectors, Aurora **pgvector** keeps embeddings next to relational data with SQL filters (04 Q25). DynamoDB now also offers **vector indexes** (`SearchVectors`; up to 4,096 dimensions, TopK ≤ 100, 5 vector indexes per table by default) — check the current quotas page before relying on limits.",
+     "body_md": "| Choose DynamoDB when | Choose Aurora/RDS PostgreSQL when |\n|---|---|\n| access patterns are known and key-based | queries are ad hoc, reporting, JOIN-heavy |\n| you need massive scale with no ops, single-digit ms | strong relational integrity, complex transactions |\n| serverless/Lambda (no connection limits) | team knows SQL; data model will evolve unpredictably |\n| e.g. job status, sessions, idempotency, agent state | e.g. billing, user/org management, analytics-lite |\n\nMany systems use both: Postgres for core business data, DynamoDB for high-volume key-value state. For vectors, Aurora **pgvector** keeps embeddings next to relational data with SQL filters (04 Q25). DynamoDB now also offers **vector indexes** (`SearchVectors`; up to 4,096 dimensions, TopK ≤ 100, 5 vector indexes per table by default) — check the current quotas page before relying on limits."
+    }
+   ]
+  },
+  {
+   "id": "caching-with-redis-elasticache",
+   "num": 7,
+   "title": "Caching with Redis / ElastiCache",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q34",
+     "title": "Caching patterns",
+     "short_md": "async def get_user(uid): if (hit := await redis.get(f\"user:{uid}\")): return json.loads(hit) user = await db.fetch_user(uid) await redis.set(f\"user:{uid}\", json.dumps(user), ex=300)   # TTL 5 min return user",
+     "body_md": "| Pattern | How | Watch out |\n|---|---|---|\n| **Cache-aside** (most common) | read cache → miss → read DB → write cache with TTL | stale data until TTL; cache stampede |\n| Write-through | write DB and cache together | slower writes; caches unread data |\n| Write-behind | write cache, flush to DB later | data loss risk |\n\n```python\nasync def get_user(uid):\n    if (hit := await redis.get(f\"user:{uid}\")):\n        return json.loads(hit)\n    user = await db.fetch_user(uid)\n    await redis.set(f\"user:{uid}\", json.dumps(user), ex=300)   # TTL 5 min\n    return user\n# on update: write DB, then DELETE the cache key (invalidate) rather than updating it\n```\n\n**Cache stampede:** a hot key expires and 1,000 requests hit the DB at once → lock/single-flight per key, jittered TTLs, or refresh early in the background."
+    },
+    {
+     "id": "Q35",
+     "title": "What else is Redis used for?",
+     "short_md": "Sessions, rate limiting (atomic `INCR` + `EXPIRE`, or token bucket in a Lua script), distributed locks (with expiry and fencing tokens — locks can expire mid-work), leaderboards (sorted sets), pub/sub and streams, short-term agent memory, semantic cache for LLM responses (04 Q44). ElastiCache/MemoryDB run Valkey or Redis OSS; **MemoryDB** is durable (can be a primary DB), ElastiCache is a cache.",
+     "body_md": "Sessions, rate limiting (atomic `INCR` + `EXPIRE`, or token bucket in a Lua script), distributed locks (with expiry and fencing tokens — locks can expire mid-work), leaderboards (sorted sets), pub/sub and streams, short-term agent memory, semantic cache for LLM responses (04 Q44). ElastiCache/MemoryDB run Valkey or Redis OSS; **MemoryDB** is durable (can be a primary DB), ElastiCache is a cache."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 8,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q36",
+     "title": "An endpoint got slow as the table grew to 50M rows. Steps?",
+     "short_md": "1. Find the query (APM / `pg_stat_statements` top by total time). 2. `EXPLAIN ANALYZE` → Seq Scan? Sort spilling? Bad estimates? 3. Add the right composite index (equality columns first, then sort column); `CREATE INDEX CONCURRENTLY` in prod. 4. Replace OFFSET pagination with keyset; select only needed columns. 5. Check N+1 and missing `LIMIT`. Run `ANALYZE` if stats are stale. 6. Then consider caching, read replicas, partitioning by time.",
+     "body_md": "1. Find the query (APM / `pg_stat_statements` top by total time).\n2. `EXPLAIN ANALYZE` → Seq Scan? Sort spilling? Bad estimates?\n3. Add the right composite index (equality columns first, then sort column); `CREATE INDEX CONCURRENTLY` in prod.\n4. Replace OFFSET pagination with keyset; select only needed columns.\n5. Check N+1 and missing `LIMIT`. Run `ANALYZE` if stats are stale.\n6. Then consider caching, read replicas, partitioning by time."
+    },
+    {
+     "id": "Q37",
+     "title": "\"Deadlock detected\" errors appear under load",
+     "short_md": "Find the two statements in the DB log. Usually two code paths update the same rows in different orders (e.g. transfer A→B and B→A). Fix: consistent lock ordering, smaller transactions, fewer rows per transaction, index the WHERE columns (so updates lock fewer rows), and retry the aborted transaction with backoff.",
+     "body_md": "Find the two statements in the DB log. Usually two code paths update the same rows in different orders (e.g. transfer A→B and B→A). Fix: consistent lock ordering, smaller transactions, fewer rows per transaction, index the WHERE columns (so updates lock fewer rows), and retry the aborted transaction with backoff."
+    },
+    {
+     "id": "Q38",
+     "title": "Users don't see their own update right after saving",
+     "short_md": "Read-after-write going to a lagging **read replica**, or a cache not invalidated, or DynamoDB **GSI** (always eventually consistent) used for the read. Fix: read own data from primary/strongly consistent read for a short window, invalidate cache on write, return the updated object in the write response so the UI doesn't need to re-read.",
+     "body_md": "Read-after-write going to a lagging **read replica**, or a cache not invalidated, or DynamoDB **GSI** (always eventually consistent) used for the read. Fix: read own data from primary/strongly consistent read for a short window, invalidate cache on write, return the updated object in the write response so the UI doesn't need to re-read."
+    },
+    {
+     "id": "Q39",
+     "title": "DynamoDB throttles (`ProvisionedThroughputExceededException`) though the table is mostly idle",
+     "short_md": "Hot partition key (one key gets most traffic) or a GSI with a low-cardinality key that throttles and back-pressures writes. Check CloudWatch Contributor Insights for top keys. Fix: higher-cardinality keys, write sharding, on-demand mode, cache hot reads (DAX/ElastiCache), SDK retries with backoff.",
+     "body_md": "Hot partition key (one key gets most traffic) or a GSI with a low-cardinality key that throttles and back-pressures writes. Check CloudWatch Contributor Insights for top keys. Fix: higher-cardinality keys, write sharding, on-demand mode, cache hot reads (DAX/ElastiCache), SDK retries with backoff."
+    },
+    {
+     "id": "Q40",
+     "title": "Lambda functions exhaust Postgres connections during a spike",
+     "short_md": "Each concurrent Lambda environment holds its own connection → thousands. Fix: **RDS Proxy**, cap reserved concurrency for that function, buffer writes through SQS, open the connection outside the handler (reused per environment), or move that high-volume state to DynamoDB.",
+     "body_md": "Each concurrent Lambda environment holds its own connection → thousands. Fix: **RDS Proxy**, cap reserved concurrency for that function, buffer writes through SQS, open the connection outside the handler (reused per environment), or move that high-volume state to DynamoDB."
+    },
+    {
+     "id": "Q41",
+     "title": "Design the storage for an agentic document-processing platform",
+     "short_md": "Aurora PostgreSQL  → tenants, users, document metadata, ACLs, billing (relational + integrity) DynamoDB           → job status & steps, idempotency keys (TTL), rate-limit counters, session index S3                 → raw documents, extracted JSON, large tool outputs (pointers stored in DB) Vector store       → chunk embeddings with tenant_id + doc_id metadata filters (pgvector / OpenSearch / S3 Vectors) Redis              → hot caches, short-lived locks, semantic cache LangGraph checkpointer → its own store (Postgres/DynamoDB-backed), keyed by thread_id + tenant",
+     "body_md": "```\nAurora PostgreSQL  → tenants, users, document metadata, ACLs, billing (relational + integrity)\nDynamoDB           → job status & steps, idempotency keys (TTL), rate-limit counters, session index\nS3                 → raw documents, extracted JSON, large tool outputs (pointers stored in DB)\nVector store       → chunk embeddings with tenant_id + doc_id metadata filters (pgvector / OpenSearch / S3 Vectors)\nRedis              → hot caches, short-lived locks, semantic cache\nLangGraph checkpointer → its own store (Postgres/DynamoDB-backed), keyed by thread_id + tenant\n```\nExplain each choice by **access pattern, consistency need and scale**, and how tenant isolation is enforced in every store (row filter, key prefix, IAM leading-key conditions on DynamoDB)."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 9,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| JOINs | INNER = matches; LEFT = all left + NULLs; filter right table in `ON` |\n| WHERE vs HAVING | rows before grouping vs groups after |\n| Window functions | rank/running totals without collapsing rows; `ROW_NUMBER` for latest-per-group |\n| B-tree index | sorted tree, O(log n), helps `=` and ranges; costs writes |\n| Composite index | leftmost prefix; equality first, then range/sort |\n| EXPLAIN ANALYZE | look for Seq Scan, bad estimates, spills |\n| N+1 | eager load / batch |\n| Keyset pagination | `WHERE (k) < last ORDER BY k LIMIT n` |\n| ACID | atomic, consistent, isolated, durable |\n| Isolation | Postgres default Read Committed; Serializable needs retries |\n| Lost update | atomic update, `FOR UPDATE`, or version check |\n| Deadlock | same lock order, short txns, retry |\n| Outbox | event row in same txn; relay publishes |\n| Migrations | expand → migrate → contract |\n| Pooling | size from DB limit; RDS Proxy for Lambda |\n| DynamoDB keys | PK spreads load, SK orders; design from access patterns |\n| Query vs Scan | Query one partition; Scan = design smell |\n| GSI | any keys, eventual consistency |\n| Conditional write | idempotency + optimistic locking |\n| Hot partition | high-cardinality keys, write sharding |\n| Cache-aside | read-through on miss, TTL, invalidate on write |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- PostgreSQL docs (indexes, EXPLAIN, transaction isolation): https://www.postgresql.org/docs/current/\n- Amazon Aurora: https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/\n- RDS Proxy: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.html\n- DynamoDB developer guide: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/\n- DynamoDB best practices (partition keys, GSIs): https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/best-practices.html\n- DynamoDB constraints (item size, transactions, batch, Query limits): https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Constraints.html\n- DynamoDB quotas (incl. vector indexes): https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ServiceQuotas.html\n- DynamoDB partition key design (3,000 RCU / 1,000 WCU per partition): https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-design.html\n- MySQL InnoDB isolation levels: https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html\n- SQLAlchemy asyncio: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html\n- ElastiCache: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/",
+   "questions": []
+  }
+ ]
+}

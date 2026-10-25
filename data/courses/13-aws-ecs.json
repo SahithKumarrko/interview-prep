@@ -1,0 +1,322 @@
+{
+ "slug": "13-aws-ecs",
+ "num": 13,
+ "title": "Amazon ECS",
+ "full_title": "Amazon ECS: L2 → L3 Interview Preparation",
+ "group": "AWS",
+ "accent": "#60a5fa",
+ "updated": "24 October 2026",
+ "level": "core concepts → networking, IAM, deployments → scaling & production debugging",
+ "source": "docs/13_AWS_ECS.md",
+ "question_count": 37,
+ "section_count": 11,
+ "sections": [
+  {
+   "id": "mental-model-ecs-building-blocks",
+   "num": 1,
+   "title": "Mental model: ECS building blocks",
+   "intro_md": "**ECS = AWS's container orchestrator.** You describe *what* to run (task definition) and *how many* (service); ECS keeps that many running, replaces failures, registers them with load balancers, and rolls out new versions.\n\n```\n ┌──────────────────────────────────── ECS Cluster \"prod\" ──────────────────────────────────────┐\n │                                                                                              │\n │  Task Definition \"api:42\"  (blueprint, versioned)                                            │\n │   ├─ container \"app\": image ECR@sha256…, port 8000, cpu/mem, env, secrets, logs, healthCheck │\n │   ├─ container \"otel-collector\" (sidecar)                                                    │\n │   ├─ taskRoleArn (app permissions)   executionRoleArn (pull image, write logs, read secrets) │\n │   └─ networkMode awsvpc, cpu 1024, memory 2048, runtimePlatform ARM64                        │\n │                                                                                              │\n │  Service \"api\"  desiredCount=3  (keeps 3 tasks running, rolling/blue-green deploys)          │\n │     │                                                                                        │\n │     ├── Task (AZ-a, ENI 10.0.11.5) ──┐                                                        │\n │     ├── Task (AZ-b, ENI 10.0.12.9) ──┼──► registered in ALB Target Group (IP targets)          │\n │     └── Task (AZ-c, ENI 10.0.13.4) ──┘                                                        │\n │                                                                                              │\n │  Capacity: Fargate / Fargate Spot  │  ECS Managed Instances  │  EC2 Auto Scaling group (you)  │\n └──────────────────────────────────────────────────────────────────────────────────────────────┘\n          ▲ control plane (AWS managed): scheduler, service controller, deployments, autoscaling\n```\n\n**Request flow for an API service:**\n```\n Client ─► Route 53 ─► ALB (HTTPS, listener rule /api/*) ─► Target group ─► Task ENI:8000 ─► container\n                                                             health check /health every 15 s\n```",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "What is Amazon ECS?",
+     "short_md": "A fully managed container orchestration service. You don't run the control plane (unlike self-managed Kubernetes); AWS schedules containers onto **Fargate** (serverless), **ECS Managed Instances** (AWS-managed EC2), or **your own EC2** instances. Deeply integrated with IAM, ALB, CloudWatch, ECR, Secrets Manager, Cloud Map.",
+     "body_md": "**Short answer:** A fully managed container orchestration service. You don't run the control plane (unlike self-managed Kubernetes); AWS schedules containers onto **Fargate** (serverless), **ECS Managed Instances** (AWS-managed EC2), or **your own EC2** instances. Deeply integrated with IAM, ALB, CloudWatch, ECR, Secrets Manager, Cloud Map.\n\n**ECS vs EKS:** ECS is simpler and AWS-native; EKS gives Kubernetes APIs/ecosystem and portability at higher operational complexity."
+    },
+    {
+     "id": "Q02",
+     "title": "Task definition, task, service",
+     "short_md": "- **Task definition** — immutable, versioned JSON blueprint (`family:revision`): containers, images, CPU/memory, ports, env, secrets, roles, logging, health checks, volumes.\n- **Task** — a running instance of a task definition (one or more containers that start together on the same host, share network namespace in awsvpc).\n- **Service** — long-running controller that maintains `desiredCount` tasks, replaces unhealthy ones, integrates with load balancers and handles deployments.",
+     "body_md": "**Short answer:**\n- **Task definition** — immutable, versioned JSON blueprint (`family:revision`): containers, images, CPU/memory, ports, env, secrets, roles, logging, health checks, volumes.\n- **Task** — a running instance of a task definition (one or more containers that start together on the same host, share network namespace in awsvpc).\n- **Service** — long-running controller that maintains `desiredCount` tasks, replaces unhealthy ones, integrates with load balancers and handles deployments.\n\n```json\n{\n  \"family\": \"api\",\n  \"networkMode\": \"awsvpc\",\n  \"requiresCompatibilities\": [\"FARGATE\"],\n  \"cpu\": \"1024\", \"memory\": \"2048\",\n  \"runtimePlatform\": { \"cpuArchitecture\": \"ARM64\", \"operatingSystemFamily\": \"LINUX\" },\n  \"executionRoleArn\": \"arn:aws:iam::123:role/api-exec\",\n  \"taskRoleArn\": \"arn:aws:iam::123:role/api-task\",\n  \"containerDefinitions\": [{\n    \"name\": \"app\",\n    \"image\": \"123.dkr.ecr.ap-south-1.amazonaws.com/api@sha256:3f9c...\",\n    \"essential\": true,\n    \"portMappings\": [{ \"containerPort\": 8000 }],\n    \"environment\": [{ \"name\": \"LOG_LEVEL\", \"value\": \"info\" }],\n    \"secrets\": [{ \"name\": \"DB_PASSWORD\", \"valueFrom\": \"arn:aws:secretsmanager:...:secret:prod/db-AbC:password::\" }],\n    \"healthCheck\": { \"command\": [\"CMD-SHELL\", \"curl -f http://localhost:8000/health || exit 1\"],\n                     \"interval\": 15, \"timeout\": 5, \"retries\": 3, \"startPeriod\": 30 },\n    \"logConfiguration\": { \"logDriver\": \"awslogs\",\n      \"options\": { \"awslogs-group\": \"/ecs/api\", \"awslogs-region\": \"ap-south-1\", \"awslogs-stream-prefix\": \"app\" } },\n    \"readonlyRootFilesystem\": true,\n    \"stopTimeout\": 60\n  }]\n}\n```"
+    },
+    {
+     "id": "Q03",
+     "title": "Fargate vs EC2 vs ECS Managed Instances",
+     "short_md": "**Fargate Spot** — up to ~70% cheaper, can be interrupted with a 2-minute warning → fine for fault-tolerant workers.",
+     "body_md": "| | **Fargate** | **ECS Managed Instances** | **EC2 launch type** |\n|---|---|---|---|\n| Servers | none to manage (microVM per task) | AWS provisions, patches and scales EC2 in your account | you manage AMIs, ASG, patching, agent |\n| Instance choice | CPU/memory sizes only | choose instance families/attributes (incl. GPU) | full control |\n| Isolation | strong (per-task microVM) | tasks share instances | tasks share instances |\n| Pricing | per vCPU/GB-second | EC2 price + management fee | EC2 price (Spot/Savings Plans) |\n| Good for | most services, spiky workloads, small teams | need specific instance types/GPUs without ops | very high steady scale, special kernels/daemons, max cost control |\n\n**Fargate Spot** — up to ~70% cheaper, can be interrupted with a 2-minute warning → fine for fault-tolerant workers."
+    },
+    {
+     "id": "Q04",
+     "title": "Clusters and capacity providers",
+     "short_md": "A cluster is a logical grouping of services/tasks and capacity. **Capacity providers** define where tasks run (FARGATE, FARGATE_SPOT, ASG-backed or Managed Instances) and a **capacity provider strategy** splits tasks across them (`base` + `weight`). ASG capacity providers with **managed scaling** scale instances to fit pending tasks.",
+     "body_md": "**Short answer:** A cluster is a logical grouping of services/tasks and capacity. **Capacity providers** define where tasks run (FARGATE, FARGATE_SPOT, ASG-backed or Managed Instances) and a **capacity provider strategy** splits tasks across them (`base` + `weight`). ASG capacity providers with **managed scaling** scale instances to fit pending tasks.\n\n```\nstrategy: FARGATE base=2 weight=1, FARGATE_SPOT weight=3\n→ first 2 tasks on on-demand Fargate, remaining tasks 1:3 on-demand:spot\n```"
+    },
+    {
+     "id": "Q05",
+     "title": "`RunTask` vs a service",
+     "short_md": "**Service** for long-running processes (APIs, queue consumers). **`RunTask`** for one-off/finite jobs: migrations, batch jobs, per-customer isolated workers, scheduled jobs (EventBridge Scheduler), or Step Functions `ecs:runTask.sync` (waits for completion).",
+     "body_md": "**Short answer:** **Service** for long-running processes (APIs, queue consumers). **`RunTask`** for one-off/finite jobs: migrations, batch jobs, per-customer isolated workers, scheduled jobs (EventBridge Scheduler), or Step Functions `ecs:runTask.sync` (waits for completion)."
+    },
+    {
+     "id": "Q06",
+     "title": "ECS Express Mode",
+     "short_md": "A simplified way to deploy a web app/API from a container image: ECS sets up the service, ALB (shared where possible), HTTPS, autoscaling and networking with sensible defaults — useful for quick, standard web services; you can still customise the underlying resources.",
+     "body_md": "A simplified way to deploy a web app/API from a container image: ECS sets up the service, ALB (shared where possible), HTTPS, autoscaling and networking with sensible defaults — useful for quick, standard web services; you can still customise the underlying resources."
+    },
+    {
+     "id": "Q07",
+     "title": "Multiple containers in one task (sidecars)",
+     "short_md": "Containers in the same task share the network namespace (`localhost`), can share volumes, and start/stop together. Use for sidecars: log router (FireLens/Fluent Bit), OTel collector, Envoy/Service Connect proxy. `dependsOn` controls start order (e.g., app waits for sidecar `HEALTHY`). Mark only critical containers `essential: true` — if an essential container stops, the whole task stops.",
+     "body_md": "Containers in the same task share the network namespace (`localhost`), can share volumes, and start/stop together. Use for sidecars: log router (FireLens/Fluent Bit), OTel collector, Envoy/Service Connect proxy. `dependsOn` controls start order (e.g., app waits for sidecar `HEALTHY`). Mark only critical containers `essential: true` — if an essential container stops, the whole task stops."
+    },
+    {
+     "id": "Q08",
+     "title": "Task lifecycle and termination",
+     "short_md": "PROVISIONING → PENDING (pull image, attach ENI) → ACTIVATING → RUNNING stop: DEACTIVATING (deregister from ALB, wait deregistration delay) → STOPPING → SIGTERM to containers → wait stopTimeout (default 30 s, Fargate max 120 s) → SIGKILL → STOPPED",
+     "body_md": "```\n PROVISIONING → PENDING (pull image, attach ENI) → ACTIVATING → RUNNING\n stop: DEACTIVATING (deregister from ALB, wait deregistration delay) → STOPPING\n       → SIGTERM to containers → wait stopTimeout (default 30 s, Fargate max 120 s) → SIGKILL → STOPPED\n```\nApps must handle SIGTERM: stop accepting work, finish in-flight requests, exit. Set ALB **deregistration delay** to roughly your longest normal request (default 300 s is often too long for fast deploys, too short for long SSE streams). Fargate Spot gives 2-minute warning via SIGTERM + EventBridge event."
+    }
+   ]
+  },
+  {
+   "id": "networking-load-balancing",
+   "num": 3,
+   "title": "Networking & load balancing",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q09",
+     "title": "`awsvpc` network mode",
+     "short_md": "Each task gets its **own ENI** with a private IP in your subnet and its own **security groups** (required on Fargate). Pros: task-level firewall rules, VPC Flow Logs per task, IP targets for ALB. Cons: consumes subnet IPs (size subnets well); on EC2, ENI limits per instance (ENI trunking helps).",
+     "body_md": "**Short answer:** Each task gets its **own ENI** with a private IP in your subnet and its own **security groups** (required on Fargate). Pros: task-level firewall rules, VPC Flow Logs per task, IP targets for ALB. Cons: consumes subnet IPs (size subnets well); on EC2, ENI limits per instance (ENI trunking helps).\n\nOther modes (EC2 only): `bridge` (Docker bridge, dynamic host ports), `host`."
+    },
+    {
+     "id": "Q10",
+     "title": "ALB integration: listeners, rules, target groups",
+     "short_md": "ALB listener :443 (ACM cert) ├─ rule: host=api.example.com, path=/v1/*      → target group tg-api   (ip targets, port 8000) ├─ rule: path=/agent/*                          → target group tg-agent └─ default                                       → fixed 404 target group: health check /health, interval 15 s, healthy threshold 2, deregistration delay 30 s",
+     "body_md": "```\n ALB listener :443 (ACM cert)\n   ├─ rule: host=api.example.com, path=/v1/*      → target group tg-api   (ip targets, port 8000)\n   ├─ rule: path=/agent/*                          → target group tg-agent\n   └─ default                                       → fixed 404\n target group: health check /health, interval 15 s, healthy threshold 2, deregistration delay 30 s\n```\nThe service's `loadBalancers` block maps container name + port to the target group; ECS registers/deregisters task IPs automatically. Set **health check grace period** so slow-starting tasks aren't killed.\n\n**Long-lived connections (SSE/WebSocket for agent streaming):** raise ALB idle timeout (default 60 s), send heartbeats, and tune deregistration delay so deploys don't cut streams abruptly."
+    },
+    {
+     "id": "Q11",
+     "title": "Service-to-service communication: Service Connect vs Cloud Map vs internal ALB",
+     "short_md": "| Option | How | When |\n|---|---|---|\n| **Service Connect** | managed Envoy sidecar + Cloud Map namespace; call `http://orders:8080`; retries, timeouts, metrics | ECS-to-ECS microservices |\n| **Cloud Map service discovery** | DNS records (A/SRV) per task | simple DNS-based discovery |\n| **Internal ALB** | L7 routing, health checks | shared entry point, non-ECS clients |\n| **VPC Lattice** | cross-VPC/account service networking with IAM auth | multi-account platforms |",
+     "body_md": "| Option | How | When |\n|---|---|---|\n| **Service Connect** | managed Envoy sidecar + Cloud Map namespace; call `http://orders:8080`; retries, timeouts, metrics | ECS-to-ECS microservices |\n| **Cloud Map service discovery** | DNS records (A/SRV) per task | simple DNS-based discovery |\n| **Internal ALB** | L7 routing, health checks | shared entry point, non-ECS clients |\n| **VPC Lattice** | cross-VPC/account service networking with IAM auth | multi-account platforms |"
+    },
+    {
+     "id": "Q12",
+     "title": "Secure network egress",
+     "short_md": "Tasks in private subnets; outbound via NAT (with egress filtering via Network Firewall if needed) or **VPC endpoints** only; SGs restrict outbound to required destinations; endpoint policies limit which buckets/secrets are reachable; DNS Firewall for domain allowlists.",
+     "body_md": "Tasks in private subnets; outbound via NAT (with egress filtering via Network Firewall if needed) or **VPC endpoints** only; SGs restrict outbound to required destinations; endpoint policies limit which buckets/secrets are reachable; DNS Firewall for domain allowlists."
+    },
+    {
+     "id": "Q13",
+     "title": "Public IP on Fargate tasks?",
+     "short_md": "Only if in a public subnet with `assignPublicIp=ENABLED` (needed there to pull images without NAT). Production pattern: private subnets + NAT/endpoints; only the ALB is public.",
+     "body_md": "Only if in a public subnet with `assignPublicIp=ENABLED` (needed there to pull images without NAT). Production pattern: private subnets + NAT/endpoints; only the ALB is public."
+    }
+   ]
+  },
+  {
+   "id": "iam-secrets-configuration",
+   "num": 4,
+   "title": "IAM, secrets & configuration",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q14",
+     "title": "Task role vs task execution role",
+     "short_md": "| Role | Used by | For |\n|---|---|---|\n| **Task execution role** | ECS agent / Fargate | pull image from ECR, write logs to CloudWatch, fetch secrets/params referenced in the task definition |\n| **Task role** | **your application code** | call AWS APIs at runtime (S3, DynamoDB, Bedrock, SQS) |",
+     "body_md": "**Short answer:**\n| Role | Used by | For |\n|---|---|---|\n| **Task execution role** | ECS agent / Fargate | pull image from ECR, write logs to CloudWatch, fetch secrets/params referenced in the task definition |\n| **Task role** | **your application code** | call AWS APIs at runtime (S3, DynamoDB, Bedrock, SQS) |\n\nMixing them up is a classic bug: putting `s3:GetObject` on the execution role → app gets AccessDenied. The SDK in the container gets task-role credentials from the container credentials endpoint (`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`)."
+    },
+    {
+     "id": "Q15",
+     "title": "Environment variables and secrets injection",
+     "short_md": "- `environment` — plain config (non-secret). - `secrets` — reference **Secrets Manager** (whole secret or a JSON key) or **SSM Parameter Store**; injected as env vars at task start (execution role needs `secretsmanager:GetSecretValue` + `kms:Decrypt`). - `environmentFiles` — env file in S3.",
+     "body_md": "- `environment` — plain config (non-secret).\n- `secrets` — reference **Secrets Manager** (whole secret or a JSON key) or **SSM Parameter Store**; injected as env vars at task start (execution role needs `secretsmanager:GetSecretValue` + `kms:Decrypt`).\n- `environmentFiles` — env file in S3.\n\n**Pitfall:** secrets injected at start **don't update** when rotated — tasks need a new deployment (or the app fetches the secret at runtime with caching)."
+    },
+    {
+     "id": "Q16",
+     "title": "Task-level security hardening",
+     "short_md": "Non-root `user`, `readonlyRootFilesystem: true` (+ tmpfs/ephemeral volume for scratch), drop Linux capabilities, no privileged mode, least-privilege task role per service, ECR image scanning, GuardDuty ECS runtime monitoring, ECS Exec access restricted and logged.",
+     "body_md": "Non-root `user`, `readonlyRootFilesystem: true` (+ tmpfs/ephemeral volume for scratch), drop Linux capabilities, no privileged mode, least-privilege task role per service, ECR image scanning, GuardDuty ECS runtime monitoring, ECS Exec access restricted and logged."
+    }
+   ]
+  },
+  {
+   "id": "deployments",
+   "num": 5,
+   "title": "Deployments",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q17",
+     "title": "Rolling deployments",
+     "short_md": "ECS starts new tasks with the new task definition and stops old ones, controlled by:\n- `minimumHealthyPercent` — lowest % of desired tasks kept running (e.g., 100 → never drop capacity).\n- `maximumPercent` — upper limit during deploy (e.g., 200 → can double temporarily).",
+     "body_md": "**Short answer:** ECS starts new tasks with the new task definition and stops old ones, controlled by:\n- `minimumHealthyPercent` — lowest % of desired tasks kept running (e.g., 100 → never drop capacity).\n- `maximumPercent` — upper limit during deploy (e.g., 200 → can double temporarily).\n\n```\ndesired=4, min=100%, max=200%:\n [old old old old] → start 4 new → [old×4 new×4] → new healthy in ALB → stop old → [new×4]\n```"
+    },
+    {
+     "id": "Q18",
+     "title": "Deployment circuit breaker and health-check grace period",
+     "short_md": "**Circuit breaker** (`deploymentCircuitBreaker: {enable: true, rollback: true}`) detects a deployment whose tasks keep failing to reach steady state and **automatically rolls back** to the last working revision. **CloudWatch alarm-based rollback** can also trigger on, e.g., 5xx spikes. **Health-check grace period** ignores ALB health checks for N seconds after a task starts.",
+     "body_md": "**Circuit breaker** (`deploymentCircuitBreaker: {enable: true, rollback: true}`) detects a deployment whose tasks keep failing to reach steady state and **automatically rolls back** to the last working revision. **CloudWatch alarm-based rollback** can also trigger on, e.g., 5xx spikes. **Health-check grace period** ignores ALB health checks for N seconds after a task starts."
+    },
+    {
+     "id": "Q19",
+     "title": "Blue/green, canary and linear deployments",
+     "short_md": "ECS now has **native blue/green** (plus **linear** and **canary** traffic shifting) built into the service: it launches the new (\"green\") revision alongside \"blue\", shifts ALB traffic (all at once, in steps, or a canary %), keeps blue for a **bake time**, and rolls back instantly on alarms. Lifecycle hooks (Lambda) can run tests at stages. Previously this required **CodeDeploy** (still supported).",
+     "body_md": "**Short answer:** ECS now has **native blue/green** (plus **linear** and **canary** traffic shifting) built into the service: it launches the new (\"green\") revision alongside \"blue\", shifts ALB traffic (all at once, in steps, or a canary %), keeps blue for a **bake time**, and rolls back instantly on alarms. Lifecycle hooks (Lambda) can run tests at stages. Previously this required **CodeDeploy** (still supported).\n\n```\n blue (v41) 100% ─► green (v42) started ─► test listener checks ─► shift 10% (canary) ─► bake 10 min\n     ─► alarms OK ─► 100% green ─► bake ─► blue terminated        (alarm fires ─► instant rollback to blue)\n```\nUse when you need fast rollback and production testing before full cutover."
+    },
+    {
+     "id": "Q20",
+     "title": "Zero / near-zero downtime checklist",
+     "short_md": "Health checks that reflect readiness, grace period, `minimumHealthyPercent=100`, graceful SIGTERM handling, appropriate deregistration delay, backward-compatible DB migrations (expand-then-contract), immutable image digests, blue/green or canary with alarm rollback, multi-AZ spread.",
+     "body_md": "Health checks that reflect readiness, grace period, `minimumHealthyPercent=100`, graceful SIGTERM handling, appropriate deregistration delay, backward-compatible DB migrations (expand-then-contract), immutable image digests, blue/green or canary with alarm rollback, multi-AZ spread."
+    },
+    {
+     "id": "Q21",
+     "title": "Who owns what: Terraform vs CI deployments",
+     "short_md": "Two common patterns: 1. **Terraform owns everything**; CI passes the new image tag/digest as a variable and runs apply. 2. **Terraform owns infrastructure**, CI registers new task definitions and updates the service (`aws ecs update-service` / ECS deploy action); Terraform uses `lifecycle { ignore_changes = [task_definition, desired_count] }`.",
+     "body_md": "Two common patterns:\n1. **Terraform owns everything**; CI passes the new image tag/digest as a variable and runs apply.\n2. **Terraform owns infrastructure**, CI registers new task definitions and updates the service (`aws ecs update-service` / ECS deploy action); Terraform uses `lifecycle { ignore_changes = [task_definition, desired_count] }`.\n\nPick one owner per attribute; otherwise Terraform \"reverts\" deployments or autoscaling."
+    }
+   ]
+  },
+  {
+   "id": "scaling-placement-capacity",
+   "num": 6,
+   "title": "Scaling, placement & capacity",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q22",
+     "title": "Service Auto Scaling",
+     "short_md": "For **queue workers**, scale on **backlog per task** (`ApproximateNumberOfMessagesVisible / running tasks`) or age of oldest message, not CPU. Set min/max, cooldowns, and remember scale-out takes time (image pull, start) — keep headroom.",
+     "body_md": "| Policy | Example |\n|---|---|\n| **Target tracking** | keep average CPU at 60%, or `ALBRequestCountPerTarget` at 500 |\n| **Step scaling** | +2 tasks when queue depth > 1000, +5 when > 5000 |\n| **Scheduled** | scale to 10 at 9 am weekdays |\n| **Predictive** | forecast-based scaling ahead of daily patterns |\n\nFor **queue workers**, scale on **backlog per task** (`ApproximateNumberOfMessagesVisible / running tasks`) or age of oldest message, not CPU. Set min/max, cooldowns, and remember scale-out takes time (image pull, start) — keep headroom."
+    },
+    {
+     "id": "Q23",
+     "title": "CPU and memory settings",
+     "short_md": "Fargate: task-level CPU/memory from fixed combinations (e.g., 0.25 vCPU–16 vCPU). Container-level: `memory` (hard limit → OOM kill, exit 137) and `memoryReservation` (soft), `cpu` units (1024 = 1 vCPU; shares on EC2). Right-size using Container Insights metrics; Python: memory per worker × workers + overhead.",
+     "body_md": "Fargate: task-level CPU/memory from fixed combinations (e.g., 0.25 vCPU–16 vCPU). Container-level: `memory` (hard limit → OOM kill, exit 137) and `memoryReservation` (soft), `cpu` units (1024 = 1 vCPU; shares on EC2). Right-size using Container Insights metrics; Python: memory per worker × workers + overhead."
+    },
+    {
+     "id": "Q24",
+     "title": "Task placement (EC2/Managed Instances)",
+     "short_md": "Placement **strategies**: `spread` (by AZ/instance — HA), `binpack` (by memory/CPU — cost), `random`. **Constraints**: `distinctInstance`, `memberOf` (instance type/attribute expressions). Fargate spreads across AZs automatically.",
+     "body_md": "Placement **strategies**: `spread` (by AZ/instance — HA), `binpack` (by memory/CPU — cost), `random`. **Constraints**: `distinctInstance`, `memberOf` (instance type/attribute expressions). Fargate spreads across AZs automatically."
+    },
+    {
+     "id": "Q25",
+     "title": "Why tasks fail to place or start",
+     "short_md": "`aws ecs describe-tasks` → `stoppedReason`, container `reason`/`exitCode`; service **events** tab.",
+     "body_md": "| Error / symptom | Cause |\n|---|---|\n| \"unable to place a task… no container instance met all requirements\" | EC2 capacity lacks CPU/memory/ports, or constraints too strict |\n| `RESOURCE:ENI` / no free IPs | subnet IP exhaustion / ENI limits |\n| `CannotPullContainerError` | no route to ECR (NAT/endpoints), execution role, wrong image/arch |\n| `ResourceInitializationError: unable to pull secrets` | execution role lacks secret/KMS permissions or no route to Secrets Manager |\n| Essential container exited | app crash — check logs & exit code |\n| Fargate capacity unavailable (Spot) | use mixed strategy with on-demand base |\n\n`aws ecs describe-tasks` → `stoppedReason`, container `reason`/`exitCode`; service **events** tab."
+    }
+   ]
+  },
+  {
+   "id": "operations-observability",
+   "num": 7,
+   "title": "Operations & observability",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q26",
+     "title": "Key metrics and alarms",
+     "short_md": "Service: `CPUUtilization`, `MemoryUtilization` (Container Insights for per-task detail), running vs desired task count, deployment failures. ALB: `HTTPCode_Target_5XX_Count`, `TargetResponseTime` p95/p99, `UnHealthyHostCount`, `RequestCountPerTarget`. Workers: SQS `ApproximateAgeOfOldestMessage`, DLQ depth. Plus app-level latency/error SLOs and traces (ADOT/X-Ray, Application Signals).",
+     "body_md": "Service: `CPUUtilization`, `MemoryUtilization` (Container Insights for per-task detail), running vs desired task count, deployment failures. ALB: `HTTPCode_Target_5XX_Count`, `TargetResponseTime` p95/p99, `UnHealthyHostCount`, `RequestCountPerTarget`. Workers: SQS `ApproximateAgeOfOldestMessage`, DLQ depth. Plus app-level latency/error SLOs and traces (ADOT/X-Ray, Application Signals)."
+    },
+    {
+     "id": "Q27",
+     "title": "Logging options",
+     "short_md": "`awslogs` driver → CloudWatch Logs (simple); **FireLens** (Fluent Bit sidecar) → route/filter logs to CloudWatch, S3, OpenSearch, third parties. Log JSON to stdout; include request/trace IDs; set retention.",
+     "body_md": "`awslogs` driver → CloudWatch Logs (simple); **FireLens** (Fluent Bit sidecar) → route/filter logs to CloudWatch, S3, OpenSearch, third parties. Log JSON to stdout; include request/trace IDs; set retention."
+    },
+    {
+     "id": "Q28",
+     "title": "Debugging inside a running task: ECS Exec",
+     "short_md": "`aws ecs execute-command --cluster prod --task <id> --container app --interactive --command \"/bin/sh\"` — uses SSM; requires `enableExecuteCommand` on the service and task role SSM permissions. Restrict with IAM and log sessions (KMS + CloudWatch/S3).",
+     "body_md": "`aws ecs execute-command --cluster prod --task <id> --container app --interactive --command \"/bin/sh\"` — uses SSM; requires `enableExecuteCommand` on the service and task role SSM permissions. Restrict with IAM and log sessions (KMS + CloudWatch/S3)."
+    },
+    {
+     "id": "Q29",
+     "title": "Scheduled and event-driven tasks",
+     "short_md": "EventBridge Scheduler (cron/rate) or EventBridge rules → `RunTask`; Step Functions `ecs:runTask.sync` for orchestrated jobs (waits for completion, captures exit code); S3 event → SQS → worker service scaling on backlog.",
+     "body_md": "EventBridge Scheduler (cron/rate) or EventBridge rules → `RunTask`; Step Functions `ecs:runTask.sync` for orchestrated jobs (waits for completion, captures exit code); S3 event → SQS → worker service scaling on backlog."
+    }
+   ]
+  },
+  {
+   "id": "choosing-compute",
+   "num": 8,
+   "title": "Choosing compute",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q30",
+     "title": "ECS vs Lambda vs AWS Batch vs AgentCore Runtime vs EKS",
+     "short_md": "Typical AI stack: React → ALB → FastAPI on ECS → AgentCore Runtime (agent) → Gateway → Lambda tools; ECS workers for heavy document processing.",
+     "body_md": "| Need | Choose |\n|---|---|\n| Long-running HTTP API, streaming, WebSockets, steady traffic | **ECS (Fargate)** |\n| Event-driven short tasks (≤15 min), spiky, pay-per-request | **Lambda** |\n| Large batch/HPC jobs with queues, retries, Spot, GPUs | **AWS Batch** (runs on ECS/EKS) |\n| Per-user isolated **agent sessions**, agent protocols (MCP/A2A), up to 8 h sessions | **AgentCore Runtime** |\n| Kubernetes ecosystem/portability, many teams with K8s skills | **EKS** |\n\nTypical AI stack: React → ALB → FastAPI on ECS → AgentCore Runtime (agent) → Gateway → Lambda tools; ECS workers for heavy document processing."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 9,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q31",
+     "title": "An ECS API works for 10 users but fails at 200",
+     "short_md": "Check: ALB 5xx (502 = task closed connection/crashed, 503 = no healthy targets, 504 = timeout); task CPU/memory saturation & OOM kills; app worker/thread/event-loop limits (one Uvicorn worker, blocking calls); DB connection pool exhaustion; downstream throttling (Bedrock/DynamoDB 429); autoscaling too slow or max too low. Fix bottleneck → tune autoscaling (request count per target) → load test.",
+     "body_md": "Check: ALB 5xx (502 = task closed connection/crashed, 503 = no healthy targets, 504 = timeout); task CPU/memory saturation & OOM kills; app worker/thread/event-loop limits (one Uvicorn worker, blocking calls); DB connection pool exhaustion; downstream throttling (Bedrock/DynamoDB 429); autoscaling too slow or max too low. Fix bottleneck → tune autoscaling (request count per target) → load test."
+    },
+    {
+     "id": "Q32",
+     "title": "Image runs in Docker locally but not on ECS",
+     "short_md": "Architecture mismatch (arm64 vs x86) → `exec format error`; app binds `localhost` not `0.0.0.0`; missing env vars/secrets that existed in local `.env`; read-only root FS blocks writes to `/tmp` (add volume); non-root user permissions; health check uses a tool not in the image; no network route to dependencies; task role permissions differ from your local credentials.",
+     "body_md": "Architecture mismatch (arm64 vs x86) → `exec format error`; app binds `localhost` not `0.0.0.0`; missing env vars/secrets that existed in local `.env`; read-only root FS blocks writes to `/tmp` (add volume); non-root user permissions; health check uses a tool not in the image; no network route to dependencies; task role permissions differ from your local credentials."
+    },
+    {
+     "id": "Q33",
+     "title": "Tasks keep restarting with \"Task failed ELB health checks\"",
+     "short_md": "App slow to boot (raise grace period/`startPeriod`), wrong health check path/port/success codes (redirect 301 counts as failure unless allowed), SG doesn't allow ALB → task port, health endpoint depends on a failing downstream (make liveness shallow), container listening on different port than target group.",
+     "body_md": "App slow to boot (raise grace period/`startPeriod`), wrong health check path/port/success codes (redirect 301 counts as failure unless allowed), SG doesn't allow ALB → task port, health endpoint depends on a failing downstream (make liveness shallow), container listening on different port than target group."
+    },
+    {
+     "id": "Q34",
+     "title": "Launch one isolated worker task per customer job",
+     "short_md": "API validates and stores job → Step Functions or SQS consumer calls `RunTask` with overrides (job ID as env/command), dedicated task role scoped by tags/session policy to that customer's S3 prefix, private subnets, timeouts, results to S3, status in DynamoDB, concurrency limits (Step Functions Map `MaxConcurrency`) to protect quotas, cleanup and DLQ for failures.",
+     "body_md": "API validates and stores job → Step Functions or SQS consumer calls `RunTask` with overrides (job ID as env/command), dedicated task role scoped by tags/session policy to that customer's S3 prefix, private subnets, timeouts, results to S3, status in DynamoDB, concurrency limits (Step Functions Map `MaxConcurrency`) to protect quotas, cleanup and DLQ for failures."
+    },
+    {
+     "id": "Q35",
+     "title": "A deployment is stuck \"in progress\" for an hour",
+     "short_md": "New tasks failing health checks or failing to start (look at service events and stopped tasks); `minimumHealthyPercent=100` with no spare capacity on EC2 (can't start new before stopping old); circuit breaker disabled; draining waiting on long deregistration delay. Enable circuit breaker + rollback; fix root cause.",
+     "body_md": "New tasks failing health checks or failing to start (look at service events and stopped tasks); `minimumHealthyPercent=100` with no spare capacity on EC2 (can't start new before stopping old); circuit breaker disabled; draining waiting on long deregistration delay. Enable circuit breaker + rollback; fix root cause."
+    },
+    {
+     "id": "Q36",
+     "title": "Costs are high for an ECS service",
+     "short_md": "Right-size CPU/memory (Container Insights), Graviton/ARM64, Fargate Spot for workers, scale-to-zero for idle workers (min 0 with queue-based scaling), Compute Savings Plans, reduce NAT data processing via VPC endpoints, log retention and volume.",
+     "body_md": "Right-size CPU/memory (Container Insights), Graviton/ARM64, Fargate Spot for workers, scale-to-zero for idle workers (min 0 with queue-based scaling), Compute Savings Plans, reduce NAT data processing via VPC endpoints, log retention and volume."
+    },
+    {
+     "id": "Q37",
+     "title": "Design a zero-downtime deploy for a streaming agent API",
+     "short_md": "Blue/green with bake time, ALB idle timeout > max idle stream gap with heartbeats, deregistration delay long enough for in-flight streams (or clients reconnect with resume tokens), graceful SIGTERM that stops new streams and finishes current ones within `stopTimeout` (max 120 s on Fargate — so design clients to reconnect), alarm-based rollback.",
+     "body_md": "Blue/green with bake time, ALB idle timeout > max idle stream gap with heartbeats, deregistration delay long enough for in-flight streams (or clients reconnect with resume tokens), graceful SIGTERM that stops new streams and finishes current ones within `stopTimeout` (max 120 s on Fargate — so design clients to reconnect), alarm-based rollback."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 10,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| Task definition | versioned blueprint (image, cpu/mem, roles, env, secrets, logs) |\n| Task / Service | running copy / controller keeping N copies + deploys |\n| Fargate / Managed Instances / EC2 | serverless / AWS-managed EC2 / you manage EC2 |\n| awsvpc | ENI + SG per task; watch subnet IPs |\n| Task role vs execution role | app's AWS calls vs pull image/logs/secrets |\n| Secrets | `secrets` from Secrets Manager/SSM; injected at start |\n| Rolling | min/max percent |\n| Circuit breaker | auto-rollback failed deployments |\n| Blue/green / canary / linear | native ECS traffic shifting with bake + alarms |\n| Scaling | target tracking (CPU/requests), queue backlog per task for workers |\n| Termination | deregister → SIGTERM → stopTimeout → SIGKILL |\n| Debug | service events, stoppedReason, exit codes, ECS Exec |\n| Choose | ECS for APIs/workers; Lambda for short events; AgentCore for agent sessions |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/Welcome.html\n- Task definitions: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definitions.html\n- Deployments (rolling, blue/green, canary, linear): https://docs.aws.amazon.com/AmazonECS/latest/developerguide/deployment-types.html\n- IAM roles: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html\n- Service auto scaling: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-auto-scaling.html\n- Best practices guide: https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/intro.html",
+   "questions": []
+  }
+ ]
+}

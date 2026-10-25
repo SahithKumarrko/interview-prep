@@ -1,0 +1,344 @@
+{
+ "slug": "20-fastapi-api-design",
+ "num": 20,
+ "title": "FastAPI & API Design",
+ "full_title": "FastAPI & API Design: L2 → L3 Interview Preparation",
+ "group": "Design & Coding",
+ "accent": "#fbbf24",
+ "updated": "24 October 2026",
+ "level": "HTTP & REST basics → FastAPI internals → secure, resilient production APIs",
+ "source": "docs/20_FastAPI_API_Design.md",
+ "question_count": 42,
+ "section_count": 10,
+ "sections": [
+  {
+   "id": "mental-model-request-lifecycle-in-fastapi",
+   "num": 1,
+   "title": "Mental model: request lifecycle in FastAPI",
+   "intro_md": "**FastAPI = Starlette (ASGI web toolkit) + Pydantic (validation) + type-hint-driven dependency injection + automatic OpenAPI docs.** It runs on an ASGI server such as **Uvicorn**.\n\n```\n Client ──HTTP──► ALB ──► Uvicorn worker (event loop)\n                              │ ASGI\n                              ▼\n            ┌──────────────── Middleware stack (outer → inner) ───────────────┐\n            │ CORS · request-id/trace · GZip · auth context · timing/logging   │\n            └───────────────────────────────┬──────────────────────────────────┘\n                                            ▼\n                         Router: match method + path → path operation\n                                            ▼\n            Dependencies resolved (Depends): get_db session, get_current_user (JWT),\n            authorise resource, rate-limit … (cached per request, yield = cleanup)\n                                            ▼\n            Request parsing & validation (Pydantic): path/query/header/body → 422 on error\n                                            ▼\n            Your endpoint function (async def or def → threadpool)\n                                            ▼\n            response_model validation/serialisation → JSON / StreamingResponse / SSE\n                                            ▼\n            Exception handlers (HTTPException, custom) · background tasks after response\n```\n\n**`async def` vs `def` endpoints:**\n```\n async def endpoint → runs ON the event loop → must only await non-blocking I/O\n def endpoint       → FastAPI runs it in a THREADPOOL → OK for blocking libraries (boto3, requests)\n```",
+   "questions": []
+  },
+  {
+   "id": "http-rest-fundamentals",
+   "num": 2,
+   "title": "HTTP & REST fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "HTTP methods and their semantics",
+     "short_md": "**Safe** = no side effects; **idempotent** = repeating gives the same server state.",
+     "body_md": "| Method | Purpose | Safe | Idempotent |\n|---|---|---|---|\n| GET | read | ✅ | ✅ |\n| POST | create / action / start job | ❌ | ❌ (make it so with idempotency keys) |\n| PUT | replace whole resource at known URI | ❌ | ✅ |\n| PATCH | partial update | ❌ | not necessarily |\n| DELETE | remove | ❌ | ✅ (second delete → 404 or 204, state unchanged) |\n\n**Safe** = no side effects; **idempotent** = repeating gives the same server state."
+    },
+    {
+     "id": "Q02",
+     "title": "Status codes you must know",
+     "short_md": "| Code | Meaning | Typical use |\n|---|---|---|\n| 200 OK | success with body | GET, PATCH |\n| 201 Created | resource created (+ `Location` header) | POST create |\n| 202 Accepted | accepted for **async** processing | start a job → return job ID |\n| 204 No Content | success, no body | DELETE |\n| 400 Bad Request | malformed request / business rule violation | |\n| 401 Unauthorized | **not authenticated** (missing/invalid token) | |\n| 403 Forbidden | authenticated but **not allowed** | |\n| 404 Not Found | doesn't exist (or hide existence from unauthorised users) | |\n| 409 Conflict | version conflict, duplicate, invalid state transition | |\n| 412 Precondition Failed | `If-Match` ETag mismatch | optimistic locking |\n| 422 Unprocessable Content | validation failed (FastAPI default for Pydantic errors) | |\n| 429 Too Many Requests | rate limited (+ `Retry-After`) | |",
+     "body_md": "| Code | Meaning | Typical use |\n|---|---|---|\n| 200 OK | success with body | GET, PATCH |\n| 201 Created | resource created (+ `Location` header) | POST create |\n| 202 Accepted | accepted for **async** processing | start a job → return job ID |\n| 204 No Content | success, no body | DELETE |\n| 400 Bad Request | malformed request / business rule violation | |\n| 401 Unauthorized | **not authenticated** (missing/invalid token) | |\n| 403 Forbidden | authenticated but **not allowed** | |\n| 404 Not Found | doesn't exist (or hide existence from unauthorised users) | |\n| 409 Conflict | version conflict, duplicate, invalid state transition | |\n| 412 Precondition Failed | `If-Match` ETag mismatch | optimistic locking |\n| 422 Unprocessable Content | validation failed (FastAPI default for Pydantic errors) | |\n| 429 Too Many Requests | rate limited (+ `Retry-After`) | |\n| 500 Internal Server Error | bug | |\n| 502 / 503 / 504 | bad upstream / unavailable (overload, maintenance) / upstream timeout | proxies, ALB |"
+    },
+    {
+     "id": "Q03",
+     "title": "REST resource design",
+     "short_md": "Nouns not verbs (`/documents/{id}`), plural collections, nested only for ownership (`/conversations/{id}/messages`), actions that don't fit CRUD as sub-resources (`POST /jobs/{id}:cancel` or `POST /jobs/{id}/cancel`), consistent error format (RFC 9457 Problem Details), versioning strategy (`/v1/` path or header), use HTTP semantics (status codes, caching headers).",
+     "body_md": "Nouns not verbs (`/documents/{id}`), plural collections, nested only for ownership (`/conversations/{id}/messages`), actions that don't fit CRUD as sub-resources (`POST /jobs/{id}:cancel` or `POST /jobs/{id}/cancel`), consistent error format (RFC 9457 Problem Details), versioning strategy (`/v1/` path or header), use HTTP semantics (status codes, caching headers).\n\n```json\n{ \"type\": \"https://api.example.com/errors/insufficient-quota\", \"title\": \"Quota exceeded\",\n  \"status\": 429, \"detail\": \"Tenant t-42 used 100% of daily tokens\", \"instance\": \"/v1/chat\" }\n```"
+    },
+    {
+     "id": "Q04",
+     "title": "Idempotency keys",
+     "short_md": "For non-idempotent operations (POST create, charge, start job), the client sends a unique `Idempotency-Key` header; the server stores key → result (with request hash) and returns the **same result** for retries instead of executing again.",
+     "body_md": "**Short answer:** For non-idempotent operations (POST create, charge, start job), the client sends a unique `Idempotency-Key` header; the server stores key → result (with request hash) and returns the **same result** for retries instead of executing again.\n\n```python\n@app.post(\"/v1/jobs\", status_code=202)\nasync def create_job(body: JobIn, idem_key: Annotated[str, Header(alias=\"Idempotency-Key\")],\n                     user: CurrentUser, db: DB):\n    existing = await db.get_idempotency(user.tenant_id, idem_key)\n    if existing:\n        if existing.request_hash != hash_body(body):\n            raise HTTPException(422, \"Idempotency-Key reused with different payload\")\n        return existing.response                         # replay stored response\n    job = await db.create_job(user, body)                # in same transaction:\n    await db.save_idempotency(user.tenant_id, idem_key, hash_body(body), job.as_response(), ttl_hours=24)\n    return job.as_response()\n```\nRace-safe with a unique constraint/conditional write on `(tenant, key)`."
+    },
+    {
+     "id": "Q05",
+     "title": "Pagination and filtering",
+     "short_md": "Always cap `limit`, whitelist sortable/filterable fields, return `next_cursor`, apply tenant filter server-side.",
+     "body_md": "| Style | How | Pros/cons |\n|---|---|---|\n| Offset | `?limit=50&offset=100` | simple; slow on big offsets; items shift when data changes |\n| **Cursor / keyset** | `?limit=50&cursor=<opaque>` (encodes last sort key) | stable, fast (uses index); can't jump to page N |\n\nAlways cap `limit`, whitelist sortable/filterable fields, return `next_cursor`, apply tenant filter server-side."
+    },
+    {
+     "id": "Q06",
+     "title": "Optimistic concurrency (ETags)",
+     "short_md": "Return `ETag: \"v7\"` with a resource; client updates with `If-Match: \"v7\"`; server updates only if version matches (`UPDATE … WHERE id=? AND version=7`), else **412** (or 409). Prevents lost updates when two users edit simultaneously.",
+     "body_md": "Return `ETag: \"v7\"` with a resource; client updates with `If-Match: \"v7\"`; server updates only if version matches (`UPDATE … WHERE id=? AND version=7`), else **412** (or 409). Prevents lost updates when two users edit simultaneously."
+    },
+    {
+     "id": "Q07",
+     "title": "API versioning & backward compatibility",
+     "short_md": "Additive changes are safe (new optional fields, new endpoints). Breaking changes (remove/rename field, change type/meaning) need a new version or a deprecation period. Old frontend bundles (cached SPAs) may call your API for days → keep backward compatibility, use tolerant readers (ignore unknown fields), deprecate with `Deprecation`/`Sunset` headers and monitoring of old version usage.",
+     "body_md": "Additive changes are safe (new optional fields, new endpoints). Breaking changes (remove/rename field, change type/meaning) need a new version or a deprecation period. Old frontend bundles (cached SPAs) may call your API for days → keep backward compatibility, use tolerant readers (ignore unknown fields), deprecate with `Deprecation`/`Sunset` headers and monitoring of old version usage."
+    }
+   ]
+  },
+  {
+   "id": "fastapi-core",
+   "num": 3,
+   "title": "FastAPI core",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q08",
+     "title": "FastAPI and ASGI vs WSGI",
+     "short_md": "**WSGI** (Flask, Django classic) is synchronous: one request per worker thread at a time. **ASGI** supports async — one worker can handle many concurrent I/O-bound requests, plus WebSockets and streaming. FastAPI is ASGI; run with Uvicorn (or Gunicorn managing Uvicorn workers, or `fastapi run`).",
+     "body_md": "**Short answer:** **WSGI** (Flask, Django classic) is synchronous: one request per worker thread at a time. **ASGI** supports async — one worker can handle many concurrent I/O-bound requests, plus WebSockets and streaming. FastAPI is ASGI; run with Uvicorn (or Gunicorn managing Uvicorn workers, or `fastapi run`)."
+    },
+    {
+     "id": "Q09",
+     "title": "Pydantic request validation and response models",
+     "short_md": "from typing import Annotated, Literal from fastapi import FastAPI, Query, Path from pydantic import BaseModel, Field, field_validator",
+     "body_md": "```python\nfrom typing import Annotated, Literal\nfrom fastapi import FastAPI, Query, Path\nfrom pydantic import BaseModel, Field, field_validator\n\nclass ChatIn(BaseModel):\n    message: str = Field(min_length=1, max_length=8000)\n    document_ids: list[str] = Field(default_factory=list, max_length=20)\n    mode: Literal[\"fast\", \"accurate\"] = \"fast\"\n\n    @field_validator(\"document_ids\")\n    @classmethod\n    def unique_ids(cls, v): \n        if len(set(v)) != len(v): raise ValueError(\"duplicate document ids\")\n        return v\n\nclass ChatOut(BaseModel):\n    conversation_id: str\n    answer: str\n    citations: list[str]\n\napp = FastAPI()\n\n@app.post(\"/v1/conversations/{conv_id}/messages\", response_model=ChatOut)\nasync def chat(conv_id: Annotated[str, Path(pattern=r\"^c_[a-z0-9]{20}$\")],\n               body: ChatIn,\n               verbose: Annotated[bool, Query()] = False) -> ChatOut:\n    ...\n```\nInvalid input → automatic **422** with field-level errors. `response_model` filters output (don't leak internal fields like `owner_id`, `api_key`). Pydantic v2 (Rust core) is fast; use `model_config = ConfigDict(extra=\"forbid\")` to reject unknown fields."
+    },
+    {
+     "id": "Q10",
+     "title": "Dependency injection (`Depends`)",
+     "short_md": "Declare what an endpoint needs; FastAPI builds it per request, caches it within the request, supports nesting, and runs cleanup for `yield` dependencies. Great for DB sessions, auth, authorisation, pagination params, and **test overrides**.",
+     "body_md": "**Short answer:** Declare what an endpoint needs; FastAPI builds it per request, caches it within the request, supports nesting, and runs cleanup for `yield` dependencies. Great for DB sessions, auth, authorisation, pagination params, and **test overrides**.\n\n```python\nasync def get_db() -> AsyncIterator[AsyncSession]:\n    async with SessionLocal() as session:\n        yield session                         # cleanup after response\n\nasync def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:\n    return verify_jwt(token)                  # raises 401\n\nasync def get_owned_conversation(conv_id: str, user: Annotated[User, Depends(get_current_user)],\n                                 db: Annotated[AsyncSession, Depends(get_db)]) -> Conversation:\n    conv = await db.get(Conversation, conv_id)\n    if not conv or conv.tenant_id != user.tenant_id or conv.owner_id != user.id:\n        raise HTTPException(404)              # don't reveal existence\n    return conv\n\nCurrentUser = Annotated[User, Depends(get_current_user)]\nOwnedConversation = Annotated[Conversation, Depends(get_owned_conversation)]\n\n@app.get(\"/v1/conversations/{conv_id}\")\nasync def read(conv: OwnedConversation): return conv\n\n# tests\napp.dependency_overrides[get_current_user] = lambda: User(id=\"u1\", tenant_id=\"t1\")\n```"
+    },
+    {
+     "id": "Q11",
+     "title": "Lifespan: startup and shutdown",
+     "short_md": "from contextlib import asynccontextmanager",
+     "body_md": "```python\nfrom contextlib import asynccontextmanager\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    app.state.http = httpx.AsyncClient(timeout=10)       # shared clients/pools created once\n    app.state.redis = redis.asyncio.from_url(REDIS_URL)\n    yield\n    await app.state.http.aclose()                        # graceful shutdown (SIGTERM)\n    await app.state.redis.aclose()\n\napp = FastAPI(lifespan=lifespan)\n```\n(Replaces deprecated `@app.on_event(\"startup\")`.)"
+    },
+    {
+     "id": "Q12",
+     "title": "Routers and project structure",
+     "short_md": "app/ ├── main.py            # create app, middleware, include routers, lifespan ├── api/v1/            # routers: conversations.py, documents.py, jobs.py ├── core/              # config (pydantic-settings), security, logging ├── services/          # business logic (no FastAPI imports) → testable ├── repositories/      # DB access ├── schemas/           # Pydantic models └── tests/",
+     "body_md": "```\napp/\n├── main.py            # create app, middleware, include routers, lifespan\n├── api/v1/            # routers: conversations.py, documents.py, jobs.py\n├── core/              # config (pydantic-settings), security, logging\n├── services/          # business logic (no FastAPI imports) → testable\n├── repositories/      # DB access\n├── schemas/           # Pydantic models\n└── tests/\n```\n`app.include_router(conversations.router, prefix=\"/v1\", tags=[\"conversations\"], dependencies=[Depends(get_current_user)])`."
+    },
+    {
+     "id": "Q13",
+     "title": "Error handling",
+     "short_md": "Raise `HTTPException(status_code, detail)` for expected errors; register custom exception handlers to map domain exceptions → HTTP (and a Problem Details format); a catch-all handler logs the stack trace with request ID and returns a generic 500 (never leak internals).",
+     "body_md": "Raise `HTTPException(status_code, detail)` for expected errors; register custom exception handlers to map domain exceptions → HTTP (and a Problem Details format); a catch-all handler logs the stack trace with request ID and returns a generic 500 (never leak internals).\n\n```python\n@app.exception_handler(QuotaExceeded)\nasync def quota_handler(request: Request, exc: QuotaExceeded):\n    return JSONResponse(status_code=429, headers={\"Retry-After\": \"60\"},\n                        content={\"title\": \"Quota exceeded\", \"status\": 429})\n```"
+    },
+    {
+     "id": "Q14",
+     "title": "Middleware — where to use it",
+     "short_md": "Cross-cutting concerns for **every** request: request ID / trace context, access logging & timing, CORS, GZip, security headers, (coarse) auth context. Keep business authorisation in dependencies (endpoint-specific). Pure ASGI middleware is faster than `BaseHTTPMiddleware` and safer for streaming.",
+     "body_md": "Cross-cutting concerns for **every** request: request ID / trace context, access logging & timing, CORS, GZip, security headers, (coarse) auth context. Keep business authorisation in dependencies (endpoint-specific). Pure ASGI middleware is faster than `BaseHTTPMiddleware` and safer for streaming.\n\n```python\n@app.middleware(\"http\")\nasync def request_id(request: Request, call_next):\n    rid = request.headers.get(\"x-request-id\", uuid4().hex)\n    structlog.contextvars.bind_contextvars(request_id=rid)\n    response = await call_next(request)\n    response.headers[\"x-request-id\"] = rid\n    return response\n```"
+    },
+    {
+     "id": "Q15",
+     "title": "OpenAPI and docs",
+     "short_md": "FastAPI generates an OpenAPI 3 schema from your types → Swagger UI (`/docs`), ReDoc (`/redoc`). Benefits: contract for frontend, client SDK generation (TypeScript types), contract testing, API gateway import. In production you may disable or protect `/docs`. Document error responses with `responses={404: {...}}`.",
+     "body_md": "FastAPI generates an OpenAPI 3 schema from your types → Swagger UI (`/docs`), ReDoc (`/redoc`). Benefits: contract for frontend, client SDK generation (TypeScript types), contract testing, API gateway import. In production you may disable or protect `/docs`. Document error responses with `responses={404: {...}}`."
+    },
+    {
+     "id": "Q16",
+     "title": "Settings and configuration",
+     "short_md": "from pydantic_settings import BaseSettings, SettingsConfigDict class Settings(BaseSettings): model_config = SettingsConfigDict(env_prefix=\"APP_\") database_url: str okta_issuer: str okta_audience: str bedrock_model_id: str settings = Settings()        # validated at startup → fail fast on missing config",
+     "body_md": "```python\nfrom pydantic_settings import BaseSettings, SettingsConfigDict\nclass Settings(BaseSettings):\n    model_config = SettingsConfigDict(env_prefix=\"APP_\")\n    database_url: str\n    okta_issuer: str\n    okta_audience: str\n    bedrock_model_id: str\nsettings = Settings()        # validated at startup → fail fast on missing config\n```"
+    }
+   ]
+  },
+  {
+   "id": "async-streaming-background-work",
+   "num": 4,
+   "title": "Async, streaming & background work",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q17",
+     "title": "Blocking calls in async endpoints",
+     "short_md": "In `async def`, a blocking call (boto3, `requests`, `time.sleep`, sync DB driver, heavy CPU) **freezes the event loop** → every request on that worker stalls. Options: use async libraries (httpx, asyncpg, aioboto3), run blocking code in a thread (`await asyncio.to_thread(...)` / `run_in_threadpool`), make the endpoint `def` (FastAPI uses a threadpool, default ~40 threads), or offload CPU work to a process/worker queue.",
+     "body_md": "**Short answer:** In `async def`, a blocking call (boto3, `requests`, `time.sleep`, sync DB driver, heavy CPU) **freezes the event loop** → every request on that worker stalls. Options: use async libraries (httpx, asyncpg, aioboto3), run blocking code in a thread (`await asyncio.to_thread(...)` / `run_in_threadpool`), make the endpoint `def` (FastAPI uses a threadpool, default ~40 threads), or offload CPU work to a process/worker queue.\n\n```python\n@app.get(\"/v1/documents/{doc_id}/text\")\nasync def get_text(doc_id: str):\n    obj = await asyncio.to_thread(s3.get_object, Bucket=BUCKET, Key=doc_id)   # ✅ not blocking loop\n    return {\"text\": obj[\"Body\"].read().decode()}\n```"
+    },
+    {
+     "id": "Q18",
+     "title": "Server-Sent Events (SSE) for LLM streaming",
+     "short_md": "SSE = one-way server→client stream over plain HTTP (`text/event-stream`), auto-reconnect in browsers with `Last-Event-ID`. Ideal for token streaming. FastAPI has native SSE support (`fastapi.sse.EventSourceResponse` + `ServerSentEvent`); `StreamingResponse` also works.",
+     "body_md": "**Short answer:** SSE = one-way server→client stream over plain HTTP (`text/event-stream`), auto-reconnect in browsers with `Last-Event-ID`. Ideal for token streaming. FastAPI has native SSE support (`fastapi.sse.EventSourceResponse` + `ServerSentEvent`); `StreamingResponse` also works.\n\n```python\nfrom collections.abc import AsyncIterable\nfrom fastapi.sse import EventSourceResponse, ServerSentEvent\n\n@app.post(\"/v1/conversations/{conv_id}/stream\", response_class=EventSourceResponse)\nasync def stream(conv: OwnedConversation, body: ChatIn, request: Request) -> AsyncIterable[ServerSentEvent]:\n    seq = 0\n    async for ev in agent.astream(conv.thread_id, body.message):     # LangGraph / AgentCore stream\n        if await request.is_disconnected():\n            await agent.cancel(conv.thread_id); break                # stop paying for tokens\n        seq += 1\n        yield ServerSentEvent(event=ev.type, data=ev.payload, id=f\"{conv.id}:{seq}\")\n    yield ServerSentEvent(event=\"done\", data={\"ok\": True})\n```\nProduction details: heartbeat comments every ~15 s (keep proxies/ALB from idling out), disable proxy buffering, auth on the endpoint, per-user concurrent stream limit, persist events if you want resume-after-reconnect. (Browser `EventSource` only supports GET without custom headers → use `fetch` streaming for POST + Authorization header.)"
+    },
+    {
+     "id": "Q19",
+     "title": "WebSockets vs SSE",
+     "short_md": "| | SSE | WebSocket |\n|---|---|---|\n| Direction | server → client | bidirectional |\n| Protocol | HTTP (works through most proxies, HTTP/2 multiplexing) | upgrade to WS |\n| Reconnect | built-in (`Last-Event-ID`) | you implement |\n| Use | token streaming, progress updates | chat with interrupts, voice, collaborative editing |",
+     "body_md": "| | SSE | WebSocket |\n|---|---|---|\n| Direction | server → client | bidirectional |\n| Protocol | HTTP (works through most proxies, HTTP/2 multiplexing) | upgrade to WS |\n| Reconnect | built-in (`Last-Event-ID`) | you implement |\n| Use | token streaming, progress updates | chat with interrupts, voice, collaborative editing |"
+    },
+    {
+     "id": "Q20",
+     "title": "`BackgroundTasks` — and its limits",
+     "short_md": "`BackgroundTasks` runs a function **after the response is sent, in the same process**. Fine for small fire-and-forget work (send an email, write an audit log). **Not** for important or long work: lost if the container restarts/scales in, no retries, no visibility, consumes the web worker. Use a durable queue (SQS + worker), Step Functions, or Celery/RQ for real jobs.",
+     "body_md": "`BackgroundTasks` runs a function **after the response is sent, in the same process**. Fine for small fire-and-forget work (send an email, write an audit log). **Not** for important or long work: lost if the container restarts/scales in, no retries, no visibility, consumes the web worker. Use a durable queue (SQS + worker), Step Functions, or Celery/RQ for real jobs."
+    },
+    {
+     "id": "Q21",
+     "title": "Resilient async jobs API",
+     "short_md": "POST /v1/jobs (Idempotency-Key) → validate + authZ → insert job PENDING → enqueue (outbox/SQS) → 202 {job_id, status_url} GET  /v1/jobs/{id}              → status, progress, result links (presigned), error GET  /v1/jobs/{id}/events (SSE) → live progress POST /v1/jobs/{id}/cancel       → idempotent cancel Worker: claim job with conditional update, process, heartbeat progress, retries with backoff, DLQ, final state",
+     "body_md": "```\n POST /v1/jobs (Idempotency-Key) → validate + authZ → insert job PENDING → enqueue (outbox/SQS) → 202 {job_id, status_url}\n GET  /v1/jobs/{id}              → status, progress, result links (presigned), error\n GET  /v1/jobs/{id}/events (SSE) → live progress\n POST /v1/jobs/{id}/cancel       → idempotent cancel\n Worker: claim job with conditional update, process, heartbeat progress, retries with backoff, DLQ, final state\n```\nServer is the source of truth; clients can refresh/reconnect any time."
+    },
+    {
+     "id": "Q22",
+     "title": "Uploads without proxying file bytes",
+     "short_md": "Return a **presigned S3 URL** (POST policy with `content-length-range`, content-type, server-chosen key under the tenant prefix, short expiry); browser uploads directly to S3; S3 event triggers validation/scanning; API marks it ready. Avoids tying up API workers and request size limits. If you must accept uploads in FastAPI, stream (`UploadFile` spools to disk), enforce size limits, validate magic bytes.",
+     "body_md": "Return a **presigned S3 URL** (POST policy with `content-length-range`, content-type, server-chosen key under the tenant prefix, short expiry); browser uploads directly to S3; S3 event triggers validation/scanning; API marks it ready. Avoids tying up API workers and request size limits. If you must accept uploads in FastAPI, stream (`UploadFile` spools to disk), enforce size limits, validate magic bytes."
+    }
+   ]
+  },
+  {
+   "id": "security",
+   "num": 5,
+   "title": "Security",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q23",
+     "title": "Authentication vs authorisation in an API",
+     "short_md": "**Authentication** (who are you): validate the **JWT** from Okta/Cognito — signature against IdP JWKS (cache keys, handle rotation via `kid`), `iss`, `aud`, `exp`/`nbf`, allowed algorithms (never `none`), scopes. **Authorisation** (may you do this): role/scope checks + **resource-level** ownership/tenant checks in dependencies or service layer, on every request.",
+     "body_md": "**Authentication** (who are you): validate the **JWT** from Okta/Cognito — signature against IdP JWKS (cache keys, handle rotation via `kid`), `iss`, `aud`, `exp`/`nbf`, allowed algorithms (never `none`), scopes. **Authorisation** (may you do this): role/scope checks + **resource-level** ownership/tenant checks in dependencies or service layer, on every request.\n\n```python\njwks_client = jwt.PyJWKClient(f\"{settings.okta_issuer}/v1/keys\", cache_keys=True)\n\ndef verify_jwt(token: str) -> User:\n    try:\n        key = jwks_client.get_signing_key_from_jwt(token).key\n        claims = jwt.decode(token, key, algorithms=[\"RS256\"],\n                            audience=settings.okta_audience, issuer=settings.okta_issuer)\n    except jwt.PyJWTError:\n        raise HTTPException(401, headers={\"WWW-Authenticate\": \"Bearer\"})\n    return User(id=claims[\"sub\"], tenant_id=claims[\"tenant\"], groups=claims.get(\"groups\", []))\n```"
+    },
+    {
+     "id": "Q24",
+     "title": "IDOR — a request selects another tenant's document ID",
+     "short_md": "**Insecure Direct Object Reference:** changing `/documents/123` → `/documents/124` returns someone else's data. Defend: always load resources **scoped by tenant/owner from the token** (`WHERE id = ? AND tenant_id = ?`), return 404 for not-owned, unguessable IDs (UUIDs) as defence-in-depth (not a substitute), central authorisation helpers, automated cross-tenant negative tests, apply the same to document IDs passed into RAG/agent tools.",
+     "body_md": "**Insecure Direct Object Reference:** changing `/documents/123` → `/documents/124` returns someone else's data. Defend: always load resources **scoped by tenant/owner from the token** (`WHERE id = ? AND tenant_id = ?`), return 404 for not-owned, unguessable IDs (UUIDs) as defence-in-depth (not a substitute), central authorisation helpers, automated cross-tenant negative tests, apply the same to document IDs passed into RAG/agent tools."
+    },
+    {
+     "id": "Q25",
+     "title": "CORS — secure configuration",
+     "short_md": "app.add_middleware(CORSMiddleware, allow_origins=[\"https://app.example.com\"],       # exact origins, not \"*\" with credentials allow_credentials=True, allow_methods=[\"GET\", \"POST\", \"PATCH\", \"DELETE\"], allow_headers=[\"Authorization\", \"Content-Type\", \"Idempotency-Key\"], max_age=600)",
+     "body_md": "```python\napp.add_middleware(CORSMiddleware,\n    allow_origins=[\"https://app.example.com\"],       # exact origins, not \"*\" with credentials\n    allow_credentials=True,\n    allow_methods=[\"GET\", \"POST\", \"PATCH\", \"DELETE\"],\n    allow_headers=[\"Authorization\", \"Content-Type\", \"Idempotency-Key\"],\n    max_age=600)\n```\nCORS protects browsers' users, not your API — attackers using curl ignore it. Prefer same-origin (CloudFront routes `/api/*`) to avoid CORS entirely."
+    },
+    {
+     "id": "Q26",
+     "title": "SSRF and file upload security",
+     "short_md": "**SSRF:** endpoints/tools that fetch user-supplied URLs (web fetch tool, webhook, \"import from URL\") can be abused to reach internal services or the metadata endpoint. Defend: allowlist domains/schemes, resolve DNS and block private/link-local IP ranges (re-check after redirects), no redirects or limited, egress through a proxy, IMDSv2, timeouts and size limits. **Uploads:** size limits, type validation by content (not extension), malware scan, store outside web root (S3), random keys, never execute/parse with unsafe libraries, sanitise filenames when displaying.",
+     "body_md": "**SSRF:** endpoints/tools that fetch user-supplied URLs (web fetch tool, webhook, \"import from URL\") can be abused to reach internal services or the metadata endpoint. Defend: allowlist domains/schemes, resolve DNS and block private/link-local IP ranges (re-check after redirects), no redirects or limited, egress through a proxy, IMDSv2, timeouts and size limits.\n**Uploads:** size limits, type validation by content (not extension), malware scan, store outside web root (S3), random keys, never execute/parse with unsafe libraries, sanitise filenames when displaying."
+    },
+    {
+     "id": "Q27",
+     "title": "Rate limiting and quotas",
+     "short_md": "Per user/tenant/IP limits (token bucket in Redis, or API Gateway usage plans/WAF rate rules), separate limits for expensive endpoints (LLM chat) and **token budgets** per tenant, return 429 + `Retry-After`, limit concurrent streams, protect login endpoints against brute force.",
+     "body_md": "Per user/tenant/IP limits (token bucket in Redis, or API Gateway usage plans/WAF rate rules), separate limits for expensive endpoints (LLM chat) and **token budgets** per tenant, return 429 + `Retry-After`, limit concurrent streams, protect login endpoints against brute force."
+    },
+    {
+     "id": "Q28",
+     "title": "Other API security essentials",
+     "short_md": "HTTPS only (HSTS), security headers, input size limits (body, list lengths), output encoding, no secrets in logs/errors, dependency scanning, least-privilege IAM for the service, audit logs for sensitive actions, OWASP API Security Top 10 (BOLA/IDOR, broken auth, excessive data exposure, lack of rate limiting, BFLA, mass assignment — use explicit Pydantic input models, SSRF, misconfiguration, inventory, unsafe consumption of third-party APIs).",
+     "body_md": "HTTPS only (HSTS), security headers, input size limits (body, list lengths), output encoding, no secrets in logs/errors, dependency scanning, least-privilege IAM for the service, audit logs for sensitive actions, OWASP API Security Top 10 (BOLA/IDOR, broken auth, excessive data exposure, lack of rate limiting, BFLA, mass assignment — use explicit Pydantic input models, SSRF, misconfiguration, inventory, unsafe consumption of third-party APIs)."
+    }
+   ]
+  },
+  {
+   "id": "production-readiness",
+   "num": 6,
+   "title": "Production readiness",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q29",
+     "title": "Making FastAPI production-ready on ECS",
+     "short_md": "- Run: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers N` (or `fastapi run`), or Gunicorn + Uvicorn workers; workers ≈ CPU cores; container exec-form entrypoint. - Graceful shutdown on SIGTERM (Uvicorn drains in-flight; lifespan closes pools); `stopTimeout` and ALB deregistration delay aligned. - `--proxy-headers` / `--forwarded-allow-ips` behind ALB for correct client IP/scheme. - Connection pools sized: DB pool per worker × workers × tasks ≤ DB max connections (or RDS Proxy). - Timeouts on every outbound call; retries with backoff only for idempotent operations. - Structured JSON …",
+     "body_md": "- Run: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers N` (or `fastapi run`), or Gunicorn + Uvicorn workers; workers ≈ CPU cores; container exec-form entrypoint.\n- Graceful shutdown on SIGTERM (Uvicorn drains in-flight; lifespan closes pools); `stopTimeout` and ALB deregistration delay aligned.\n- `--proxy-headers` / `--forwarded-allow-ips` behind ALB for correct client IP/scheme.\n- Connection pools sized: DB pool per worker × workers × tasks ≤ DB max connections (or RDS Proxy).\n- Timeouts on every outbound call; retries with backoff only for idempotent operations.\n- Structured JSON logs, OpenTelemetry tracing, metrics (RED: rate, errors, duration).\n- Health endpoints, autoscaling on request count/latency, non-root container, secrets from Secrets Manager."
+    },
+    {
+     "id": "Q30",
+     "title": "Health, liveness and readiness",
+     "short_md": "- **Liveness** (`/health/live`): process is alive and event loop responsive — no dependency calls. Failing → restart. - **Readiness** (`/health/ready`): can serve traffic (DB reachable, config loaded, warm-up done). Failing → stop routing traffic, don't restart. - **Startup**: allow slow initialisation (ECS `startPeriod`, ALB grace period).",
+     "body_md": "- **Liveness** (`/health/live`): process is alive and event loop responsive — no dependency calls. Failing → restart.\n- **Readiness** (`/health/ready`): can serve traffic (DB reachable, config loaded, warm-up done). Failing → stop routing traffic, don't restart.\n- **Startup**: allow slow initialisation (ECS `startPeriod`, ALB grace period).\n\nALB target health should usually use a cheap readiness check; avoid deep checks that make all tasks fail together when a shared dependency blips (cascading failure)."
+    },
+    {
+     "id": "Q31",
+     "title": "OpenTelemetry instrumentation",
+     "short_md": "Auto-instrument FastAPI, httpx, SQLAlchemy, boto3/botocore (ADOT/OTel SDK); propagate W3C `traceparent` to downstream (AgentCore, Lambda tools); add span attributes (tenant pseudonymised, model ID, token counts, tool names); export via OTel collector sidecar to X-Ray/CloudWatch or other backends; correlate log lines with trace ID; sample (always keep errors).",
+     "body_md": "Auto-instrument FastAPI, httpx, SQLAlchemy, boto3/botocore (ADOT/OTel SDK); propagate W3C `traceparent` to downstream (AgentCore, Lambda tools); add span attributes (tenant pseudonymised, model ID, token counts, tool names); export via OTel collector sidecar to X-Ray/CloudWatch or other backends; correlate log lines with trace ID; sample (always keep errors)."
+    },
+    {
+     "id": "Q32",
+     "title": "Testing FastAPI",
+     "short_md": "from fastapi.testclient import TestClient     # or httpx.AsyncClient with ASGITransport for async tests",
+     "body_md": "```python\nfrom fastapi.testclient import TestClient     # or httpx.AsyncClient with ASGITransport for async tests\n\ndef test_cannot_read_other_tenants_conversation(db_with_two_tenants):\n    app.dependency_overrides[get_current_user] = lambda: User(id=\"u1\", tenant_id=\"t1\")\n    client = TestClient(app)\n    r = client.get(\"/v1/conversations/c_of_tenant_t2\")\n    assert r.status_code == 404\n```\nUnit tests for services, API tests with dependency overrides, contract tests against OpenAPI (schemathesis), integration with real Postgres in a container, load tests (k6/Locust) including SSE."
+    },
+    {
+     "id": "Q33",
+     "title": "Schema changes without breaking older frontends",
+     "short_md": "Additive fields only; keep old fields until usage drops (monitor); new required input fields get defaults; expand-migrate-contract for DB; version endpoints for breaking changes; generate TypeScript types from OpenAPI so the frontend sees changes in CI.",
+     "body_md": "Additive fields only; keep old fields until usage drops (monitor); new required input fields get defaults; expand-migrate-contract for DB; version endpoints for breaking changes; generate TypeScript types from OpenAPI so the frontend sees changes in CI."
+    },
+    {
+     "id": "Q34",
+     "title": "Performance tuning",
+     "short_md": "Profile first; async I/O end to end; connection pooling and keep-alive (shared `httpx.AsyncClient`); avoid N+1 DB queries; cache hot reads; `orjson` responses; GZip for big JSON; offload CPU work; right number of workers; avoid huge Pydantic models in hot loops (or use `model_construct` for trusted data).",
+     "body_md": "Profile first; async I/O end to end; connection pooling and keep-alive (shared `httpx.AsyncClient`); avoid N+1 DB queries; cache hot reads; `orjson` responses; GZip for big JSON; offload CPU work; right number of workers; avoid huge Pydantic models in hot loops (or use `model_construct` for trusted data)."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 7,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q35",
+     "title": "An SSE stream works locally but drops through the ALB after ~60 s idle",
+     "short_md": "ALB **idle timeout** (default 60 s) closes connections with no bytes flowing — e.g., while the agent is thinking or waiting for a tool. Fix: send heartbeat comments every 15–30 s and/or raise ALB idle timeout; check CloudFront origin read/keep-alive timeouts; disable proxy buffering; ensure deploys don't cut streams (deregistration delay + client reconnect with `Last-Event-ID`).",
+     "body_md": "ALB **idle timeout** (default 60 s) closes connections with no bytes flowing — e.g., while the agent is thinking or waiting for a tool. Fix: send heartbeat comments every 15–30 s and/or raise ALB idle timeout; check CloudFront origin read/keep-alive timeouts; disable proxy buffering; ensure deploys don't cut streams (deregistration delay + client reconnect with `Last-Event-ID`)."
+    },
+    {
+     "id": "Q36",
+     "title": "The API returns 401 on every request after an Okta change",
+     "short_md": "Check what changed: **issuer** URL (custom authorization server vs org), **audience**, signing keys rotated and JWKS cache stale or JWKS URL wrong, algorithm, clock skew, token now missing a claim you require (`groups`, custom `tenant`), access token vs ID token sent by the SPA. Decode a token (safely, locally) and compare claims with your config; log the validation error reason (not the token).",
+     "body_md": "Check what changed: **issuer** URL (custom authorization server vs org), **audience**, signing keys rotated and JWKS cache stale or JWKS URL wrong, algorithm, clock skew, token now missing a claim you require (`groups`, custom `tenant`), access token vs ID token sent by the SPA. Decode a token (safely, locally) and compare claims with your config; log the validation error reason (not the token)."
+    },
+    {
+     "id": "Q37",
+     "title": "p99 latency spikes but p50 is normal",
+     "short_md": "Event-loop blocking by occasional sync calls/CPU work, GC pauses, DB pool exhaustion under bursts, cold paths (first call to a model, cache misses), slow downstream for some tenants (bigger prompts), retries. Check traces of slow requests, event-loop lag metrics, pool wait time.",
+     "body_md": "Event-loop blocking by occasional sync calls/CPU work, GC pauses, DB pool exhaustion under bursts, cold paths (first call to a model, cache misses), slow downstream for some tenants (bigger prompts), retries. Check traces of slow requests, event-loop lag metrics, pool wait time."
+    },
+    {
+     "id": "Q38",
+     "title": "Clients get duplicate jobs when the network flakes",
+     "short_md": "Clients retry POST on timeout → duplicate jobs. Require `Idempotency-Key`, enforce with a unique constraint, return the original 202 response on retry.",
+     "body_md": "Clients retry POST on timeout → duplicate jobs. Require `Idempotency-Key`, enforce with a unique constraint, return the original 202 response on retry."
+    },
+    {
+     "id": "Q39",
+     "title": "Memory grows steadily in the API containers",
+     "short_md": "Unbounded in-process caches, accumulating background tasks, large responses held in memory instead of streamed, per-request clients not closed (create shared clients in lifespan), Pydantic models of huge payloads. Use `tracemalloc`/memray, fix, add memory alarms; recycle workers (`--limit-max-requests`) as a stopgap.",
+     "body_md": "Unbounded in-process caches, accumulating background tasks, large responses held in memory instead of streamed, per-request clients not closed (create shared clients in lifespan), Pydantic models of huge payloads. Use `tracemalloc`/memray, fix, add memory alarms; recycle workers (`--limit-max-requests`) as a stopgap."
+    },
+    {
+     "id": "Q40",
+     "title": "Design the chat API for an agentic app (endpoints)",
+     "short_md": "POST   /v1/conversations                         create (server-generated id, owner = token sub) GET    /v1/conversations?cursor=                 list own conversations GET    /v1/conversations/{id}                    read (ownership check) POST   /v1/conversations/{id}/messages/stream    send message → SSE stream (token/tool/approval/done) GET    /v1/conversations/{id}/approvals          pending approvals POST   /v1/approvals/{approval_id}/decision      approve/reject (approver authZ, Idempotency-Key) POST   /v1/uploads                               presigned upload URL POST   /v1/jobs  · GET…",
+     "body_md": "```\nPOST   /v1/conversations                         create (server-generated id, owner = token sub)\nGET    /v1/conversations?cursor=                 list own conversations\nGET    /v1/conversations/{id}                    read (ownership check)\nPOST   /v1/conversations/{id}/messages/stream    send message → SSE stream (token/tool/approval/done)\nGET    /v1/conversations/{id}/approvals          pending approvals\nPOST   /v1/approvals/{approval_id}/decision      approve/reject (approver authZ, Idempotency-Key)\nPOST   /v1/uploads                               presigned upload URL\nPOST   /v1/jobs  · GET /v1/jobs/{id} · GET /v1/jobs/{id}/events   async document jobs\n```\nCross-cutting: JWT auth, tenant scoping, rate limits/token budgets, Problem Details errors, OpenAPI, tracing."
+    }
+   ]
+  },
+  {
+   "id": "api-styles-databases-in-fastapi",
+   "num": 8,
+   "title": "API styles & databases in FastAPI",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q41",
+     "title": "REST vs GraphQL vs gRPC vs WebSockets/SSE",
+     "short_md": "REST:    GET /users/42            GET /users/42/orders?limit=5 GraphQL: POST /graphql   { user(id: 42) { name orders(limit: 5) { id total } } } gRPC:    rpc GetUser(GetUserRequest) returns (User);",
+     "body_md": "| | REST | GraphQL | gRPC | WebSockets / SSE |\n|---|---|---|---|---|\n| Shape | resources + HTTP verbs | one endpoint; client asks for exact fields | typed RPC methods from `.proto` files, binary (Protobuf) over HTTP/2 | long-lived connection; server pushes |\n| Strengths | simple, cacheable (HTTP caching), universal | no over/under-fetching; one round trip for nested data | fast, strongly typed, streaming, code-gen clients | real-time updates, token streaming |\n| Weaknesses | over/under-fetching, many round trips | caching harder, query cost control (depth limits), N+1 in resolvers | not browser-native (needs gRPC-Web/proxy), harder to debug | connection management, scaling sticky connections |\n| Typical use | public/partner APIs, CRUD | complex UIs aggregating many entities | internal service-to-service | chat, notifications, LLM streaming (Q18–Q19) |\n\n```\nREST:    GET /users/42            GET /users/42/orders?limit=5\nGraphQL: POST /graphql   { user(id: 42) { name orders(limit: 5) { id total } } }\ngRPC:    rpc GetUser(GetUserRequest) returns (User);\n```\n**Interview stance:** REST + OpenAPI for the React ↔ FastAPI API; SSE for streaming tokens; gRPC only where internal latency/throughput justifies it; GraphQL when many clients need flexible aggregated reads."
+    },
+    {
+     "id": "Q42",
+     "title": "Using a relational database from FastAPI (SQLAlchemy 2.0 async + Alembic)",
+     "short_md": "Create **one async engine** (connection pool) at startup, give each request its **own session** through a dependency, keep transactions short, and manage schema changes with **Alembic** migrations.",
+     "body_md": "**Short answer:** Create **one async engine** (connection pool) at startup, give each request its **own session** through a dependency, keep transactions short, and manage schema changes with **Alembic** migrations.\n\n```python\n# db.py\nfrom sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\nengine = create_async_engine(settings.database_url,          # postgresql+asyncpg://...\n                             pool_size=10, max_overflow=5, pool_pre_ping=True)\nSessionLocal = async_sessionmaker(engine, expire_on_commit=False)\n\nclass Base(DeclarativeBase): ...\n\nclass Job(Base):\n    __tablename__ = \"jobs\"\n    id: Mapped[str] = mapped_column(primary_key=True)\n    tenant_id: Mapped[str] = mapped_column(index=True)\n    status: Mapped[str]\n\nasync def get_session():\n    async with SessionLocal() as session:      # one session per request\n        yield session                          # closed automatically after the response\n\n# routes.py\nfrom typing import Annotated\nSessionDep = Annotated[AsyncSession, Depends(get_session)]\n\n@router.post(\"/jobs\", status_code=201)\nasync def create_job(body: JobIn, session: SessionDep, user: CurrentUser):\n    job = Job(id=new_id(), tenant_id=user.tenant_id, status=\"PENDING\")\n    async with session.begin():                # commit on success, rollback on error\n        session.add(job)\n    return JobOut.model_validate(job, from_attributes=True)\n\n@router.get(\"/jobs/{job_id}\")\nasync def get_job(job_id: str, session: SessionDep, user: CurrentUser):\n    job = await session.scalar(\n        select(Job).where(Job.id == job_id, Job.tenant_id == user.tenant_id))   # tenant filter = IDOR guard\n    if not job:\n        raise HTTPException(404)\n    return JobOut.model_validate(job, from_attributes=True)\n```\nDispose the engine in the lifespan shutdown (`await engine.dispose()`).\n\n**Alembic (migrations):**\n```bash\nalembic init -t async migrations                     # async template\nalembic revision --autogenerate -m \"add jobs table\"  # diff models vs DB → migration file (REVIEW it!)\nalembic upgrade head                                 # apply (run as a separate CI/CD step or one-off task)\n```\n**Pitfalls:**\n- Implicit lazy-loading of relationships fails in async (raises `MissingGreenlet`) — use `selectinload()` (avoids N+1 too, 21 Q12) or `AsyncAttrs` + `await obj.awaitable_attrs.rel`.\n- Don't run migrations from every app container at startup (race between tasks) — run once per deploy.\n- Write migrations backward-compatible (expand → migrate → contract, 21 Q25).\n- Size pools from the DB's `max_connections` ÷ number of tasks (21 Q22)."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 9,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| API styles | REST default; GraphQL flexible reads; gRPC internal; SSE streaming |\n| DB in FastAPI | one async engine; session per request via `Depends`; Alembic migrations once per deploy |\n| FastAPI | Starlette + Pydantic + DI + OpenAPI on ASGI (Uvicorn) |\n| ASGI vs WSGI | async many-concurrent vs sync one-per-worker |\n| `async def` | never block the loop; `to_thread` or `def` endpoint |\n| Validation | Pydantic → 422; `response_model` filters output |\n| `Depends` | per-request DI, nesting, `yield` cleanup, test overrides |\n| Lifespan | create/close shared clients |\n| Status codes | 201 create, 202 async, 401 authN, 403 authZ, 409 conflict, 422 validation, 429 rate |\n| Idempotency | `Idempotency-Key` + unique constraint |\n| Pagination | cursor/keyset for large data |\n| Concurrency | ETag + `If-Match` → 412 |\n| SSE | `EventSourceResponse`; heartbeats; ALB idle timeout |\n| BackgroundTasks | in-process, not durable → use queues |\n| Uploads | presigned S3, not through API |\n| AuthN | verify JWT signature, iss, aud, exp via JWKS |\n| AuthZ | resource-level tenant/owner checks every request (IDOR) |\n| CORS | exact origins; same-origin best |\n| Health | liveness shallow, readiness meaningful |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- FastAPI docs: https://fastapi.tiangolo.com/\n- Dependencies: https://fastapi.tiangolo.com/tutorial/dependencies/\n- Server-Sent Events: https://fastapi.tiangolo.com/tutorial/server-sent-events/\n- Lifespan events: https://fastapi.tiangolo.com/advanced/events/\n- Pydantic v2: https://docs.pydantic.dev/\n- RFC 9110 HTTP semantics: https://www.rfc-editor.org/rfc/rfc9110 · RFC 9457 Problem Details: https://www.rfc-editor.org/rfc/rfc9457\n- OWASP API Security Top 10: https://owasp.org/API-Security/\n- SQLAlchemy asyncio extension: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html\n- Alembic cookbook (async template `alembic init -t async`): https://alembic.sqlalchemy.org/en/latest/cookbook.html",
+   "questions": []
+  }
+ ]
+}

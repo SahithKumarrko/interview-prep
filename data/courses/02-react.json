@@ -1,0 +1,376 @@
+{
+ "slug": "02-react",
+ "num": 2,
+ "title": "React.js",
+ "full_title": "React.js: L2 → L3 Interview Preparation",
+ "group": "Core",
+ "accent": "#38bdf8",
+ "updated": "24 October 2026 (React 19.2 line is current)",
+ "level": "basics → hooks → architecture & production",
+ "source": "docs/02_React.md",
+ "question_count": 46,
+ "section_count": 11,
+ "sections": [
+  {
+   "id": "mental-model-how-react-updates-the-screen",
+   "num": 1,
+   "title": "Mental model: how React updates the screen",
+   "intro_md": "**Core idea:** `UI = f(state)`. You describe *what* the UI should look like for the current state; React figures out *how* to change the DOM.\n\n```\n   Trigger                 Render phase (pure, can be paused/redone)      Commit phase (sync)\n ┌─────────────┐         ┌────────────────────────────────────────┐     ┌──────────────────────┐\n │ setState()  │         │ React calls your component functions    │     │ React applies the     │\n │ new props   │ ──────► │ → new element tree (virtual DOM)        │ ──► │ minimal DOM changes    │\n │ context     │         │ → diff with previous tree               │     │ → runs ref callbacks   │\n │ change      │         │   (reconciliation)                      │     │ → useLayoutEffect      │\n └─────────────┘         └────────────────────────────────────────┘     │ → browser paints       │\n                                                                         │ → useEffect runs       │\n                                                                         └──────────────────────┘\n```\n\n**Rules that follow from this:**\n- Component functions must be **pure**: same props/state → same output, no side effects during render (React may call them more than once — Strict Mode does so deliberately in development).\n- Side effects (network, subscriptions, timers) go in **event handlers** (user caused it) or **effects** (synchronising with an external system).\n- A component re-renders when **its state changes, its parent re-renders, or a context it reads changes**.\n\n**Where React fits in a typical AI app (your stack):**\n```\n ┌──────────────────────────── Browser ────────────────────────────┐\n │  Vite-built React SPA                                            │\n │  ┌──────────┐  ┌────────────────┐  ┌───────────────────────────┐ │\n │  │ Router   │  │ Server-state   │  │ Chat UI                    │ │\n │  │ (URL =   │  │ cache (TanStack│  │ useAgentStream(sessionId)  │ │\n │  │ state)   │  │ Query)         │  │ → SSE/WebSocket tokens     │ │\n │  └──────────┘  └───────┬────────┘  └────────────┬──────────────┘ │\n └─────────────────────────┼────────────────────────┼────────────────┘\n                           │ HTTPS + JWT (Cognito)   │ SSE stream\n                           ▼                         ▼\n                   FastAPI / API Gateway  ──►  Agent (LangGraph on AgentCore)\n```",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "What is React and what is a component?",
+     "short_md": "React is a JavaScript library for building UIs declaratively. A component is a function that takes **props** and returns **JSX** describing a piece of UI. Components compose into a tree.",
+     "body_md": "**Short answer:** React is a JavaScript library for building UIs declaratively. A component is a function that takes **props** and returns **JSX** describing a piece of UI. Components compose into a tree.\n\n**Example:**\n```jsx\nfunction JobStatus({ status }) {\n  const color = status === \"failed\" ? \"red\" : \"green\";\n  return <span style={{ color }}>{status}</span>;\n}\n// Use it:\n<JobStatus status=\"running\" />\n```\nInstead of \"find the span and change its text\" (imperative), you say \"for this status, show this\" (declarative).\n\n**Follow-up — what is JSX?** Syntax sugar compiled to function calls: `<JobStatus status=\"x\" />` → `jsx(JobStatus, { status: \"x\" })`. It produces plain objects (React elements), not DOM nodes."
+    },
+    {
+     "id": "Q02",
+     "title": "Props vs state vs derived values",
+     "short_md": "- **Props**: inputs passed from the parent — read-only for the child.\n- **State**: data the component *remembers* between renders; changing it triggers a re-render.\n- **Derived values**: anything you can compute from props/state — **compute it during render, don't store it in state.**",
+     "body_md": "**Short answer:**\n- **Props**: inputs passed from the parent — read-only for the child.\n- **State**: data the component *remembers* between renders; changing it triggers a re-render.\n- **Derived values**: anything you can compute from props/state — **compute it during render, don't store it in state.**\n\n**Example:**\n```jsx\nfunction DocList({ documents }) {\n  const [filter, setFilter] = useState(\"all\");                 // state\n  const visible = documents.filter(d => filter === \"all\" || d.status === filter); // derived\n  const doneCount = documents.filter(d => d.status === \"done\").length;            // derived\n  // ❌ const [doneCount, setDoneCount] = useState(0) + an effect to sync it → can drift out of sync\n  return <>{doneCount} done … {visible.map(d => <Row key={d.id} doc={d} />)}</>;\n}\n```\n\n**Rule:** single source of truth. Duplicated state = bugs where two copies disagree."
+    },
+    {
+     "id": "Q03",
+     "title": "How does state update? Why is `setState` \"async\"?",
+     "short_md": "`setX(v)` doesn't change `x` immediately; it **schedules** a re-render. Inside the current render, `x` is a snapshot. React **batches** multiple updates (in all handlers since React 18) into one render.",
+     "body_md": "**Short answer:** `setX(v)` doesn't change `x` immediately; it **schedules** a re-render. Inside the current render, `x` is a snapshot. React **batches** multiple updates (in all handlers since React 18) into one render.\n\n**Example:**\n```jsx\nconst [count, setCount] = useState(0);\nfunction handleClick() {\n  setCount(count + 1);\n  setCount(count + 1);       // both use the same snapshot (0) → result 1\n  setCount(c => c + 1);      // updater function uses latest queued value → correct\n  console.log(count);        // still 0 here – snapshot\n}\n```\n\n**Immutable updates:** never mutate state objects; create new ones so React sees a new reference.\n```jsx\nsetUser(u => ({ ...u, name: \"Ana\" }));                // ✅\nsetItems(items => [...items, newItem]);               // ✅\nitems.push(newItem); setItems(items);                 // ❌ same reference → may not re-render\n```"
+    },
+    {
+     "id": "Q04",
+     "title": "Why do list keys matter?",
+     "short_md": "Keys tell React **which item is which** between renders, so it can keep the right state and DOM for each row. Use a stable unique ID; avoid array index when the list can reorder, insert or delete.",
+     "body_md": "**Short answer:** Keys tell React **which item is which** between renders, so it can keep the right state and DOM for each row. Use a stable unique ID; avoid array index when the list can reorder, insert or delete.\n\n**Explanation:**\n```\nBefore: [A(key=0), B(key=1)]   insert X at top → [X(key=0), A(key=1), B(key=2)]\nWith index keys React thinks \"item 0 changed from A to X\" → A's input text now shows on X's row ❌\nWith id keys   React sees \"new X inserted, A and B unchanged\" ✅\n```\n\n```jsx\n{messages.map(m => <Message key={m.id} message={m} />)}\n```"
+    },
+    {
+     "id": "Q05",
+     "title": "Render vs commit",
+     "short_md": "**Render** = React calls your components to compute the new UI tree (pure, may be interrupted or repeated). **Commit** = React applies changes to the real DOM, then runs effects. Never do side effects in render.",
+     "body_md": "**Short answer:** **Render** = React calls your components to compute the new UI tree (pure, may be interrupted or repeated). **Commit** = React applies changes to the real DOM, then runs effects. Never do side effects in render.\n\n```jsx\nfunction Bad({ id }) {\n  fetch(`/api/log/${id}`, { method: \"POST\" });   // ❌ may fire twice or more\n  return <div/>;\n}\n```"
+    },
+    {
+     "id": "Q06",
+     "title": "Controlled vs uncontrolled inputs",
+     "short_md": "**Controlled**: React state holds the value (`value` + `onChange`) — easy validation and syncing. **Uncontrolled**: the DOM holds the value; you read it via a `ref` or form data — less code, fewer re-renders.",
+     "body_md": "**Short answer:** **Controlled**: React state holds the value (`value` + `onChange`) — easy validation and syncing. **Uncontrolled**: the DOM holds the value; you read it via a `ref` or form data — less code, fewer re-renders.\n\n```jsx\n// Controlled\nconst [q, setQ] = useState(\"\");\n<input value={q} onChange={e => setQ(e.target.value)} />\n\n// Uncontrolled (file inputs are always uncontrolled)\nconst fileRef = useRef(null);\n<input type=\"file\" ref={fileRef} />\n// later: fileRef.current.files[0]\n\n// React 19: form action reads FormData, no state per field needed\n<form action={async (formData) => save(formData.get(\"title\"))}>\n  <input name=\"title\" />\n</form>\n```"
+    },
+    {
+     "id": "Q07",
+     "title": "Lifting state up and prop drilling",
+     "short_md": "When two siblings need the same data, move the state to their **closest common parent** and pass it down as props. If you pass props through many layers that don't use them (\"prop drilling\"), consider **composition** (pass components as `children`) or **context**.",
+     "body_md": "**Short answer:** When two siblings need the same data, move the state to their **closest common parent** and pass it down as props. If you pass props through many layers that don't use them (\"prop drilling\"), consider **composition** (pass components as `children`) or **context**.\n\n```jsx\n// Composition avoids drilling `user` through Layout\n<Layout sidebar={<UserMenu user={user} />}>\n  <Dashboard />\n</Layout>\n```"
+    },
+    {
+     "id": "Q08",
+     "title": "Conditional rendering and fragments",
+     "short_md": "{isLoading && <Spinner />}                 // careful: {count && <X/>} renders \"0\" when count=0 {count > 0 ? <List /> : <Empty />} <>                                          {/* Fragment: group without an extra div */} <dt>Name</dt><dd>{name}</dd> </>",
+     "body_md": "```jsx\n{isLoading && <Spinner />}                 // careful: {count && <X/>} renders \"0\" when count=0\n{count > 0 ? <List /> : <Empty />}\n<>                                          {/* Fragment: group without an extra div */}\n  <dt>Name</dt><dd>{name}</dd>\n</>\n```"
+    },
+    {
+     "id": "Q09",
+     "title": "Class components vs function components",
+     "short_md": "Function components with Hooks are the modern standard. Class components (`this.state`, `componentDidMount`) still work and are still needed for **error boundaries** (no hook equivalent yet), but new code uses functions.",
+     "body_md": "**Short answer:** Function components with Hooks are the modern standard. Class components (`this.state`, `componentDidMount`) still work and are still needed for **error boundaries** (no hook equivalent yet), but new code uses functions.\n\n| Class lifecycle | Hook equivalent |\n|---|---|\n| `componentDidMount` / `componentDidUpdate` / `componentWillUnmount` | `useEffect(() => { …; return cleanup }, [deps])` |\n| `shouldComponentUpdate` | `React.memo` |\n| `this.state` | `useState` / `useReducer` |"
+    }
+   ]
+  },
+  {
+   "id": "hooks-in-depth",
+   "num": 3,
+   "title": "Hooks in depth",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q10",
+     "title": "Rules of Hooks — and why they exist",
+     "short_md": "(1) Call hooks only at the **top level** of a component or custom hook — not inside loops, conditions or nested functions. (2) Call them only from React functions. Reason: React stores hook state in an ordered list per component and matches them **by call order** each render.",
+     "body_md": "**Short answer:** (1) Call hooks only at the **top level** of a component or custom hook — not inside loops, conditions or nested functions. (2) Call them only from React functions. Reason: React stores hook state in an ordered list per component and matches them **by call order** each render.\n\n```\nRender 1: useState(A) → slot 0, useState(B) → slot 1, useEffect → slot 2\nRender 2 with an `if` skipping first hook: useState(B) reads slot 0 → gets A's value ❌\n```\n\n```jsx\nfunction Doc({ data }) {\n  const [open, setOpen] = useState(false);   // ✅ all hooks first\n  if (!data) return null;                    // early return AFTER hooks\n  …\n}\n```\n\n(`use()` in React 19 is the one exception — it may be called conditionally.)"
+    },
+    {
+     "id": "Q11",
+     "title": "`useState` vs `useReducer`",
+     "short_md": "`useState` for simple independent values. `useReducer` when the next state depends on the previous state through several **named transitions** — logic becomes a pure, testable function.",
+     "body_md": "**Short answer:** `useState` for simple independent values. `useReducer` when the next state depends on the previous state through several **named transitions** — logic becomes a pure, testable function.\n\n```jsx\nfunction jobReducer(state, action) {\n  switch (action.type) {\n    case \"start\":    return { status: \"running\", progress: 0, error: null };\n    case \"progress\": return { ...state, progress: action.pct };\n    case \"fail\":     return { ...state, status: \"failed\", error: action.error };\n    case \"done\":     return { ...state, status: \"succeeded\", progress: 100 };\n    default:         return state;\n  }\n}\nconst [job, dispatch] = useReducer(jobReducer, { status: \"idle\", progress: 0 });\ndispatch({ type: \"progress\", pct: 40 });\n```"
+    },
+    {
+     "id": "Q12",
+     "title": "What does `useEffect` actually do?",
+     "short_md": "It **synchronises your component with an external system** (WebSocket, browser API, third-party widget, non-React state) after the commit. It runs after paint, re-runs when dependencies change, and its **cleanup** runs before the next run and on unmount.",
+     "body_md": "**Short answer:** It **synchronises your component with an external system** (WebSocket, browser API, third-party widget, non-React state) after the commit. It runs after paint, re-runs when dependencies change, and its **cleanup** runs before the next run and on unmount.\n\n**Lifecycle:**\n```\nmount:        render → commit → paint → effect(sessionId=A)\ndeps change:  render → commit → paint → cleanup(A) → effect(sessionId=B)\nunmount:      cleanup(B)\n```\n\n**Example:**\n```jsx\nuseEffect(() => {\n  const ws = new WebSocket(`wss://api/sessions/${sessionId}`);\n  ws.onmessage = e => setMessages(m => [...m, JSON.parse(e.data)]);\n  return () => ws.close();                 // cleanup prevents leaks & cross-session writes\n}, [sessionId]);\n```\n\n**Dependency array:** `[]` → run once after mount; `[a, b]` → when a or b change; omitted → after every render.\n\n**Strict Mode (dev only):** mounts → unmounts → remounts once to expose missing cleanup. If your effect breaks under this, it has a bug."
+    },
+    {
+     "id": "Q13",
+     "title": "When should you NOT use `useEffect`?",
+     "short_md": "Don't use effects for (1) values you can **compute during render**, (2) logic caused by a **user event** (put it in the handler), (3) resetting state when a prop changes (use a **key**), (4) data fetching where a library/framework can do it better.",
+     "body_md": "**Short answer:** Don't use effects for (1) values you can **compute during render**, (2) logic caused by a **user event** (put it in the handler), (3) resetting state when a prop changes (use a **key**), (4) data fetching where a library/framework can do it better.\n\n```jsx\n// ❌ effect to derive data\nconst [fullName, setFullName] = useState(\"\");\nuseEffect(() => setFullName(first + \" \" + last), [first, last]);\n// ✅\nconst fullName = first + \" \" + last;\n\n// ❌ effect reacting to a submit flag\n// ✅ do the POST inside onSubmit\n```"
+    },
+    {
+     "id": "Q14",
+     "title": "`useRef` — what is it for?",
+     "short_md": "A ref is a mutable box `{ current }` that **persists across renders without causing a re-render** when changed. Uses: DOM access (focus, scroll, measure) and storing non-visual values (timers, `AbortController`, previous value).",
+     "body_md": "**Short answer:** A ref is a mutable box `{ current }` that **persists across renders without causing a re-render** when changed. Uses: DOM access (focus, scroll, measure) and storing non-visual values (timers, `AbortController`, previous value).\n\n```jsx\nconst inputRef = useRef(null);\nconst abortRef = useRef(null);\n<input ref={inputRef} />\ninputRef.current.focus();\nabortRef.current?.abort(); abortRef.current = new AbortController();\n```\n\n**Rule:** if the value is shown in UI, it belongs in state, not a ref. React 19: `ref` can be passed as a normal prop to function components (no `forwardRef` needed)."
+    },
+    {
+     "id": "Q15",
+     "title": "`useMemo`, `useCallback`, `React.memo`",
+     "short_md": "- `useMemo(fn, deps)` — cache a **computed value**.\n- `useCallback(fn, deps)` — cache a **function identity**.\n- `React.memo(Component)` — skip re-rendering a child if its props are shallow-equal.",
+     "body_md": "**Short answer:**\n- `useMemo(fn, deps)` — cache a **computed value**.\n- `useCallback(fn, deps)` — cache a **function identity**.\n- `React.memo(Component)` — skip re-rendering a child if its props are shallow-equal.\n\nThey're **performance** tools only. `useCallback` alone does nothing useful unless the function is passed to a memoised child or used as an effect dependency.\n\n```jsx\nconst filtered = useMemo(() => rows.filter(r => r.text.includes(q)), [rows, q]);\nconst onSelect = useCallback(id => setSelected(id), []);\nconst Row = React.memo(function Row({ row, onSelect }) { … });\n```\n\n**React Compiler (v1.0 stable since Oct 2025):** a build-time plugin that inserts this memoisation automatically. With it enabled, most manual `useMemo/useCallback` become unnecessary — but code must follow the Rules of React (purity, no mutation of props/state)."
+    },
+    {
+     "id": "Q16",
+     "title": "`useContext` — when to use, when to avoid",
+     "short_md": "Context passes a value to any depth without props. Every consumer re-renders when the provider **value** changes. Good for low-frequency global values (theme, current user, locale, feature flags). Bad for high-frequency data (streaming tokens, mouse position) in one big provider.",
+     "body_md": "**Short answer:** Context passes a value to any depth without props. Every consumer re-renders when the provider **value** changes. Good for low-frequency global values (theme, current user, locale, feature flags). Bad for high-frequency data (streaming tokens, mouse position) in one big provider.\n\n```jsx\nconst AuthContext = createContext(null);\nfunction App() {\n  const [user, setUser] = useState(null);\n  const value = useMemo(() => ({ user, setUser }), [user]);   // stable object identity\n  return <AuthContext value={value}><Routes/></AuthContext>;   // React 19: <Context> as provider\n}\nconst { user } = useContext(AuthContext);  // or use(AuthContext) in React 19\n```\n\n**Fixes for context churn:** split contexts (state vs dispatch), memoise the value, or use a store with selectors (Zustand, Redux)."
+    },
+    {
+     "id": "Q17",
+     "title": "`useLayoutEffect`, `useId`, `useSyncExternalStore`, `useImperativeHandle`",
+     "short_md": "| Hook | Use when |\n|---|---|\n| `useLayoutEffect` | measure DOM and update **before paint** (avoid flicker, e.g., tooltip position). Blocks paint — use sparingly |\n| `useId` | stable unique IDs for accessibility (`htmlFor`/`aria-describedby`) that match on server & client |\n| `useSyncExternalStore` | subscribe to an external store (browser API, custom store) safely with concurrent rendering |\n| `useImperativeHandle` | expose a limited imperative API from a child (`ref.current.focus()`) |",
+     "body_md": "| Hook | Use when |\n|---|---|\n| `useLayoutEffect` | measure DOM and update **before paint** (avoid flicker, e.g., tooltip position). Blocks paint — use sparingly |\n| `useId` | stable unique IDs for accessibility (`htmlFor`/`aria-describedby`) that match on server & client |\n| `useSyncExternalStore` | subscribe to an external store (browser API, custom store) safely with concurrent rendering |\n| `useImperativeHandle` | expose a limited imperative API from a child (`ref.current.focus()`) |"
+    },
+    {
+     "id": "Q18",
+     "title": "Stale closures",
+     "short_md": "Each render's functions \"see\" the props/state of **that** render. A timer, interval or subscription created in an earlier render keeps reading old values unless dependencies are correct or you use updater functions/refs.",
+     "body_md": "**Short answer:** Each render's functions \"see\" the props/state of **that** render. A timer, interval or subscription created in an earlier render keeps reading old values unless dependencies are correct or you use updater functions/refs.\n\n```jsx\nuseEffect(() => {\n  const id = setInterval(() => setCount(count + 1), 1000);  // ❌ count frozen at 0 → stuck at 1\n  return () => clearInterval(id);\n}, []);\n\nuseEffect(() => {\n  const id = setInterval(() => setCount(c => c + 1), 1000); // ✅ updater reads latest\n  return () => clearInterval(id);\n}, []);\n```\n\n**React 19.2 `useEffectEvent`:** wrap logic that should read the *latest* props without making the effect re-subscribe.\n```jsx\nconst onMessage = useEffectEvent(msg => { if (!muted) notify(msg); }); // always latest `muted`\nuseEffect(() => { const ws = connect(roomId); ws.on(\"msg\", onMessage); return () => ws.close(); }, [roomId]);\n```"
+    },
+    {
+     "id": "Q19",
+     "title": "Custom hooks — design and testing",
+     "short_md": "A custom hook (`useSomething`) extracts reusable **stateful logic** (not UI). Each component calling it gets its own independent state.",
+     "body_md": "**Short answer:** A custom hook (`useSomething`) extracts reusable **stateful logic** (not UI). Each component calling it gets its own independent state.\n\n```jsx\nfunction useAgentStream(sessionId) {\n  const [tokens, setTokens] = useState(\"\");\n  const [status, setStatus] = useState(\"idle\");\n  useEffect(() => {\n    if (!sessionId) return;\n    const ctrl = new AbortController();\n    setTokens(\"\"); setStatus(\"streaming\");\n    (async () => {\n      try {\n        const res = await fetch(`/api/sessions/${sessionId}/stream`, { signal: ctrl.signal });\n        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();\n        for (;;) {\n          const { value, done } = await reader.read();\n          if (done) break;\n          setTokens(t => t + value);\n        }\n        setStatus(\"done\");\n      } catch (e) {\n        if (e.name !== \"AbortError\") setStatus(\"error\");\n      }\n    })();\n    return () => ctrl.abort();          // switching session cancels the old stream\n  }, [sessionId]);\n  return { tokens, status };\n}\n```\n**Test:** `renderHook` from React Testing Library + MSW to mock the stream; assert cleanup on session change."
+    }
+   ]
+  },
+  {
+   "id": "react-18-19-features",
+   "num": 4,
+   "title": "React 18/19 features",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q20",
+     "title": "Concurrent rendering — what changed in React 18?",
+     "short_md": "React can **interrupt** a long render to handle an urgent update (typing), then resume. Enabled with `createRoot`. Also: **automatic batching** everywhere, `useTransition`, `useDeferredValue`, Suspense improvements, streaming SSR.",
+     "body_md": "**Short answer:** React can **interrupt** a long render to handle an urgent update (typing), then resume. Enabled with `createRoot`. Also: **automatic batching** everywhere, `useTransition`, `useDeferredValue`, Suspense improvements, streaming SSR."
+    },
+    {
+     "id": "Q21",
+     "title": "`useTransition` and `useDeferredValue`",
+     "short_md": "Both mark work as **non-urgent** so urgent updates (keystrokes) stay responsive.\n- `useTransition` — you control the **state update**: `startTransition(() => setFilter(v))`, with `isPending` for a spinner.\n- `useDeferredValue` — you receive a **value** and want a lagging copy for expensive rendering.",
+     "body_md": "**Short answer:** Both mark work as **non-urgent** so urgent updates (keystrokes) stay responsive.\n- `useTransition` — you control the **state update**: `startTransition(() => setFilter(v))`, with `isPending` for a spinner.\n- `useDeferredValue` — you receive a **value** and want a lagging copy for expensive rendering.\n\n```jsx\nconst [query, setQuery] = useState(\"\");\nconst deferredQuery = useDeferredValue(query);\n<input value={query} onChange={e => setQuery(e.target.value)} />   // urgent: instant\n<HugeList filter={deferredQuery} />                                 // can lag behind\n```\n**Pitfall:** these don't reduce **network** calls — still debounce API requests and paginate on the server."
+    },
+    {
+     "id": "Q22",
+     "title": "Suspense, `React.lazy` and code splitting",
+     "short_md": "`React.lazy(() => import(\"./X\"))` loads a component's code on demand. `<Suspense fallback>` shows a placeholder while children are \"suspended\" (loading code or data via a Suspense-enabled source).",
+     "body_md": "**Short answer:** `React.lazy(() => import(\"./X\"))` loads a component's code on demand. `<Suspense fallback>` shows a placeholder while children are \"suspended\" (loading code or data via a Suspense-enabled source).\n\n```jsx\nconst PdfViewer = lazy(() => import(\"./PdfViewer\"));     // separate chunk built by Vite\n<Suspense fallback={<Spinner />}>\n  {tab === \"pdf\" && <PdfViewer docId={id} />}\n</Suspense>\n```"
+    },
+    {
+     "id": "Q23",
+     "title": "Error boundaries — what they catch and what they don't",
+     "short_md": "An error boundary catches errors thrown **during rendering, in lifecycle methods and constructors** of its descendants, and shows a fallback UI. It does **not** catch errors in event handlers, async code (`setTimeout`, promises), server errors, or errors in the boundary itself.",
+     "body_md": "**Short answer:** An error boundary catches errors thrown **during rendering, in lifecycle methods and constructors** of its descendants, and shows a fallback UI. It does **not** catch errors in event handlers, async code (`setTimeout`, promises), server errors, or errors in the boundary itself.\n\n```jsx\nclass ErrorBoundary extends React.Component {\n  state = { hasError: false };\n  static getDerivedStateFromError() { return { hasError: true }; }\n  componentDidCatch(error, info) { reportToSentry(error, info.componentStack); }\n  render() { return this.state.hasError ? <p>Chart failed to load</p> : this.props.children; }\n}\n<ErrorBoundary><RevenueChart /></ErrorBoundary>\n```\n(Most teams use the `react-error-boundary` package.) Handle API errors with explicit `error` state in data-fetching code."
+    },
+    {
+     "id": "Q24",
+     "title": "React 19: Actions, `useActionState`, `useFormStatus`, `useOptimistic`",
+     "short_md": "An **Action** is an async function passed to a transition or `<form action>`. React manages pending state, errors and optimistic updates for you.",
+     "body_md": "**Short answer:** An **Action** is an async function passed to a transition or `<form action>`. React manages pending state, errors and optimistic updates for you.\n\n```jsx\nfunction RenameForm({ doc }) {\n  const [optimisticName, setOptimisticName] = useOptimistic(doc.name);\n  const [error, submit, isPending] = useActionState(async (prev, formData) => {\n    const name = formData.get(\"name\");\n    setOptimisticName(name);                    // show instantly\n    const res = await fetch(`/api/docs/${doc.id}`, { method: \"PATCH\", body: JSON.stringify({ name }) });\n    return res.ok ? null : \"Rename failed\";     // optimistic value auto-reverts if this fails\n  }, null);\n\n  return (\n    <form action={submit}>\n      <h3>{optimisticName}</h3>\n      <input name=\"name\" defaultValue={doc.name} />\n      <SubmitButton />\n      {error && <p role=\"alert\">{error}</p>}\n    </form>\n  );\n}\nfunction SubmitButton() {\n  const { pending } = useFormStatus();          // reads parent form's pending state\n  return <button disabled={pending}>Save</button>;\n}\n```"
+    },
+    {
+     "id": "Q25",
+     "title": "The `use()` API and Server Components",
+     "short_md": "- `use(promise)` reads a promise's value inside render (suspends until resolved); `use(Context)` reads context — and `use` can be called conditionally.\n- **React Server Components (RSC)** run only on the server (in frameworks like Next.js), can access DB/secrets directly, send zero JS to the browser, and are composed with **Client Components** (`\"use client\"`). A plain Vite SPA doesn't use RSC by default.",
+     "body_md": "**Short answer:**\n- `use(promise)` reads a promise's value inside render (suspends until resolved); `use(Context)` reads context — and `use` can be called conditionally.\n- **React Server Components (RSC)** run only on the server (in frameworks like Next.js), can access DB/secrets directly, send zero JS to the browser, and are composed with **Client Components** (`\"use client\"`). A plain Vite SPA doesn't use RSC by default.\n\n```\nServer Component (fetches data, no JS shipped) ──► renders ──► Client Component (\"use client\", has state/handlers)\n```"
+    },
+    {
+     "id": "Q26",
+     "title": "React 19.2: `<Activity>` and other recent additions",
+     "short_md": "- **`<Activity mode=\"hidden\">`** — hide part of the UI while **keeping its state** and deferring its updates (e.g., keep a chat tab's scroll and draft while another tab is shown; pre-render a likely next screen). - **`useEffectEvent`** — see Q18. - **Performance tracks** in Chrome DevTools showing React scheduler work. - Other React 19 niceties: `ref` as a prop, `<Context>` as provider, document metadata (`<title>`, `<meta>`) rendered anywhere and hoisted to `<head>`, better hydration error messages.",
+     "body_md": "- **`<Activity mode=\"hidden\">`** — hide part of the UI while **keeping its state** and deferring its updates (e.g., keep a chat tab's scroll and draft while another tab is shown; pre-render a likely next screen).\n- **`useEffectEvent`** — see Q18.\n- **Performance tracks** in Chrome DevTools showing React scheduler work.\n- Other React 19 niceties: `ref` as a prop, `<Context>` as provider, document metadata (`<title>`, `<meta>`) rendered anywhere and hoisted to `<head>`, better hydration error messages."
+    }
+   ]
+  },
+  {
+   "id": "state-management-data-fetching",
+   "num": 5,
+   "title": "State management & data fetching",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q27",
+     "title": "How do you organise state in a large app?",
+     "short_md": "Classify state by **who owns it**, then pick the tool:",
+     "body_md": "**Short answer:** Classify state by **who owns it**, then pick the tool:\n\n| Kind of state | Example | Where it lives |\n|---|---|---|\n| Local UI | modal open, input draft | `useState` in the component |\n| URL | selected doc, filters, page | router search params |\n| **Server state** (cached copy of backend data) | document list, user profile | **TanStack Query / SWR / RTK Query** |\n| Shared client state | sidebar layout, multi-step wizard | Zustand / Redux Toolkit / context |\n| Form state | big forms | React Hook Form / form actions |\n\n**Key insight:** most \"global state\" is really **server state** and needs caching, deduping, refetching and invalidation — not a hand-rolled Redux store."
+    },
+    {
+     "id": "Q28",
+     "title": "Server state with TanStack Query",
+     "short_md": "const { data, isPending, error } = useQuery({ queryKey: [\"documents\", tenantId, page],     // cache key — include everything that changes the result queryFn: ({ signal }) => api.listDocs(tenantId, page, { signal }),   // auto-abort staleTime: 30_000, });",
+     "body_md": "```jsx\nconst { data, isPending, error } = useQuery({\n  queryKey: [\"documents\", tenantId, page],     // cache key — include everything that changes the result\n  queryFn: ({ signal }) => api.listDocs(tenantId, page, { signal }),   // auto-abort\n  staleTime: 30_000,\n});\n\nconst qc = useQueryClient();\nconst rename = useMutation({\n  mutationFn: api.renameDoc,\n  onSuccess: () => qc.invalidateQueries({ queryKey: [\"documents\", tenantId] }),\n});\n```\nGives you caching, dedupe of identical requests, background refetch, retries, cancellation and pagination for free."
+    },
+    {
+     "id": "Q29",
+     "title": "Race conditions in async fetching",
+     "short_md": "If the user switches from document A to B, A's slow response may arrive after B's and overwrite it. Fix: cancel superseded requests with `AbortController`, or ignore results whose request is no longer current (or use a query library keyed by ID).",
+     "body_md": "**Short answer:** If the user switches from document A to B, A's slow response may arrive after B's and overwrite it. Fix: cancel superseded requests with `AbortController`, or ignore results whose request is no longer current (or use a query library keyed by ID).\n\n```jsx\nuseEffect(() => {\n  const ctrl = new AbortController();\n  fetch(`/api/docs/${docId}`, { signal: ctrl.signal })\n    .then(r => r.json()).then(setDoc)\n    .catch(e => { if (e.name !== \"AbortError\") setError(e); });\n  return () => ctrl.abort();      // runs when docId changes → old request cancelled\n}, [docId]);\n```"
+    },
+    {
+     "id": "Q30",
+     "title": "Optimistic updates",
+     "short_md": "Show the expected result immediately, send the request, then **confirm or roll back**. Needs a temporary ID and a reconciliation step.",
+     "body_md": "**Short answer:** Show the expected result immediately, send the request, then **confirm or roll back**. Needs a temporary ID and a reconciliation step.\n\n```\nuser sends message → add {id: \"tmp-1\", status: \"pending\"} → POST\n   ├─ 201 {id: \"m-42\"} → replace tmp-1 with m-42, status \"sent\"\n   └─ error           → mark tmp-1 \"failed\", show Retry\n```"
+    },
+    {
+     "id": "Q31",
+     "title": "Routing (React Router) basics",
+     "short_md": "- Routes map URL → component tree; nested routes share layouts (`<Outlet/>`). - Put shareable state (selected document, filters) in the URL so refresh/back button/deep links work. - Protect routes in the UI for UX, but **the server must still authorise** every request. - Lazy-load route components to split bundles.",
+     "body_md": "- Routes map URL → component tree; nested routes share layouts (`<Outlet/>`).\n- Put shareable state (selected document, filters) in the URL so refresh/back button/deep links work.\n- Protect routes in the UI for UX, but **the server must still authorise** every request.\n- Lazy-load route components to split bundles."
+    }
+   ]
+  },
+  {
+   "id": "performance",
+   "num": 6,
+   "title": "Performance",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q32",
+     "title": "Reconciliation and how component identity affects state",
+     "short_md": "React compares the new tree with the old by **position + type + key**. Same type at same position → keep state and update. Different type or key → unmount old (state lost), mount new.",
+     "body_md": "**Short answer:** React compares the new tree with the old by **position + type + key**. Same type at same position → keep state and update. Different type or key → unmount old (state lost), mount new.\n\n```jsx\n<Editor key={documentId} doc={doc} />    // changing key = deliberately reset editor state\n```\n\n**Pitfall:** defining a component *inside* another component creates a new type every render → its state resets every time.\n```jsx\nfunction Parent() { const Child = () => <input/>; return <Child/>; }   // ❌ input loses focus each render\n```"
+    },
+    {
+     "id": "Q33",
+     "title": "How do you diagnose unnecessary re-renders?",
+     "short_md": "1. **Measure** with React DevTools Profiler (\"Highlight updates\", flamegraph, \"why did this render\"). 2. Look for: a context whose value changes every render, new object/array/function props each render, state held too high in the tree, expensive work in render. 3. Fix: move state down / split components, memoise value or component, use selectors, virtualise long lists. 4. Re-measure. Don't optimise blindly.",
+     "body_md": "1. **Measure** with React DevTools Profiler (\"Highlight updates\", flamegraph, \"why did this render\").\n2. Look for: a context whose value changes every render, new object/array/function props each render, state held too high in the tree, expensive work in render.\n3. Fix: move state down / split components, memoise value or component, use selectors, virtualise long lists.\n4. Re-measure. Don't optimise blindly."
+    },
+    {
+     "id": "Q34",
+     "title": "Rendering long lists and streaming LLM text efficiently",
+     "short_md": "- **Virtualise** long lists (only render visible rows) with `@tanstack/react-virtual` or `react-window`.\n- For streaming tokens: append to **only the active message**, **batch** updates (e.g., flush every animation frame or ~50 ms), memoise completed messages so they don't re-render, render Markdown incrementally and safely.",
+     "body_md": "**Short answer:**\n- **Virtualise** long lists (only render visible rows) with `@tanstack/react-virtual` or `react-window`.\n- For streaming tokens: append to **only the active message**, **batch** updates (e.g., flush every animation frame or ~50 ms), memoise completed messages so they don't re-render, render Markdown incrementally and safely.\n\n```jsx\nconst bufferRef = useRef(\"\");\nfunction onToken(t) {\n  bufferRef.current += t;\n  if (!frameRef.current) frameRef.current = requestAnimationFrame(() => {\n    setActiveText(prev => prev + bufferRef.current);\n    bufferRef.current = \"\"; frameRef.current = null;\n  });\n}\n```"
+    },
+    {
+     "id": "Q35",
+     "title": "Bundle size and load performance",
+     "short_md": "- Code-split routes and heavy widgets (PDF viewer, charts) with `lazy`. - Tree-shake: import named functions (`import { debounce } from \"lodash-es\"`). - Analyse the bundle (`rollup-plugin-visualizer` with Vite). - Optimise images, preload critical fonts, measure **Core Web Vitals** (LCP, INP, CLS).",
+     "body_md": "- Code-split routes and heavy widgets (PDF viewer, charts) with `lazy`.\n- Tree-shake: import named functions (`import { debounce } from \"lodash-es\"`).\n- Analyse the bundle (`rollup-plugin-visualizer` with Vite).\n- Optimise images, preload critical fonts, measure **Core Web Vitals** (LCP, INP, CLS)."
+    }
+   ]
+  },
+  {
+   "id": "security-testing-accessibility",
+   "num": 7,
+   "title": "Security, testing, accessibility",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q36",
+     "title": "Preventing XSS, especially with LLM output",
+     "short_md": "React escapes strings in JSX by default — `{text}` is safe. Danger comes from `dangerouslySetInnerHTML`, `javascript:` URLs in `href`, and Markdown/HTML renderers. Treat **all model output and retrieved documents as untrusted**.",
+     "body_md": "**Short answer:** React escapes strings in JSX by default — `{text}` is safe. Danger comes from `dangerouslySetInnerHTML`, `javascript:` URLs in `href`, and Markdown/HTML renderers. Treat **all model output and retrieved documents as untrusted**.\n\n```jsx\n<div>{llmText}</div>                                       // ✅ escaped\n<div dangerouslySetInnerHTML={{ __html: llmHtml }} />      // ❌ unless sanitised\nimport DOMPurify from \"dompurify\";\n<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(llmHtml) }} />   // sanitised\n<ReactMarkdown>{llmText}</ReactMarkdown>                   // react-markdown: no raw HTML by default\n```\nAlso: validate link protocols (`http/https` only), set a **Content Security Policy**, and never put secrets in frontend code (everything in the bundle is public — including `VITE_*` env vars)."
+    },
+    {
+     "id": "Q37",
+     "title": "Authentication vs authorisation in a React app",
+     "short_md": "**Authentication** = who you are (login, token). **Authorisation** = what you may do. The frontend uses auth state only for **UX** (hide buttons, redirect). The **server must enforce** authorisation on every request, because users can edit JS or call the API directly.",
+     "body_md": "**Short answer:** **Authentication** = who you are (login, token). **Authorisation** = what you may do. The frontend uses auth state only for **UX** (hide buttons, redirect). The **server must enforce** authorisation on every request, because users can edit JS or call the API directly.\n\n**Token storage:** HttpOnly, Secure, SameSite cookies protect tokens from XSS-based theft (need CSRF protection); in-memory tokens + refresh flow are another option. Avoid long-lived tokens in `localStorage`."
+    },
+    {
+     "id": "Q38",
+     "title": "Testing React at multiple layers",
+     "short_md": "test(\"shows retry when upload fails\", async () => { server.use(http.post(\"/api/upload\", () => new HttpResponse(null, { status: 500 }))); render(<Uploader />); await userEvent.upload(screen.getByLabelText(/file/i), new File([\"x\"], \"a.pdf\")); expect(await screen.findByRole(\"button\", { name: /retry/i })).toBeInTheDocument(); });",
+     "body_md": "| Layer | Tool | What to test |\n|---|---|---|\n| Pure logic | Vitest | reducers, formatters, validators |\n| Components & flows | **React Testing Library** + **MSW** (mock HTTP) | user-visible behaviour: \"click upload → shows progress → shows retry on 500\" |\n| End-to-end | Playwright / Cypress | login, upload, streaming, reconnect against a real-ish backend |\n\n```jsx\ntest(\"shows retry when upload fails\", async () => {\n  server.use(http.post(\"/api/upload\", () => new HttpResponse(null, { status: 500 })));\n  render(<Uploader />);\n  await userEvent.upload(screen.getByLabelText(/file/i), new File([\"x\"], \"a.pdf\"));\n  expect(await screen.findByRole(\"button\", { name: /retry/i })).toBeInTheDocument();\n});\n```\n**Principle:** test what the user sees (roles, labels, text), not implementation details (internal state, class names)."
+    },
+    {
+     "id": "Q39",
+     "title": "Accessibility basics",
+     "short_md": "- Use semantic elements (`<button>`, `<nav>`, `<label htmlFor>`), not clickable `<div>`s. - Every input has a label; images have `alt`. - Keyboard navigation and visible focus; manage focus when opening modals. - Announce streaming/async updates with `aria-live=\"polite\"` regions. - Check colour contrast; test with axe / Lighthouse.",
+     "body_md": "- Use semantic elements (`<button>`, `<nav>`, `<label htmlFor>`), not clickable `<div>`s.\n- Every input has a label; images have `alt`.\n- Keyboard navigation and visible focus; manage focus when opening modals.\n- Announce streaming/async updates with `aria-live=\"polite\"` regions.\n- Check colour contrast; test with axe / Lighthouse."
+    },
+    {
+     "id": "Q40",
+     "title": "Environment variables and config in a React SPA",
+     "short_md": "All config embedded in the bundle is **public**. Use build-time env vars only for non-secret values (API base URL, feature flags). Secrets (API keys) must stay on the server — the browser calls your backend, which calls the LLM.",
+     "body_md": "All config embedded in the bundle is **public**. Use build-time env vars only for non-secret values (API base URL, feature flags). Secrets (API keys) must stay on the server — the browser calls your backend, which calls the LLM."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 8,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q41",
+     "title": "A chat view shows messages from the previous session after switching. What do you inspect?",
+     "short_md": "1. **Effect cleanup** — is the old SSE/WebSocket aborted when `sessionId` changes? 2. **Cache keys** — does the query key include `sessionId` (and tenant/user)? 3. **Local state reset** — use `key={sessionId}` on the chat panel to reset drafts. 4. **Event routing** — tag stream events with session ID and drop mismatches. 5. **Backend** — verify the server authorises session ownership; if another *user's* data appears, it's a **security incident**, not a UI bug.",
+     "body_md": "1. **Effect cleanup** — is the old SSE/WebSocket aborted when `sessionId` changes?\n2. **Cache keys** — does the query key include `sessionId` (and tenant/user)?\n3. **Local state reset** — use `key={sessionId}` on the chat panel to reset drafts.\n4. **Event routing** — tag stream events with session ID and drop mismatches.\n5. **Backend** — verify the server authorises session ownership; if another *user's* data appears, it's a **security incident**, not a UI bug."
+    },
+    {
+     "id": "Q42",
+     "title": "Design a UI for a long-running job (e.g., document extraction)",
+     "short_md": "states: queued → running(progress %) → partial → succeeded │                    └─► failed (retry) / cancelled ┌──────────── React ────────────┐        ┌──────── Backend ────────┐ │ POST /jobs → {jobId}           │ ─────► │ persists job in DB       │ │ subscribe SSE /jobs/{id}/events│ ◄───── │ emits progress events    │ │   (with Last-Event-ID resume)  │        │ with event ids           │ │ fallback: poll GET /jobs/{id}  │        │                          │ │ on reload: GET /jobs/{id}      │ ◄───── │ server is source of truth│ └────────────────────────────────┘        └──────────────────────…",
+     "body_md": "```\n states: queued → running(progress %) → partial → succeeded\n                       │                    └─► failed (retry) / cancelled\n ┌──────────── React ────────────┐        ┌──────── Backend ────────┐\n │ POST /jobs → {jobId}           │ ─────► │ persists job in DB       │\n │ subscribe SSE /jobs/{id}/events│ ◄───── │ emits progress events    │\n │   (with Last-Event-ID resume)  │        │ with event ids           │\n │ fallback: poll GET /jobs/{id}  │        │                          │\n │ on reload: GET /jobs/{id}      │ ◄───── │ server is source of truth│\n └────────────────────────────────┘        └──────────────────────────┘\n```\nKey points: explicit state machine, server-authoritative state, reconnect/resume, idempotent cancel, clear error and retry UX."
+    },
+    {
+     "id": "Q43",
+     "title": "A page re-renders the whole app on every streamed token. Fix?",
+     "short_md": "Profile → token state lives in a top-level context → every consumer re-renders. Move token state into the active message component or a store with selectors, batch token updates per animation frame, memoise finished messages, virtualise the transcript.",
+     "body_md": "Profile → token state lives in a top-level context → every consumer re-renders. Move token state into the active message component or a store with selectors, batch token updates per animation frame, memoise finished messages, virtualise the transcript."
+    },
+    {
+     "id": "Q44",
+     "title": "Users report the app is \"frozen\" while typing in a filter over 10k rows",
+     "short_md": "Rendering 10k rows on every keystroke blocks the main thread. Fixes in order: virtualise the list, `useDeferredValue` for the filter value, `useMemo` the filtering, move filtering to the server with debounced queries if data is larger.",
+     "body_md": "Rendering 10k rows on every keystroke blocks the main thread. Fixes in order: virtualise the list, `useDeferredValue` for the filter value, `useMemo` the filtering, move filtering to the server with debounced queries if data is larger."
+    },
+    {
+     "id": "Q45",
+     "title": "What do you check in a frontend PR before release?",
+     "short_md": "Correct state ownership (no duplicated state), effects have cleanup and correct deps, loading/empty/error states, request cancellation, XSS-safe rendering of model output, no secrets in bundle, accessibility, code splitting for heavy components, tests for main user flows and failure paths, monitoring (error reporting, web vitals).",
+     "body_md": "Correct state ownership (no duplicated state), effects have cleanup and correct deps, loading/empty/error states, request cancellation, XSS-safe rendering of model output, no secrets in bundle, accessibility, code splitting for heavy components, tests for main user flows and failure paths, monitoring (error reporting, web vitals)."
+    }
+   ]
+  },
+  {
+   "id": "react-with-typescript",
+   "num": 9,
+   "title": "React with TypeScript",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q46",
+     "title": "How do you type React components, state and events?",
+     "short_md": "Type **props** with a `type`/`interface`, let TypeScript **infer** most state, add generics only when inference can't (e.g. `null` initial value), and model UI states as **discriminated unions** so impossible states can't be represented.",
+     "body_md": "**Short answer:** Type **props** with a `type`/`interface`, let TypeScript **infer** most state, add generics only when inference can't (e.g. `null` initial value), and model UI states as **discriminated unions** so impossible states can't be represented.\n\n```tsx\ntype ButtonProps = {\n  label: string;\n  variant?: \"primary\" | \"danger\";              // union of allowed strings\n  onClick: () => void;\n} & React.ComponentProps<\"button\">;              // also accept native <button> props\n\nexport function Button({ label, variant = \"primary\", ...rest }: ButtonProps) {\n  return <button className={variant} {...rest}>{label}</button>;\n}\n\ntype CardProps = { title: string; children: React.ReactNode };   // anything renderable\n\nconst [count, setCount] = useState(0);                    // inferred number\nconst [user, setUser] = useState<User | null>(null);      // explicit: starts null\n\nfunction onChange(e: React.ChangeEvent<HTMLInputElement>) { setQuery(e.target.value); }\nconst inputRef = useRef<HTMLInputElement>(null);\n```\n\n**Discriminated union for async state** (no \"loading AND error at the same time\" bugs):\n```tsx\ntype JobState =\n  | { status: \"idle\" }\n  | { status: \"running\"; progress: number }\n  | { status: \"done\"; resultUrl: string }\n  | { status: \"failed\"; error: string };\n\nfunction JobView({ job }: { job: JobState }) {\n  switch (job.status) {\n    case \"running\": return <Progress value={job.progress} />;       // TS knows progress exists\n    case \"done\":    return <a href={job.resultUrl}>Download</a>;\n    case \"failed\":  return <ErrorBox msg={job.error} />;\n    default:        return null;\n  }\n}\n```\n\n**Generic component:**\n```tsx\ntype ListProps<T> = { items: T[]; render: (item: T) => React.ReactNode; getKey: (item: T) => string };\nfunction List<T>({ items, render, getKey }: ListProps<T>) {\n  return <ul>{items.map(i => <li key={getKey(i)}>{render(i)}</li>)}</ul>;\n}\n```\n\n**API types end to end:** generate TypeScript types from the FastAPI OpenAPI schema (e.g. `openapi-typescript`) so frontend and backend can't drift; validate untrusted runtime data (e.g. with Zod) because TS types vanish at runtime.\n\n**Pitfalls:** `any` switches checking off (use `unknown` and narrow); `React.FC` is optional and no longer adds `children` implicitly; Vite only strips types (esbuild/Oxc) — run `tsc --noEmit` in CI for type errors (03 Q08)."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 10,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | Remember |\n|---|---|\n| TS + React | type props; infer state; discriminated unions for UI states; `unknown` not `any` |\n| UI = f(state) | describe, don't mutate DOM |\n| Render vs commit | render pure; side effects in handlers/effects |\n| `setState` | schedules re-render; snapshot; use updater `c => c + 1` |\n| Immutability | new object/array for every update |\n| Keys | stable IDs, not index |\n| Hooks order | top level only, same order each render |\n| `useEffect` | sync with external system; always clean up |\n| Not an effect | derived values, event logic, reset via `key` |\n| `useRef` | mutable, no re-render; DOM handles |\n| Memo hooks | perf only; React Compiler can automate |\n| Context | low-frequency values; split/memoise |\n| Server state | TanStack Query, not hand-rolled global store |\n| Races | `AbortController` / query keys |\n| React 19 | Actions, `useActionState`, `useOptimistic`, `use`, ref-as-prop |\n| React 19.2 | `<Activity>`, `useEffectEvent` |\n| Error boundary | render errors only, not async/events |\n| XSS | `{}` escapes; sanitise `dangerouslySetInnerHTML`; LLM output untrusted |\n| Security | UI hides; **server authorises** |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://react.dev/learn · https://react.dev/reference/react\n- https://react.dev/learn/you-might-not-need-an-effect\n- https://react.dev/blog (React 19, 19.2, React Compiler 1.0)\n- https://tanstack.com/query/latest · https://testing-library.com/docs/react-testing-library/intro",
+   "questions": []
+  }
+ ]
+}

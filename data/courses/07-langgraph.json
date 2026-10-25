@@ -1,0 +1,356 @@
+{
+ "slug": "07-langgraph",
+ "num": 7,
+ "title": "LangGraph",
+ "full_title": "LangGraph: L2 → L3 Interview Preparation",
+ "group": "AI & Agents",
+ "accent": "#f59e0b",
+ "updated": "24 October 2026 (LangGraph **v1.x**)",
+ "level": "graph basics → persistence & HITL → multi-agent → production",
+ "source": "docs/07_LangGraph.md",
+ "question_count": 44,
+ "section_count": 10,
+ "sections": [
+  {
+   "id": "mental-model-how-langgraph-executes",
+   "num": 1,
+   "title": "Mental model: how LangGraph executes",
+   "intro_md": "**LangGraph = a state machine for LLM apps.** You define a shared **state**, **nodes** (functions that read state and return updates) and **edges** (which node runs next). Unlike a simple chain, graphs can **loop**, **branch**, run **in parallel**, **pause for humans**, and **resume after crashes**.\n\n**A typical agent graph:**\n```\n                 ┌──────────────┐\n      START ───► │  classify    │  (deterministic or LLM router)\n                 └──────┬───────┘\n          conditional   │\n        ┌───────────────┼──────────────────────┐\n        ▼               ▼                      ▼\n  ┌──────────┐   ┌─────────────┐        ┌─────────────┐\n  │ direct   │   │  agent      │◄──┐    │ approval    │  ← interrupt(): pause, wait for human\n  │ answer   │   │  (LLM)      │   │    │ gate        │\n  └────┬─────┘   └─────┬───────┘   │    └──────┬──────┘\n       │      tool calls? │ yes    │           │ approved\n       │               ▼          │           ▼\n       │         ┌──────────┐     │    ┌─────────────┐\n       │         │  tools   │─────┘    │ execute     │\n       │         └──────────┘  (loop)  └──────┬──────┘\n       │               │ no more tools        │\n       └───────────────┴──────────┬───────────┘\n                                  ▼\n                                 END\n```\n\n**Execution engine (Pregel-style \"super-steps\"):**\n```\n super-step 1: run all nodes scheduled now (in parallel if several) ──► collect their updates\n               apply updates to state using REDUCERS ──► save CHECKPOINT\n super-step 2: follow edges → schedule next nodes ──► run ──► reduce ──► checkpoint\n ...           until no nodes scheduled (END) or interrupt or recursion_limit hit\n```\n**Why super-steps matter:** nodes in the same step run in parallel and don't see each other's updates until the step ends; a checkpoint after each step lets you resume, time-travel and pause.\n\n**Persistence layer:**\n```\n graph.invoke(input, config={\"configurable\": {\"thread_id\": \"conv-42\"}})\n                         │\n                         ▼\n   ┌─────────────────── Checkpointer (Postgres / Redis / SQLite / DynamoDB-based) ─────────────┐\n   │ thread \"conv-42\":  ckpt-1 ─► ckpt-2 ─► ckpt-3 (interrupted, waiting for approval) ...       │\n   │   each checkpoint = full state values + next nodes + pending writes + metadata              │\n   └────────────────────────────────────────────────────────────────────────────────────────────┘\n   ┌─────────────────── Store (long-term memory, shared across threads) ─────────────────────────┐\n   │ namespace (\"users\", \"u1\", \"prefs\") → {\"format\": \"csv\"}   (optionally vector-searchable)       │\n   └────────────────────────────────────────────────────────────────────────────────────────────┘\n```",
+   "questions": []
+  },
+  {
+   "id": "fundamentals-state-nodes-edges",
+   "num": 2,
+   "title": "Fundamentals: state, nodes, edges",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "What is LangGraph and what problem does it solve?",
+     "short_md": "A low-level orchestration framework for **stateful, long-running, controllable** agents and workflows. It gives you explicit control flow (cycles, branches, parallelism) plus built-in **persistence, human-in-the-loop, streaming and durable execution**. It mixes deterministic code and LLM decisions in one graph.",
+     "body_md": "**Short answer:** A low-level orchestration framework for **stateful, long-running, controllable** agents and workflows. It gives you explicit control flow (cycles, branches, parallelism) plus built-in **persistence, human-in-the-loop, streaming and durable execution**. It mixes deterministic code and LLM decisions in one graph.\n\n**Why not just a while-loop?** You could write one, but you'd have to build checkpointing, resume-after-crash, pause/approve, streaming of intermediate steps, parallel fan-out, and time-travel debugging yourself."
+    },
+    {
+     "id": "Q02",
+     "title": "What is `StateGraph` and what is state?",
+     "short_md": "`StateGraph(State)` is the graph builder. **State** is a typed schema (TypedDict, dataclass or Pydantic) shared by all nodes. Nodes receive the current state and return a **partial update** (only the keys they change).",
+     "body_md": "**Short answer:** `StateGraph(State)` is the graph builder. **State** is a typed schema (TypedDict, dataclass or Pydantic) shared by all nodes. Nodes receive the current state and return a **partial update** (only the keys they change).\n\n```python\nfrom typing import Annotated, TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.graph.message import add_messages\n\nclass State(TypedDict):\n    messages: Annotated[list, add_messages]   # reducer: append/merge messages\n    route: str                                # no reducer: last write wins\n    documents: list[dict]\n```"
+    },
+    {
+     "id": "Q03",
+     "title": "Nodes and edges",
+     "short_md": "**Nodes** are functions (sync/async) or runnables: `def node(state) -> dict`. **Edges** define what runs next: normal edges (always), **conditional edges** (a function picks the next node), and special `START`/`END`.",
+     "body_md": "**Short answer:** **Nodes** are functions (sync/async) or runnables: `def node(state) -> dict`. **Edges** define what runs next: normal edges (always), **conditional edges** (a function picks the next node), and special `START`/`END`.\n\n```python\ndef classify(state: State) -> dict:\n    q = state[\"messages\"][-1].content\n    return {\"route\": \"rag\" if \"policy\" in q.lower() else \"direct\"}\n\ndef rag(state: State) -> dict: ...\ndef direct(state: State) -> dict: ...\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"classify\", classify)\nbuilder.add_node(\"rag\", rag)\nbuilder.add_node(\"direct\", direct)\nbuilder.add_edge(START, \"classify\")\nbuilder.add_conditional_edges(\"classify\", lambda s: s[\"route\"], {\"rag\": \"rag\", \"direct\": \"direct\"})\nbuilder.add_edge(\"rag\", END)\nbuilder.add_edge(\"direct\", END)\ngraph = builder.compile()\n```\nThe mapping dict `{\"rag\": \"rag\", ...}` documents **allowed destinations** — good for safety and graph visualisation."
+    },
+    {
+     "id": "Q04",
+     "title": "How do reducers work?",
+     "short_md": "A reducer decides how a node's update merges into existing state for a key. **Without a reducer, the new value overwrites.** With `Annotated[list, operator.add]`, lists concatenate. `add_messages` appends new messages, updates messages with the same ID, and handles removals.",
+     "body_md": "**Short answer:** A reducer decides how a node's update merges into existing state for a key. **Without a reducer, the new value overwrites.** With `Annotated[list, operator.add]`, lists concatenate. `add_messages` appends new messages, updates messages with the same ID, and handles removals.\n\n```python\nimport operator\nclass State(TypedDict):\n    evidence: Annotated[list[dict], operator.add]   # parallel branches can each append\n    summary: str                                    # overwrite\n\n# Custom reducer: merge + dedupe by id\ndef merge_by_id(old: list[dict], new: list[dict]) -> list[dict]:\n    seen = {d[\"id\"]: d for d in old}\n    seen.update({d[\"id\"]: d for d in new})\n    return list(seen.values())\n```\n**Pitfall:** two parallel nodes writing the same key **without** a reducer → `InvalidUpdateError` (LangGraph can't know which value wins)."
+    },
+    {
+     "id": "Q05",
+     "title": "`MessagesState` and message handling",
+     "short_md": "A prebuilt state with `messages: Annotated[list[AnyMessage], add_messages]`. Extend it with your own fields.",
+     "body_md": "**Short answer:** A prebuilt state with `messages: Annotated[list[AnyMessage], add_messages]`. Extend it with your own fields.\n\n```python\nfrom langgraph.graph import MessagesState\nclass AgentState(MessagesState):\n    selected_doc_ids: list[str]\n    plan: list[str]\n```\nRemove messages by returning `RemoveMessage(id=...)` (useful for trimming history)."
+    },
+    {
+     "id": "Q06",
+     "title": "Compile, invoke, stream",
+     "short_md": "graph = builder.compile(checkpointer=saver, store=store)   # validates wiring, attaches persistence result = graph.invoke({\"messages\": [(\"user\", \"hi\")]}, config={\"configurable\": {\"thread_id\": \"t1\"}}) for update in graph.stream(inputs, config, stream_mode=\"updates\"): ... await graph.ainvoke(...) graph.get_graph().draw_mermaid_png()       # visualise",
+     "body_md": "```python\ngraph = builder.compile(checkpointer=saver, store=store)   # validates wiring, attaches persistence\nresult = graph.invoke({\"messages\": [(\"user\", \"hi\")]}, config={\"configurable\": {\"thread_id\": \"t1\"}})\nfor update in graph.stream(inputs, config, stream_mode=\"updates\"): ...\nawait graph.ainvoke(...)\ngraph.get_graph().draw_mermaid_png()       # visualise\n```\nCompile-time options also include `interrupt_before/after=[...]` (static breakpoints, mostly for debugging)."
+    },
+    {
+     "id": "Q07",
+     "title": "The ReAct agent loop in LangGraph (build it yourself)",
+     "short_md": "from langgraph.prebuilt import ToolNode, tools_condition",
+     "body_md": "```python\nfrom langgraph.prebuilt import ToolNode, tools_condition\n\nmodel_with_tools = model.bind_tools(tools)\n\ndef agent(state: MessagesState):\n    return {\"messages\": [model_with_tools.invoke(state[\"messages\"])]}\n\nb = StateGraph(MessagesState)\nb.add_node(\"agent\", agent)\nb.add_node(\"tools\", ToolNode(tools))            # executes tool_calls, returns ToolMessages\nb.add_edge(START, \"agent\")\nb.add_conditional_edges(\"agent\", tools_condition)   # → \"tools\" if tool_calls else END\nb.add_edge(\"tools\", \"agent\")                    # the loop\ngraph = b.compile(checkpointer=saver)\n```\n(LangChain's `create_agent` gives you this prebuilt plus middleware.)"
+    },
+    {
+     "id": "Q08",
+     "title": "Recursion limit",
+     "short_md": "Every run has a `recursion_limit` (max super-steps; default 25-ish depending on version) to stop infinite loops. Exceeding it raises `GraphRecursionError`. Set per run: `config={\"recursion_limit\": 50}`. Also add your own business limits (e.g., `iterations` counter in state) for graceful exits.",
+     "body_md": "**Short answer:** Every run has a `recursion_limit` (max super-steps; default 25-ish depending on version) to stop infinite loops. Exceeding it raises `GraphRecursionError`. Set per run: `config={\"recursion_limit\": 50}`. Also add your own business limits (e.g., `iterations` counter in state) for graceful exits."
+    },
+    {
+     "id": "Q09",
+     "title": "Config and runtime context",
+     "short_md": "`config[\"configurable\"]` carries run settings such as `thread_id`. **Runtime context** (`context_schema`) passes trusted, per-run dependencies (user ID, tenant, DB clients) to nodes — not part of persisted state, not visible to the model.",
+     "body_md": "**Short answer:** `config[\"configurable\"]` carries run settings such as `thread_id`. **Runtime context** (`context_schema`) passes trusted, per-run dependencies (user ID, tenant, DB clients) to nodes — not part of persisted state, not visible to the model.\n\n```python\nfrom dataclasses import dataclass\nfrom langgraph.runtime import Runtime\n\n@dataclass\nclass Ctx:\n    user_id: str\n    tenant_id: str\n\ndef fetch(state: State, runtime: Runtime[Ctx]):\n    docs = search(state[\"messages\"][-1].content, tenant=runtime.context.tenant_id)\n    return {\"documents\": docs}\n\ngraph = StateGraph(State, context_schema=Ctx)...compile()\ngraph.invoke(inputs, config, context=Ctx(user_id=\"u1\", tenant_id=\"t1\"))\n```"
+    }
+   ]
+  },
+  {
+   "id": "persistence-checkpointers-threads-store",
+   "num": 3,
+   "title": "Persistence: checkpointers, threads, store",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q10",
+     "title": "What is a checkpointer?",
+     "short_md": "A checkpointer saves a **snapshot of graph state after every super-step**, keyed by `thread_id`. It enables: conversation memory, human-in-the-loop (pause/resume), fault tolerance (resume after crash), and time travel (replay/fork past states).",
+     "body_md": "**Short answer:** A checkpointer saves a **snapshot of graph state after every super-step**, keyed by `thread_id`. It enables: conversation memory, human-in-the-loop (pause/resume), fault tolerance (resume after crash), and time travel (replay/fork past states).\n\n| Checkpointer | Use |\n|---|---|\n| `InMemorySaver` | tests/notebooks only (lost on restart) |\n| `SqliteSaver` | local/dev |\n| `PostgresSaver` / `AsyncPostgresSaver` | production standard |\n| Redis, MongoDB, community DynamoDB/AgentCore Memory savers | other production options |\n\n```python\nfrom langgraph.checkpoint.postgres import PostgresSaver\nwith PostgresSaver.from_conn_string(DB_URI) as saver:\n    saver.setup()                      # create tables once\n    graph = builder.compile(checkpointer=saver)\n```"
+    },
+    {
+     "id": "Q11",
+     "title": "What is a `thread_id`?",
+     "short_md": "The key that groups checkpoints into one conversation/workflow. Same thread ID → continue where it left off. It is **not** an auth token: your API must verify the user owns the thread before invoking.",
+     "body_md": "**Short answer:** The key that groups checkpoints into one conversation/workflow. Same thread ID → continue where it left off. It is **not** an auth token: your API must verify the user owns the thread before invoking.\n\n```python\n@app.post(\"/chat/{conversation_id}\")\ndef chat(conversation_id: str, body: Msg, user=Depends(current_user)):\n    conv = db.get_conversation(conversation_id)\n    if conv is None or conv.owner_id != user.id:\n        raise HTTPException(403)                      # check BEFORE touching the graph\n    return graph.invoke({\"messages\": [(\"user\", body.text)]},\n                        {\"configurable\": {\"thread_id\": conv.thread_id}})\n```\nUse server-generated, unguessable IDs (UUIDs)."
+    },
+    {
+     "id": "Q12",
+     "title": "Checkpointer vs store (short-term vs long-term memory)",
+     "short_md": "def remember(state, runtime: Runtime[Ctx]): ns = (\"users\", runtime.context.user_id, \"prefs\") runtime.store.put(ns, \"export_format\", {\"value\": \"csv\"}) prefs = runtime.store.search(ns)",
+     "body_md": "| | Checkpointer | Store |\n|---|---|---|\n| Scope | one thread | across threads/users |\n| Content | full graph state per step | arbitrary JSON items by namespace + key |\n| Use | conversation, approvals, recovery | user preferences, learned facts, shared knowledge |\n| Search | by thread / checkpoint id | by namespace, key; optional semantic (vector) search |\n\n```python\ndef remember(state, runtime: Runtime[Ctx]):\n    ns = (\"users\", runtime.context.user_id, \"prefs\")\n    runtime.store.put(ns, \"export_format\", {\"value\": \"csv\"})\n    prefs = runtime.store.search(ns)\n```"
+    },
+    {
+     "id": "Q13",
+     "title": "Durability modes",
+     "short_md": "Controls **when checkpoints are written**: `\"exit\"` (only when the run ends/interrupts — fastest, no mid-run crash recovery), `\"async\"` (write in background while next step runs — default-ish balance, tiny risk on crash), `\"sync\"` (write before next step — safest, slower).",
+     "body_md": "**Short answer:** Controls **when checkpoints are written**: `\"exit\"` (only when the run ends/interrupts — fastest, no mid-run crash recovery), `\"async\"` (write in background while next step runs — default-ish balance, tiny risk on crash), `\"sync\"` (write before next step — safest, slower).\n\n```python\ngraph.invoke(inputs, config, durability=\"sync\")    # long, critical workflows\n```"
+    },
+    {
+     "id": "Q14",
+     "title": "Inspecting state and time travel",
+     "short_md": "snap = graph.get_state(config)              # values, next nodes, tasks, interrupts for s in graph.get_state_history(config):   # all checkpoints, newest first print(s.config[\"configurable\"][\"checkpoint_id\"], s.next)",
+     "body_md": "```python\nsnap = graph.get_state(config)              # values, next nodes, tasks, interrupts\nfor s in graph.get_state_history(config):   # all checkpoints, newest first\n    print(s.config[\"configurable\"][\"checkpoint_id\"], s.next)\n\n# Fork: edit a past state and continue from there\npast = list(graph.get_state_history(config))[3]\nnew_cfg = graph.update_state(past.config, {\"route\": \"rag\"})\ngraph.invoke(None, new_cfg)                 # None input = resume from that checkpoint\n```\nUse for debugging incidents — in an **isolated environment with side-effecting tools disabled**, because replay may re-run nodes. Model outputs may differ on replay; record model/prompt/tool versions in metadata."
+    },
+    {
+     "id": "Q15",
+     "title": "Durable execution and replay — what re-runs?",
+     "short_md": "On resume (after crash or interrupt), LangGraph restarts from the last checkpoint — the **interrupted/failed node runs again from its beginning**. Completed nodes in earlier steps are not re-run. So any side effect inside a node that can re-run must be **idempotent**, or isolated (separate node / `@task` in the functional API whose result is cached in the checkpoint).",
+     "body_md": "**Short answer:** On resume (after crash or interrupt), LangGraph restarts from the last checkpoint — the **interrupted/failed node runs again from its beginning**. Completed nodes in earlier steps are not re-run. So any side effect inside a node that can re-run must be **idempotent**, or isolated (separate node / `@task` in the functional API whose result is cached in the checkpoint).\n\n```\nnode \"submit\": call Textract (side effect) → crash before checkpoint\nresume → node \"submit\" runs again → second Textract job ❌\nfix: idempotency key (job token) or store job_id in state in an earlier node/task\n```"
+    }
+   ]
+  },
+  {
+   "id": "human-in-the-loop-interrupt-command",
+   "num": 4,
+   "title": "Human-in-the-loop: interrupt & Command",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q16",
+     "title": "How does `interrupt()` work?",
+     "short_md": "Calling `interrupt(payload)` inside a node **pauses the graph**, saves state via the checkpointer, and returns `payload` to the caller. Later you resume with `Command(resume=value)` on the same `thread_id`; `interrupt()` then **returns `value`** and the node continues. Requires a checkpointer.",
+     "body_md": "**Short answer:** Calling `interrupt(payload)` inside a node **pauses the graph**, saves state via the checkpointer, and returns `payload` to the caller. Later you resume with `Command(resume=value)` on the same `thread_id`; `interrupt()` then **returns `value`** and the node continues. Requires a checkpointer.\n\n```\n invoke ──► node \"approve\" ──► interrupt({\"action\": \"...\", \"args\": {...}})\n                                   │ state saved, run returns __interrupt__ to caller\n                                   ▼\n             UI shows request ── human approves (hours later, other process/pod)\n                                   │\n invoke(Command(resume={\"approved\": True}), same thread_id)\n                                   ▼\n          node \"approve\" RE-RUNS FROM THE TOP; interrupt() now returns {\"approved\": True}\n```\n\n```python\nfrom langgraph.types import interrupt, Command\n\ndef approval(state: State):\n    decision = interrupt({\"action\": \"refund\", \"amount\": state[\"amount\"], \"customer\": state[\"cid\"]})\n    if decision[\"approved\"]:\n        return Command(goto=\"execute_refund\", update={\"approved_by\": decision[\"user\"]})\n    return Command(goto=\"notify_rejected\")\n\n# first call → pauses\nout = graph.invoke({\"amount\": 500, \"cid\": \"c9\"}, cfg)\nout[\"__interrupt__\"]      # [Interrupt(value={...})]\n# later, from the approval API (after verifying approver identity!)\ngraph.invoke(Command(resume={\"approved\": True, \"user\": \"mgr-7\"}), cfg)\n```"
+    },
+    {
+     "id": "Q17",
+     "title": "The #1 interrupt pitfall: code before `interrupt()` runs twice",
+     "short_md": "On resume, the node restarts from the beginning, so **everything before `interrupt()` executes again**. Don't put non-idempotent side effects before an interrupt; put them in a previous node, after the interrupt, or make them idempotent.",
+     "body_md": "**Short answer:** On resume, the node restarts from the beginning, so **everything before `interrupt()` executes again**. Don't put non-idempotent side effects before an interrupt; put them in a previous node, after the interrupt, or make them idempotent.\n\n```python\ndef bad(state):\n    job = textract.start_job(state[\"doc\"])    # ❌ runs again on resume → duplicate job\n    ok = interrupt(\"approve?\")\n    ...\n\ndef good_prepare(state):                       # separate node → checkpointed before pause\n    return {\"job_id\": textract.start_job(state[\"doc\"], client_token=state[\"doc_hash\"])}\ndef good_approve(state):\n    ok = interrupt({\"job_id\": state[\"job_id\"]})\n```\nOther rules: multiple interrupts in one node are matched **by order** — don't reorder them conditionally; don't wrap `interrupt()` in a bare `try/except` (it works by raising a special exception); payloads must be JSON-serialisable."
+    },
+    {
+     "id": "Q18",
+     "title": "What is `Command` used for?",
+     "short_md": "`Command` combines **state update + routing** in one return value, and is also how you **resume** an interrupt.",
+     "body_md": "**Short answer:** `Command` combines **state update + routing** in one return value, and is also how you **resume** an interrupt.\n\n```python\ndef planner(state) -> Command[Literal[\"research\", \"answer\"]]:\n    plan = make_plan(state)\n    return Command(update={\"plan\": plan}, goto=\"research\" if plan else \"answer\")\n```\nAlso `Command(graph=Command.PARENT, goto=\"other_agent\")` to jump from a subgraph to a node in the parent graph (multi-agent handoffs)."
+    },
+    {
+     "id": "Q19",
+     "title": "Common HITL patterns",
+     "short_md": "**Security:** LangGraph pauses and resumes; **your API** must authenticate the approver, check their permission, bind the approval to the exact action, and log it.",
+     "body_md": "| Pattern | How |\n|---|---|\n| Approve / reject an action | interrupt with proposed action → route on decision |\n| Edit state | interrupt returns edited args → node uses them |\n| Review tool calls | interrupt inside tool wrapper (or `HumanInTheLoopMiddleware` in LangChain) |\n| Ask the user for missing info | interrupt with a question → resume with answer |\n| Multi-step approvals | several interrupt nodes; each approval stored in state for audit |\n\n**Security:** LangGraph pauses and resumes; **your API** must authenticate the approver, check their permission, bind the approval to the exact action, and log it."
+    }
+   ]
+  },
+  {
+   "id": "control-flow-parallelism-send-subgraphs-multi-agent",
+   "num": 5,
+   "title": "Control flow: parallelism, Send, subgraphs, multi-agent",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q20",
+     "title": "Parallel branches (fan-out / fan-in)",
+     "short_md": "If a node has edges to several nodes, they run **in the same super-step in parallel**. A node with edges from several branches runs after the step in which they complete. Use reducers to merge their outputs.",
+     "body_md": "**Short answer:** If a node has edges to several nodes, they run **in the same super-step in parallel**. A node with edges from several branches runs after the step in which they complete. Use reducers to merge their outputs.\n\n```python\nb.add_edge(START, \"search_jira\")\nb.add_edge(START, \"search_confluence\")          # both run in parallel\nb.add_edge([\"search_jira\", \"search_confluence\"], \"synthesize\")   # waits for BOTH (join)\n# state: evidence: Annotated[list, operator.add]\n```\n**Pitfall:** branches of **different lengths** — if one path has two nodes and the other one, a plain edge would fire the join too early. Use the list-form edge above or `defer=True` on the join node to wait until all pending branches finish."
+    },
+    {
+     "id": "Q21",
+     "title": "Map-reduce with `Send`",
+     "short_md": "When the number of parallel tasks is **dynamic** (one per document), a conditional edge returns a list of `Send(node, per_item_state)`. Each runs the node with its own input; results merge via a reducer.",
+     "body_md": "**Short answer:** When the number of parallel tasks is **dynamic** (one per document), a conditional edge returns a list of `Send(node, per_item_state)`. Each runs the node with its own input; results merge via a reducer.\n\n```python\nfrom langgraph.types import Send\n\nclass State(TypedDict):\n    doc_ids: list[str]\n    summaries: Annotated[list[str], operator.add]\n\ndef fan_out(state: State):\n    return [Send(\"summarize\", {\"doc_id\": d}) for d in state[\"doc_ids\"]]   # bounded list!\n\ndef summarize(item: dict):\n    return {\"summaries\": [summarize_doc(item[\"doc_id\"])]}\n\nb.add_conditional_edges(START, fan_out, [\"summarize\"])\nb.add_edge(\"summarize\", \"combine\")\n```\nBound the fan-out (max items, concurrency via `max_concurrency` in config) to respect rate limits."
+    },
+    {
+     "id": "Q22",
+     "title": "What happens when multiple edges enter a node?",
+     "short_md": "It depends on wiring. With separate `add_edge(\"a\",\"c\")` and `add_edge(\"b\",\"c\")`, `c` is triggered in the next step after **whichever** of a/b ran in that step — if a and b are in the same step, `c` runs **once** with both updates merged. If they finish in different steps, `c` may run **twice**. For an explicit \"wait for all\", use `add_edge([\"a\",\"b\"], \"c\")` or `defer=True`. Test the compiled graph.",
+     "body_md": "**Short answer:** It depends on wiring. With separate `add_edge(\"a\",\"c\")` and `add_edge(\"b\",\"c\")`, `c` is triggered in the next step after **whichever** of a/b ran in that step — if a and b are in the same step, `c` runs **once** with both updates merged. If they finish in different steps, `c` may run **twice**. For an explicit \"wait for all\", use `add_edge([\"a\",\"b\"], \"c\")` or `defer=True`. Test the compiled graph."
+    },
+    {
+     "id": "Q23",
+     "title": "Subgraphs",
+     "short_md": "A compiled graph used as a node in another graph — for modularity, team ownership and separate state. Two ways:\n1. **Shared keys:** add the compiled subgraph directly as a node; overlapping state keys pass through.\n2. **Different schema:** call the subgraph inside a node function and map parent state ↔ subgraph input/output.",
+     "body_md": "**Short answer:** A compiled graph used as a node in another graph — for modularity, team ownership and separate state. Two ways:\n1. **Shared keys:** add the compiled subgraph directly as a node; overlapping state keys pass through.\n2. **Different schema:** call the subgraph inside a node function and map parent state ↔ subgraph input/output.\n\n```python\ndeposits_graph = deposits_builder.compile()\ndef call_deposits(state: Parent):\n    out = deposits_graph.invoke({\"query\": state[\"question\"], \"account_id\": state[\"acct\"]})\n    return {\"answer\": out[\"result\"]}\nparent.add_node(\"deposits\", call_deposits)\n```\nSubgraphs can have their own checkpoints/interrupts (namespaced under the parent thread)."
+    },
+    {
+     "id": "Q24",
+     "title": "Multi-agent architectures in LangGraph",
+     "short_md": "SUPERVISOR                                   SWARM / HANDOFFS ┌────────────┐                               ┌─────────┐  Command(goto=\"billing\", │ supervisor │──► picks next agent           │ triage  │──────── graph=PARENT) ──► ┌─────────┐ └─┬────┬───┬─┘    (tool call / route)        └─────────┘                           │ billing │ ▼    ▼   ▼                                      ▲                                └────┬────┘ [research][coder][writer] ──► report back         └─────────── handoff back ─────────────┘",
+     "body_md": "```\n SUPERVISOR                                   SWARM / HANDOFFS\n ┌────────────┐                               ┌─────────┐  Command(goto=\"billing\",\n │ supervisor │──► picks next agent           │ triage  │──────── graph=PARENT) ──► ┌─────────┐\n └─┬────┬───┬─┘    (tool call / route)        └─────────┘                           │ billing │\n   ▼    ▼   ▼                                      ▲                                └────┬────┘\n [research][coder][writer] ──► report back         └─────────── handoff back ─────────────┘\n```\n- **Supervisor** (`langgraph-supervisor` or hand-built): central LLM routes to worker agents (each a subgraph), aggregates results. Most controllable.\n- **Swarm/handoffs** (`langgraph-swarm` or `Command(goto=..., graph=Command.PARENT)`): agents transfer control directly; the active agent is remembered in state.\n- **Hierarchical**: supervisors of supervisors.\n\nGive each agent **its own tools and minimal context**; pass only what the next agent needs."
+    },
+    {
+     "id": "Q25",
+     "title": "Conditional routing strategies",
+     "short_md": "Deterministic checks (regex, metadata, permissions) where possible; LLM routing with **structured output constrained to an enum** of destinations otherwise; always a fallback route (e.g., \"clarify\" or \"human\") and an explicit path for sensitive actions (approval).",
+     "body_md": "Deterministic checks (regex, metadata, permissions) where possible; LLM routing with **structured output constrained to an enum** of destinations otherwise; always a fallback route (e.g., \"clarify\" or \"human\") and an explicit path for sensitive actions (approval).\n\n```python\nclass Route(BaseModel):\n    destination: Literal[\"rag\", \"sql\", \"human\"]\nrouter = model.with_structured_output(Route)\n```"
+    },
+    {
+     "id": "Q26",
+     "title": "Planner–executor–verifier graph with context pruning",
+     "short_md": "START → planner (typed plan in state) → executor (bounded tools, Send per step) → verifier (checks evidence/citations) ── fail & iterations<3 ──► planner └─ pass ──► pruner (summarise, keep IDs/approvals) → answer → END",
+     "body_md": "```\n START → planner (typed plan in state) → executor (bounded tools, Send per step)\n       → verifier (checks evidence/citations) ── fail & iterations<3 ──► planner\n                                              └─ pass ──► pruner (summarise, keep IDs/approvals) → answer → END\n```\nState keeps `plan`, `evidence` (reducer), `iterations`, `approvals`; pruner replaces bulky tool outputs with summaries + references stored in S3."
+    }
+   ]
+  },
+  {
+   "id": "streaming-errors-functional-api",
+   "num": 6,
+   "title": "Streaming, errors, functional API",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q27",
+     "title": "Streaming modes",
+     "short_md": "for mode, chunk in graph.stream(inputs, cfg, stream_mode=[\"updates\", \"messages\", \"custom\"]): ...",
+     "body_md": "| `stream_mode` | Emits |\n|---|---|\n| `\"values\"` | full state after each step |\n| `\"updates\"` | only what each node returned |\n| `\"messages\"` | LLM tokens + metadata (which node) |\n| `\"custom\"` | your events via `get_stream_writer()` / `runtime.stream_writer` (e.g., \"OCR 3/10 pages\") |\n| `\"debug\"` | detailed execution events |\n\n```python\nfor mode, chunk in graph.stream(inputs, cfg, stream_mode=[\"updates\", \"messages\", \"custom\"]):\n    ...\n# subgraphs=True to include subgraph events\n```\nTranslate into a stable client protocol (`status`, `token`, `tool_result`, `approval_needed`, `done`) — don't leak internal state or secrets to the browser."
+    },
+    {
+     "id": "Q28",
+     "title": "Error handling and retries",
+     "short_md": "Attach a `RetryPolicy` to nodes for **transient** errors; route permanent errors to an error-handling path; record error class in state.",
+     "body_md": "**Short answer:** Attach a `RetryPolicy` to nodes for **transient** errors; route permanent errors to an error-handling path; record error class in state.\n\n```python\nfrom langgraph.types import RetryPolicy\nb.add_node(\"call_api\", call_api,\n           retry_policy=RetryPolicy(max_attempts=3, initial_interval=1.0, backoff_factor=2.0,\n                                    retry_on=(TimeoutError, ConnectionError)))\n```\nInside nodes: catch `403`-style errors and return `{\"error\": \"access_denied\"}` → conditional edge to a \"denied\" node (don't retry authorisation failures). Interrupts are control flow, not errors."
+    },
+    {
+     "id": "Q29",
+     "title": "Node caching",
+     "short_md": "`b.add_node(\"embed\", embed_fn, cache_policy=CachePolicy(ttl=3600))` + `compile(cache=InMemoryCache())` — skip re-running expensive deterministic nodes for identical inputs.",
+     "body_md": "`b.add_node(\"embed\", embed_fn, cache_policy=CachePolicy(ttl=3600))` + `compile(cache=InMemoryCache())` — skip re-running expensive deterministic nodes for identical inputs."
+    },
+    {
+     "id": "Q30",
+     "title": "Functional API (`@entrypoint`, `@task`)",
+     "short_md": "An alternative to explicit graphs: write normal Python control flow; `@entrypoint` gives persistence/interrupts/streaming; `@task` marks units whose results are **checkpointed**, so on resume completed tasks aren't re-executed — good place for side effects.",
+     "body_md": "**Short answer:** An alternative to explicit graphs: write normal Python control flow; `@entrypoint` gives persistence/interrupts/streaming; `@task` marks units whose results are **checkpointed**, so on resume completed tasks aren't re-executed — good place for side effects.\n\n```python\nfrom langgraph.func import entrypoint, task\n\n@task\ndef extract(doc_id: str) -> dict: return textract_extract(doc_id)\n\n@entrypoint(checkpointer=saver)\ndef workflow(doc_ids: list[str]) -> list[dict]:\n    futures = [extract(d) for d in doc_ids]         # tasks run in parallel\n    results = [f.result() for f in futures]\n    ok = interrupt({\"review\": results})             # pause for human review\n    return results if ok else []\n```\nChoose Graph API for visualisable, complex topologies; Functional API to add durability/HITL to existing procedural code."
+    },
+    {
+     "id": "Q31",
+     "title": "Static vs dynamic breakpoints",
+     "short_md": "`compile(interrupt_before=[\"tools\"])` pauses before a node every time — handy for debugging. `interrupt()` inside a node is **dynamic** (conditional, carries a payload) — the production HITL mechanism.",
+     "body_md": "`compile(interrupt_before=[\"tools\"])` pauses before a node every time — handy for debugging. `interrupt()` inside a node is **dynamic** (conditional, carries a payload) — the production HITL mechanism."
+    }
+   ]
+  },
+  {
+   "id": "production-engineering",
+   "num": 7,
+   "title": "Production engineering",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q32",
+     "title": "Deploying LangGraph",
+     "short_md": "Options: your own FastAPI service on ECS/EKS with a Postgres checkpointer; **LangSmith Deployment** (Agent Server: threads, runs, cron, streaming APIs); **Amazon Bedrock AgentCore Runtime** (serverless, per-session microVM isolation; framework-agnostic). In all cases, the checkpointer must be **durable and external** — container memory is ephemeral.",
+     "body_md": "Options: your own FastAPI service on ECS/EKS with a Postgres checkpointer; **LangSmith Deployment** (Agent Server: threads, runs, cron, streaming APIs); **Amazon Bedrock AgentCore Runtime** (serverless, per-session microVM isolation; framework-agnostic). In all cases, the checkpointer must be **durable and external** — container memory is ephemeral."
+    },
+    {
+     "id": "Q33",
+     "title": "LangGraph on AgentCore Runtime — how do the layers fit?",
+     "short_md": "Client ─► AgentCore Runtime (session_id → isolated microVM, inbound auth JWT/IAM) └─ your container/code: LangGraph graph ├─ checkpointer (Postgres or AgentCore Memory–backed saver) keyed by thread_id ├─ tools via AgentCore Gateway (MCP) with outbound auth from AgentCore Identity └─ traces → AgentCore Observability (OTel)",
+     "body_md": "```\n Client ─► AgentCore Runtime (session_id → isolated microVM, inbound auth JWT/IAM)\n              └─ your container/code: LangGraph graph\n                    ├─ checkpointer (Postgres or AgentCore Memory–backed saver) keyed by thread_id\n                    ├─ tools via AgentCore Gateway (MCP) with outbound auth from AgentCore Identity\n                    └─ traces → AgentCore Observability (OTel)\n```\nRuntime **session isolation** ≠ graph **persistence**: a session's microVM can end (idle timeout/max lifetime), but the checkpointer restores the conversation. Your backend maps verified user → session ID and → thread ID."
+    },
+    {
+     "id": "Q34",
+     "title": "Large message state — trade-offs",
+     "short_md": "Big histories increase tokens/cost, latency, serialisation and checkpoint storage, and raise privacy exposure. Strategies: trim/summarise (keep recent turns verbatim), store large tool outputs in S3 and keep references in state, keep exact structured facts (IDs, approvals, amounts) in dedicated fields.",
+     "body_md": "Big histories increase tokens/cost, latency, serialisation and checkpoint storage, and raise privacy exposure. Strategies: trim/summarise (keep recent turns verbatim), store large tool outputs in S3 and keep references in state, keep exact structured facts (IDs, approvals, amounts) in dedicated fields."
+    },
+    {
+     "id": "Q35",
+     "title": "Preventing cross-user access to checkpoints",
+     "short_md": "Server-generated unguessable thread IDs; ownership check before every `invoke/get_state/update_state`; never accept client thread IDs blindly; namespace stores by verified user/tenant; encrypt the checkpoint DB (and optionally use an encrypted serializer); audit access; retention policy.",
+     "body_md": "Server-generated unguessable thread IDs; ownership check before every `invoke/get_state/update_state`; never accept client thread IDs blindly; namespace stores by verified user/tenant; encrypt the checkpoint DB (and optionally use an encrypted serializer); audit access; retention policy."
+    },
+    {
+     "id": "Q36",
+     "title": "State schema changes across deployments",
+     "short_md": "Threads can outlive a deployment (a thread paused for approval last week resumes on new code). Make schema changes backward compatible: add fields with defaults, don't rename/remove keys abruptly, migrate old checkpoints if needed, and **test resuming from real old checkpoints** before release. Also don't rename/remove nodes that paused threads may be waiting in.",
+     "body_md": "Threads can outlive a deployment (a thread paused for approval last week resumes on new code). Make schema changes backward compatible: add fields with defaults, don't rename/remove keys abruptly, migrate old checkpoints if needed, and **test resuming from real old checkpoints** before release. Also don't rename/remove nodes that paused threads may be waiting in."
+    },
+    {
+     "id": "Q37",
+     "title": "Testing graphs (not only nodes)",
+     "short_md": "- Unit-test node functions (pure input → update). - Test routing functions and reducers directly. - Integration tests with fake/mocked models (deterministic tool calls) and an `InMemorySaver`. - Test interrupt → resume, crash → resume (run with checkpointer, kill, resume), parallel merges, recursion limits. - Trajectory evals: expected node path / tool calls for golden scenarios (LangSmith).",
+     "body_md": "- Unit-test node functions (pure input → update).\n- Test routing functions and reducers directly.\n- Integration tests with fake/mocked models (deterministic tool calls) and an `InMemorySaver`.\n- Test interrupt → resume, crash → resume (run with checkpointer, kill, resume), parallel merges, recursion limits.\n- Trajectory evals: expected node path / tool calls for golden scenarios (LangSmith)."
+    },
+    {
+     "id": "Q38",
+     "title": "Tracing and sensitive data",
+     "short_md": "LangSmith/OTel traces capture every node, model call and tool call. Redact PII and secrets at capture (masking functions, hide inputs/outputs), sample traces, set retention, restrict access. Don't log `Authorization` headers, account numbers or approval payloads with personal data.",
+     "body_md": "LangSmith/OTel traces capture every node, model call and tool call. Redact PII and secrets at capture (masking functions, hide inputs/outputs), sample traces, set retention, restrict access. Don't log `Authorization` headers, account numbers or approval payloads with personal data."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 8,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q39",
+     "title": "The graph repeats an expensive tool call after a supervisor approves",
+     "short_md": "The tool call sits **before `interrupt()`** in the same node, so it re-ran on resume. Move it into a previous node (checkpointed) or a `@task`, or make it idempotent with a stored operation ID / client token.",
+     "body_md": "The tool call sits **before `interrupt()`** in the same node, so it re-ran on resume. Move it into a previous node (checkpointed) or a `@task`, or make it idempotent with a stored operation ID / client token."
+    },
+    {
+     "id": "Q40",
+     "title": "\"InvalidUpdateError: can receive only one value per step\"",
+     "short_md": "Two parallel nodes updated the same key without a reducer. Find the branches (trace / `get_state`), then either give the key a reducer (`Annotated[list, operator.add]` or custom merge) or write to separate keys (`jira_results`, `confluence_results`).",
+     "body_md": "Two parallel nodes updated the same key without a reducer. Find the branches (trace / `get_state`), then either give the key a reducer (`Annotated[list, operator.add]` or custom merge) or write to separate keys (`jira_results`, `confluence_results`)."
+    },
+    {
+     "id": "Q41",
+     "title": "A conversation loses context after a redeploy",
+     "short_md": "Likely `InMemorySaver` in production, or thread ID not stable (generated per request), or a different DB/schema after deploy. Fix: durable checkpointer, persistent thread ID mapping in your DB, migration tests.",
+     "body_md": "Likely `InMemorySaver` in production, or thread ID not stable (generated per request), or a different DB/schema after deploy. Fix: durable checkpointer, persistent thread ID mapping in your DB, migration tests."
+    },
+    {
+     "id": "Q42",
+     "title": "The agent hits `GraphRecursionError`",
+     "short_md": "Look at the trace: agent ↔ tools loop not converging (tool errors returned unhelpfully, model keeps retrying). Fix tool error messages, add an iteration counter with a graceful exit route, cap tool calls, improve prompt stop criteria; raise the limit only if the task genuinely needs more steps.",
+     "body_md": "Look at the trace: agent ↔ tools loop not converging (tool errors returned unhelpfully, model keeps retrying). Fix tool error messages, add an iteration counter with a graceful exit route, cap tool calls, improve prompt stop criteria; raise the limit only if the task genuinely needs more steps."
+    },
+    {
+     "id": "Q43",
+     "title": "Migrate a monolithic \"one giant prompt\" agent to LangGraph",
+     "short_md": "Extract pure tools → define typed state → split into nodes (classify → retrieve → act → validate) → add checkpointer and approval nodes → run old and new side by side on the same eval set and traces → staged rollout with metrics.",
+     "body_md": "Extract pure tools → define typed state → split into nodes (classify → retrieve → act → validate) → add checkpointer and approval nodes → run old and new side by side on the same eval set and traces → staged rollout with metrics."
+    },
+    {
+     "id": "Q44",
+     "title": "Design: document Q&A agent with approval for write actions",
+     "short_md": "State: `messages`, `selected_doc_ids` (authorised server-side), `evidence`, `proposed_action`, `approval`. Nodes: `authorize_docs` → `retrieve` (filter by IDs) → `agent` (read tools only) → if write proposed → `approval` (interrupt) → `execute` (idempotent, re-check permission) → `respond`. Postgres checkpointer, streaming of tokens + status events, traces with redaction.",
+     "body_md": "State: `messages`, `selected_doc_ids` (authorised server-side), `evidence`, `proposed_action`, `approval`. Nodes: `authorize_docs` → `retrieve` (filter by IDs) → `agent` (read tools only) → if write proposed → `approval` (interrupt) → `execute` (idempotent, re-check permission) → `respond`. Postgres checkpointer, streaming of tokens + status events, traces with redaction."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 9,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| StateGraph | typed state + nodes + edges; compile → run |\n| Node | `state → partial update` |\n| Reducer | how updates merge; none = overwrite; `add_messages`, `operator.add` |\n| Conditional edge | function returns next node name(s) |\n| Super-step | parallel nodes, then reduce, then checkpoint |\n| Checkpointer | snapshot per step per `thread_id`; Postgres in prod |\n| Store | long-term memory across threads, namespaced |\n| Durability | `exit` / `async` / `sync` |\n| `interrupt()` | pause + persist; resume with `Command(resume=…)`; node re-runs from top |\n| `Command` | update + goto; resume; jump to parent graph |\n| `Send` | dynamic fan-out (map-reduce) |\n| Join | `add_edge([\"a\",\"b\"], \"c\")` or `defer=True` |\n| Subgraph | modular graph as a node |\n| Streaming | values / updates / messages / custom / debug |\n| RetryPolicy | per-node transient retries |\n| Functional API | `@entrypoint` + `@task` (tasks checkpointed) |\n| Safety | thread_id ≠ auth; idempotent side effects; redact traces |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- Overview: https://docs.langchain.com/oss/python/langgraph/overview\n- Graph API: https://docs.langchain.com/oss/python/langgraph/graph-api\n- Persistence: https://docs.langchain.com/oss/python/langgraph/persistence\n- Durable execution: https://docs.langchain.com/oss/python/langgraph/durable-execution\n- Interrupts: https://docs.langchain.com/oss/python/langgraph/interrupts\n- Functional API: https://docs.langchain.com/oss/python/langgraph/functional-api\n- Streaming: https://docs.langchain.com/oss/python/langgraph/streaming",
+   "questions": []
+  }
+ ]
+}

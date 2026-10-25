@@ -1,0 +1,318 @@
+{
+ "slug": "10-docker",
+ "num": 10,
+ "title": "Docker",
+ "full_title": "Docker: L2 → L3 Interview Preparation",
+ "group": "DevOps",
+ "accent": "#2dd4bf",
+ "updated": "24 October 2026",
+ "level": "containers basics → Dockerfile mastery → security & production on ECS",
+ "source": "docs/10_Docker.md",
+ "question_count": 39,
+ "section_count": 9,
+ "sections": [
+  {
+   "id": "mental-model-what-a-container-really-is",
+   "num": 1,
+   "title": "Mental model: what a container really is",
+   "intro_md": "**A container is just a normal Linux process with isolation and limits** — not a mini-VM.\n\n```\n ┌──────────────────────── Virtual machines ───────────────────┐   ┌──────────────────────── Containers ─────────────────────────┐\n │  App A      App B                                          │   │  App A        App B        App C                            │\n │  Libs       Libs                                           │   │  Libs         Libs         Libs     ← image layers           │\n │  Guest OS   Guest OS   ← full kernel each (GBs, slow boot)  │   │ ───────────── container runtime (containerd/runc) ─────────  │\n │ ───────── Hypervisor ─────────                              │   │  Host OS kernel  ← SHARED (MBs, starts in ms)                │\n │  Hardware                                                   │   │  Hardware                                                    │\n └─────────────────────────────────────────────────────────────┘   └──────────────────────────────────────────────────────────────┘\n```\n\nLinux features that make a container:\n- **Namespaces** — what the process can *see*: own PID tree, network stack, mount points, hostname, users.\n- **cgroups** — what it can *use*: CPU, memory, I/O limits.\n- **Union filesystem (overlayfs)** — image layers stacked read-only + one thin writable layer.\n- **Capabilities, seccomp, AppArmor/SELinux** — what it's *allowed to do* (syscalls, privileges).\n\n**Docker architecture:**\n```\n docker CLI ──REST API──► dockerd (Docker Engine) ──► containerd ──► runc ──► container process\n      │                        │ BuildKit (builds images)\n      └── docker build/push ───┴──► Registry (Docker Hub, ECR, GitLab registry)\n```\n\n**Image → container lifecycle:**\n```\n Dockerfile ──build──► Image (read-only layers, ID/digest) ──push──► Registry\n                           │ run\n                           ▼\n                      Container = image layers + writable layer + process + config\n                      created → running → (stopped) → removed  (writable layer lost on removal)\n```",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "Container vs VM",
+     "short_md": "A VM virtualises **hardware** and runs a full guest OS kernel; a container virtualises the **OS** — processes share the host kernel, isolated by namespaces and limited by cgroups. Containers are lighter and start faster; VMs give stronger isolation. (Fargate/AgentCore/Lambda add microVM isolation underneath containers for multi-tenant safety.)",
+     "body_md": "**Short answer:** A VM virtualises **hardware** and runs a full guest OS kernel; a container virtualises the **OS** — processes share the host kernel, isolated by namespaces and limited by cgroups. Containers are lighter and start faster; VMs give stronger isolation. (Fargate/AgentCore/Lambda add microVM isolation underneath containers for multi-tenant safety.)"
+    },
+    {
+     "id": "Q02",
+     "title": "Image vs container",
+     "short_md": "An **image** is an immutable template (layers + metadata: entrypoint, env, user). A **container** is a running (or stopped) instance of an image with its own writable layer. Many containers can run from one image.",
+     "body_md": "**Short answer:** An **image** is an immutable template (layers + metadata: entrypoint, env, user). A **container** is a running (or stopped) instance of an image with its own writable layer. Many containers can run from one image.\n\n```bash\ndocker build -t api:1.4.0 .\ndocker run -d --name api1 -p 8000:8000 api:1.4.0\ndocker run -d --name api2 -p 8001:8000 api:1.4.0     # same image, separate container\ndocker ps; docker logs -f api1; docker exec -it api1 sh; docker stop api1; docker rm api1\n```"
+    },
+    {
+     "id": "Q03",
+     "title": "Registries, repositories, tags and digests",
+     "short_md": "A registry stores images (`123456789012.dkr.ecr.ap-south-1.amazonaws.com/api`). A **tag** (`:1.4.0`, `:latest`) is a **movable** label. A **digest** (`@sha256:ab12…`) is the content hash — **immutable**. Deploy by digest (or immutable tags) so \"what's running\" is unambiguous.",
+     "body_md": "**Short answer:** A registry stores images (`123456789012.dkr.ecr.ap-south-1.amazonaws.com/api`). A **tag** (`:1.4.0`, `:latest`) is a **movable** label. A **digest** (`@sha256:ab12…`) is the content hash — **immutable**. Deploy by digest (or immutable tags) so \"what's running\" is unambiguous.\n\n```bash\naws ecr get-login-password | docker login --username AWS --password-stdin $ECR\ndocker tag api:1.4.0 $ECR/api:git-3f9c2ab\ndocker push $ECR/api:git-3f9c2ab        # prints digest sha256:...\n```\n**ECR features:** private repos, IAM auth, **tag immutability**, image scanning (basic / enhanced with Inspector), lifecycle policies (delete old images), replication, pull-through cache."
+    },
+    {
+     "id": "Q04",
+     "title": "`.dockerignore`",
+     "short_md": "Excludes files from the **build context** sent to the builder → faster builds, smaller images, no secrets leaking into layers, better cache hits.",
+     "body_md": "**Short answer:** Excludes files from the **build context** sent to the builder → faster builds, smaller images, no secrets leaking into layers, better cache hits.\n\n```\n.git\n.venv\nnode_modules\n__pycache__/\n*.pyc\n.env\ntests/\ndist/\n```"
+    },
+    {
+     "id": "Q05",
+     "title": "Image layers and build cache",
+     "short_md": "Each filesystem-changing instruction (`RUN`, `COPY`, `ADD`) creates a layer. Docker reuses a cached layer if the instruction **and its inputs** are unchanged; once a layer changes, **all later layers rebuild**. So: put rarely-changing steps first (install dependencies), frequently-changing steps last (copy source).",
+     "body_md": "**Short answer:** Each filesystem-changing instruction (`RUN`, `COPY`, `ADD`) creates a layer. Docker reuses a cached layer if the instruction **and its inputs** are unchanged; once a layer changes, **all later layers rebuild**. So: put rarely-changing steps first (install dependencies), frequently-changing steps last (copy source).\n\n```dockerfile\n# ❌ any code change reinstalls all dependencies\nCOPY . .\nRUN pip install -r requirements.txt\n\n# ✅ dependencies cached until requirements change\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\nCOPY . .\n```\n**Pitfall:** deleting files in a later layer doesn't shrink the image — the earlier layer still contains them. Clean up **in the same `RUN`**."
+    },
+    {
+     "id": "Q06",
+     "title": "Ports: `EXPOSE` vs publishing",
+     "short_md": "`EXPOSE 8000` is **documentation/metadata** only. `-p 8080:8000` actually **publishes** host port 8080 → container port 8000. In ECS/awsvpc you set `containerPort` in the task definition; the ENI gets the port directly.",
+     "body_md": "`EXPOSE 8000` is **documentation/metadata** only. `-p 8080:8000` actually **publishes** host port 8080 → container port 8000. In ECS/awsvpc you set `containerPort` in the task definition; the ENI gets the port directly."
+    },
+    {
+     "id": "Q07",
+     "title": "Essential CLI for debugging",
+     "short_md": "docker logs --tail 100 -f <c>          # stdout/stderr docker inspect <c>                     # config, state, exit code, OOMKilled, mounts, network docker exec -it <c> sh                 # shell into running container docker run --rm -it --entrypoint sh img # start image with a shell instead of its entrypoint docker stats                           # live CPU/mem docker history img; docker image inspect img   # layers and metadata docker system df; docker system prune  # disk usage / cleanup",
+     "body_md": "```bash\ndocker logs --tail 100 -f <c>          # stdout/stderr\ndocker inspect <c>                     # config, state, exit code, OOMKilled, mounts, network\ndocker exec -it <c> sh                 # shell into running container\ndocker run --rm -it --entrypoint sh img # start image with a shell instead of its entrypoint\ndocker stats                           # live CPU/mem\ndocker history img; docker image inspect img   # layers and metadata\ndocker system df; docker system prune  # disk usage / cleanup\n```"
+    },
+    {
+     "id": "Q08",
+     "title": "Docker vs containerd vs Podman vs OCI",
+     "short_md": "**OCI** standards define image format and runtime spec, so images built by Docker run on containerd (Kubernetes/ECS), Podman (daemonless, rootless) etc. Docker Desktop/Engine is one implementation; ECS and EKS use containerd under the hood.",
+     "body_md": "**OCI** standards define image format and runtime spec, so images built by Docker run on containerd (Kubernetes/ECS), Podman (daemonless, rootless) etc. Docker Desktop/Engine is one implementation; ECS and EKS use containerd under the hood."
+    }
+   ]
+  },
+  {
+   "id": "dockerfile-in-depth",
+   "num": 3,
+   "title": "Dockerfile in depth",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q09",
+     "title": "Core instructions",
+     "short_md": "| Instruction | Purpose |\n|---|---|\n| `FROM` | base image (pin version, ideally digest) |\n| `WORKDIR` | set working directory (creates it) |\n| `COPY` | copy files from build context (`--chown`, `--from=stage`) |\n| `ADD` | like COPY + URL download + tar extraction — prefer `COPY` |\n| `RUN` | execute at **build** time → new layer |\n| `ENV` | environment variable in image (build + runtime) |\n| `ARG` | build-time variable only |\n| `USER` | run subsequent steps/container as this user |\n| `EXPOSE` | document port |\n| `ENTRYPOINT` | the executable |\n| `CMD` | default arguments (or default command) |\n| `HEALTHCHECK` | container health command |",
+     "body_md": "| Instruction | Purpose |\n|---|---|\n| `FROM` | base image (pin version, ideally digest) |\n| `WORKDIR` | set working directory (creates it) |\n| `COPY` | copy files from build context (`--chown`, `--from=stage`) |\n| `ADD` | like COPY + URL download + tar extraction — prefer `COPY` |\n| `RUN` | execute at **build** time → new layer |\n| `ENV` | environment variable in image (build + runtime) |\n| `ARG` | build-time variable only |\n| `USER` | run subsequent steps/container as this user |\n| `EXPOSE` | document port |\n| `ENTRYPOINT` | the executable |\n| `CMD` | default arguments (or default command) |\n| `HEALTHCHECK` | container health command |\n| `LABEL` | metadata (version, source repo) |"
+    },
+    {
+     "id": "Q10",
+     "title": "`CMD` vs `ENTRYPOINT`, exec vs shell form",
+     "short_md": "`ENTRYPOINT` defines the program; `CMD` provides default args that `docker run img <args>` replaces. **Exec form** (`[\"uvicorn\", \"app:app\"]`) runs the process directly as PID 1 and receives signals. **Shell form** (`uvicorn app:app`) wraps it in `/bin/sh -c` → the shell is PID 1 and may not forward `SIGTERM` → no graceful shutdown.",
+     "body_md": "**Short answer:** `ENTRYPOINT` defines the program; `CMD` provides default args that `docker run img <args>` replaces. **Exec form** (`[\"uvicorn\", \"app:app\"]`) runs the process directly as PID 1 and receives signals. **Shell form** (`uvicorn app:app`) wraps it in `/bin/sh -c` → the shell is PID 1 and may not forward `SIGTERM` → no graceful shutdown.\n\n```dockerfile\nENTRYPOINT [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\"]\nCMD [\"--port\", \"8000\"]\n# docker run img --port 9000  → overrides CMD only\n```"
+    },
+    {
+     "id": "Q11",
+     "title": "`ARG` vs `ENV`",
+     "short_md": "`ARG` exists only during build (`--build-arg VERSION=1.4`), `ENV` persists into the running container. **Neither is for secrets** — both are visible in image history/metadata. Use BuildKit secret mounts for build secrets and Secrets Manager at runtime.",
+     "body_md": "`ARG` exists only during build (`--build-arg VERSION=1.4`), `ENV` persists into the running container. **Neither is for secrets** — both are visible in image history/metadata. Use BuildKit secret mounts for build secrets and Secrets Manager at runtime."
+    },
+    {
+     "id": "Q12",
+     "title": "Multi-stage builds",
+     "short_md": "Use one stage with compilers/build tools, then copy only the results into a small runtime stage → smaller image, fewer vulnerabilities, no build tools in production.",
+     "body_md": "**Short answer:** Use one stage with compilers/build tools, then copy only the results into a small runtime stage → smaller image, fewer vulnerabilities, no build tools in production.\n\n```dockerfile\n# syntax=docker/dockerfile:1\nFROM python:3.13-slim AS builder\nCOPY --from=ghcr.io/astral-sh/uv:0.8 /uv /bin/uv\nWORKDIR /app\nCOPY pyproject.toml uv.lock ./\nRUN --mount=type=cache,target=/root/.cache/uv \\\n    uv sync --frozen --no-dev --no-install-project      # deps only → cached layer\nCOPY src/ ./src/\nRUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev\n\nFROM python:3.13-slim AS runtime\nRUN useradd --create-home --uid 10001 appuser\nWORKDIR /app\nCOPY --from=builder --chown=appuser:appuser /app /app\nENV PATH=\"/app/.venv/bin:$PATH\" PYTHONUNBUFFERED=1\nUSER 10001\nEXPOSE 8000\nHEALTHCHECK --interval=30s --timeout=3s CMD python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\"\nENTRYPOINT [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n```\nFrontend example: `node` stage runs `vite build` → `nginx:alpine` stage copies `dist/`."
+    },
+    {
+     "id": "Q13",
+     "title": "BuildKit features: cache mounts, secret mounts, multi-platform",
+     "short_md": "RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt   # persistent pip cache RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci                       # secret NOT stored in layer",
+     "body_md": "```dockerfile\nRUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt   # persistent pip cache\nRUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci                       # secret NOT stored in layer\n```\n```bash\ndocker build --secret id=npmrc,src=$HOME/.npmrc .\ndocker buildx build --platform linux/amd64,linux/arm64 -t $IMG --push .   # multi-arch\n```\n**ARM64 matters on AWS:** Graviton (ECS/Lambda) is cheaper; AgentCore Runtime requires ARM64. Building on an x86 laptop needs `--platform linux/arm64` (QEMU emulation or native ARM builders)."
+    },
+    {
+     "id": "Q14",
+     "title": "Choosing a base image",
+     "short_md": "Pin versions (`python:3.13.7-slim-bookworm` or `@sha256:`), rebuild regularly for patches.",
+     "body_md": "| Base | Size | Notes |\n|---|---|---|\n| `python:3.13` | large | has compilers; for builder stage |\n| `python:3.13-slim` | medium | Debian minimal; good default |\n| `python:3.13-alpine` | small | musl libc → many Python wheels must compile; sometimes slower/buggy |\n| distroless / Chainguard / Docker Hardened Images | very small | no shell/package manager → fewer CVEs; debugging harder |\n| `scratch` | empty | static binaries (Go) |\n\nPin versions (`python:3.13.7-slim-bookworm` or `@sha256:`), rebuild regularly for patches."
+    },
+    {
+     "id": "Q15",
+     "title": "Reducing image size and vulnerabilities",
+     "short_md": "Multi-stage, slim/distroless base, `--no-install-recommends` and clean apt lists in the same `RUN`, no dev dependencies, `.dockerignore`, remove build tools, scan and fix, pin + rebuild weekly.",
+     "body_md": "Multi-stage, slim/distroless base, `--no-install-recommends` and clean apt lists in the same `RUN`, no dev dependencies, `.dockerignore`, remove build tools, scan and fix, pin + rebuild weekly.\n\n```dockerfile\nRUN apt-get update && apt-get install -y --no-install-recommends libpq5 \\\n    && rm -rf /var/lib/apt/lists/*\n```"
+    },
+    {
+     "id": "Q16",
+     "title": "Running as non-root",
+     "short_md": "By default containers run as root (UID 0). If an attacker escapes the app, root in the container makes escalation easier. Create a user, `USER 10001`, own only needed files, and in ECS also set `readonlyRootFilesystem` and drop capabilities.",
+     "body_md": "**Short answer:** By default containers run as root (UID 0). If an attacker escapes the app, root in the container makes escalation easier. Create a user, `USER 10001`, own only needed files, and in ECS also set `readonlyRootFilesystem` and drop capabilities.\n\n**Pitfall:** non-root can't bind ports < 1024 — use 8000/8080."
+    },
+    {
+     "id": "Q17",
+     "title": "Reproducible builds",
+     "short_md": "Pin base image digests, lockfiles (`uv.lock`, `package-lock.json`), pinned tool versions, `--frozen`/`npm ci`, no `apt-get upgrade` of unpinned packages in app images (rebuild base instead), build in CI not laptops.",
+     "body_md": "Pin base image digests, lockfiles (`uv.lock`, `package-lock.json`), pinned tool versions, `--frozen`/`npm ci`, no `apt-get upgrade` of unpinned packages in app images (rebuild base instead), build in CI not laptops."
+    },
+    {
+     "id": "Q18",
+     "title": "Labels and metadata",
+     "short_md": "LABEL org.opencontainers.image.source=\"https://gitlab.example.com/payments/api\" \\ org.opencontainers.image.revision=\"$GIT_SHA\"",
+     "body_md": "```dockerfile\nLABEL org.opencontainers.image.source=\"https://gitlab.example.com/payments/api\" \\\n      org.opencontainers.image.revision=\"$GIT_SHA\"\n```\nHelps trace a running image back to its commit."
+    }
+   ]
+  },
+  {
+   "id": "networking-storage-compose",
+   "num": 4,
+   "title": "Networking, storage, Compose",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q19",
+     "title": "Docker networking modes",
+     "short_md": "docker network create app-net docker run -d --network app-net --name db postgres:16 docker run -d --network app-net -e DB_HOST=db api:1.4     # \"db\" resolves via Docker DNS",
+     "body_md": "| Mode | Behaviour |\n|---|---|\n| `bridge` (default) | private network on host; containers reach each other by **name** on user-defined bridges; publish ports to reach from host |\n| `host` | shares host network stack (no isolation, no port mapping) |\n| `none` | no networking |\n| `overlay` | multi-host (Swarm) |\n| **ECS `awsvpc`** | each task gets its **own ENI** and private IP in your VPC; security groups per task |\n\n```bash\ndocker network create app-net\ndocker run -d --network app-net --name db postgres:16\ndocker run -d --network app-net -e DB_HOST=db api:1.4     # \"db\" resolves via Docker DNS\n```"
+    },
+    {
+     "id": "Q20",
+     "title": "Volumes vs bind mounts vs tmpfs",
+     "short_md": "In production on ECS/Fargate: containers are **ephemeral**; persist data in RDS/DynamoDB/S3 or EFS volumes, not container disk.",
+     "body_md": "| | Volume | Bind mount | tmpfs |\n|---|---|---|---|\n| Managed by | Docker (`docker volume`) | you (host path) | memory |\n| Use | persistent data (DB in dev) | live-reload source code in dev | temp secrets/scratch |\n| Portability | good | host-dependent | — |\n\nIn production on ECS/Fargate: containers are **ephemeral**; persist data in RDS/DynamoDB/S3 or EFS volumes, not container disk."
+    },
+    {
+     "id": "Q21",
+     "title": "Docker Compose for local development",
+     "short_md": "services: api: build: . ports: [\"8000:8000\"] env_file: .env.local depends_on: db: { condition: service_healthy } develop: watch: - { action: sync, path: ./src, target: /app/src }   # compose watch: live sync db: image: postgres:16 environment: { POSTGRES_PASSWORD: dev } healthcheck: { test: [\"CMD\", \"pg_isready\"], interval: 5s } volumes: [pgdata:/var/lib/postgresql/data] volumes: { pgdata: {} }",
+     "body_md": "```yaml\n# compose.yaml\nservices:\n  api:\n    build: .\n    ports: [\"8000:8000\"]\n    env_file: .env.local\n    depends_on:\n      db: { condition: service_healthy }\n    develop:\n      watch:\n        - { action: sync, path: ./src, target: /app/src }   # compose watch: live sync\n  db:\n    image: postgres:16\n    environment: { POSTGRES_PASSWORD: dev }\n    healthcheck: { test: [\"CMD\", \"pg_isready\"], interval: 5s }\n    volumes: [pgdata:/var/lib/postgresql/data]\nvolumes: { pgdata: {} }\n```\n`docker compose up -d`, `docker compose logs -f api`, `docker compose down -v`."
+    },
+    {
+     "id": "Q22",
+     "title": "Local vs production configuration (12-factor)",
+     "short_md": "Same image everywhere; configuration via **environment variables** and secrets injected at runtime (ECS task definition `secrets` from Secrets Manager/SSM). Don't bake environment-specific config or secrets into images. Log to **stdout/stderr** (collected by awslogs/FireLens).",
+     "body_md": "Same image everywhere; configuration via **environment variables** and secrets injected at runtime (ECS task definition `secrets` from Secrets Manager/SSM). Don't bake environment-specific config or secrets into images. Log to **stdout/stderr** (collected by awslogs/FireLens)."
+    },
+    {
+     "id": "Q23",
+     "title": "Containers are ephemeral — implications",
+     "short_md": "Anything written to the container filesystem disappears when the task is replaced. Store state externally; design for being killed at any time (graceful shutdown, idempotent work, retries).",
+     "body_md": "Anything written to the container filesystem disappears when the task is replaced. Store state externally; design for being killed at any time (graceful shutdown, idempotent work, retries)."
+    }
+   ]
+  },
+  {
+   "id": "runtime-behaviour-signals-health-resources",
+   "num": 5,
+   "title": "Runtime behaviour: signals, health, resources",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q24",
+     "title": "SIGTERM and graceful shutdown",
+     "short_md": "`docker stop` / ECS sends **SIGTERM** to PID 1, waits a grace period (Docker default 10 s; ECS `stopTimeout` default 30 s, max 120 s on Fargate), then **SIGKILL**. Your app must catch SIGTERM: stop accepting new work, finish in-flight requests, close connections, exit.",
+     "body_md": "**Short answer:** `docker stop` / ECS sends **SIGTERM** to PID 1, waits a grace period (Docker default 10 s; ECS `stopTimeout` default 30 s, max 120 s on Fargate), then **SIGKILL**. Your app must catch SIGTERM: stop accepting new work, finish in-flight requests, close connections, exit.\n\n```\n ECS deploy/scale-in ─► deregister from ALB (deregistration delay) ─► SIGTERM ─► app drains\n                                                   └─ after stopTimeout ─► SIGKILL (hard kill)\n```\nRequirements: exec-form `ENTRYPOINT` (app is PID 1) or an init (`tini`, `docker run --init`, ECS `initProcessEnabled`) that forwards signals and reaps zombies. Uvicorn/Gunicorn handle SIGTERM gracefully.\n\n```python\nimport signal, asyncio\nstop = asyncio.Event()\nsignal.signal(signal.SIGTERM, lambda *_: stop.set())   # worker loop checks stop.is_set()\n```"
+    },
+    {
+     "id": "Q25",
+     "title": "Docker `HEALTHCHECK` vs ECS vs ALB health checks",
+     "short_md": "Keep `/health` cheap (liveness); a separate readiness check can test dependencies. Use `startPeriod` / health-check grace period for slow starts. (ECS ignores the Dockerfile HEALTHCHECK — define it in the task definition.)",
+     "body_md": "| Check | Who runs it | Effect if failing |\n|---|---|---|\n| Dockerfile `HEALTHCHECK` | Docker engine | marks container unhealthy (Docker itself doesn't restart it) |\n| ECS container `healthCheck` (task definition) | ECS agent, inside the container | ECS replaces the task (essential container) |\n| ALB target group health check | load balancer → HTTP path | stops routing traffic; ECS replaces unhealthy targets |\n\nKeep `/health` cheap (liveness); a separate readiness check can test dependencies. Use `startPeriod` / health-check grace period for slow starts. (ECS ignores the Dockerfile HEALTHCHECK — define it in the task definition.)"
+    },
+    {
+     "id": "Q26",
+     "title": "Resource limits (CPU, memory)",
+     "short_md": "docker run --memory=512m --cpus=1.0 api:1.4",
+     "body_md": "```bash\ndocker run --memory=512m --cpus=1.0 api:1.4\n```\nExceeding memory → process **OOM-killed** (exit code **137**, `OOMKilled: true`). CPU limit → throttling (slower), not a kill. In ECS: task-level CPU/memory (Fargate) plus container `memory` (hard) / `memoryReservation` (soft). Python services: set worker counts based on memory, watch for leaks."
+    },
+    {
+     "id": "Q27",
+     "title": "Exit codes you should recognise",
+     "short_md": "\"exec format error\" = image built for a different CPU architecture (amd64 vs arm64).",
+     "body_md": "| Code | Meaning |\n|---|---|\n| 0 | clean exit (for a web server, unexpected — something told it to stop) |\n| 1 | application error (check logs) |\n| 126 / 127 | command not executable / not found (bad ENTRYPOINT, missing binary, wrong arch) |\n| 137 | SIGKILL — OOM or killed after stop timeout |\n| 139 | segfault (native lib, wrong architecture) |\n| 143 | SIGTERM received and exited |\n\n\"exec format error\" = image built for a different CPU architecture (amd64 vs arm64)."
+    }
+   ]
+  },
+  {
+   "id": "security-supply-chain",
+   "num": 6,
+   "title": "Security & supply chain",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q28",
+     "title": "Container security layers",
+     "short_md": "Build:   minimal pinned base → no secrets in layers → scan (Trivy/Inspector) → SBOM → sign (Cosign) Registry: private ECR, tag immutability, scan on push, lifecycle policy, only CI can push Deploy:  verify signature/digest, least-privilege task role, secrets from Secrets Manager Runtime: non-root, read-only root FS, drop Linux capabilities, no privileged mode, no docker.sock mounts, seccomp default, resource limits, private subnets + SGs, GuardDuty runtime monitoring",
+     "body_md": "```\n Build:   minimal pinned base → no secrets in layers → scan (Trivy/Inspector) → SBOM → sign (Cosign)\n Registry: private ECR, tag immutability, scan on push, lifecycle policy, only CI can push\n Deploy:  verify signature/digest, least-privilege task role, secrets from Secrets Manager\n Runtime: non-root, read-only root FS, drop Linux capabilities, no privileged mode,\n          no docker.sock mounts, seccomp default, resource limits, private subnets + SGs,\n          GuardDuty runtime monitoring\n```"
+    },
+    {
+     "id": "Q29",
+     "title": "Why never mount `/var/run/docker.sock` or use `--privileged`?",
+     "short_md": "The Docker socket gives **root on the host** (start any container with host mounts). `--privileged` disables most isolation. Both turn a container compromise into a host compromise.",
+     "body_md": "The Docker socket gives **root on the host** (start any container with host mounts). `--privileged` disables most isolation. Both turn a container compromise into a host compromise."
+    },
+    {
+     "id": "Q30",
+     "title": "Secrets: what not to do",
+     "short_md": "❌ `ENV API_KEY=...`, ❌ `COPY .env`, ❌ `ARG TOKEN` used in `RUN` (visible in history), ❌ secrets in image labels. ✅ BuildKit `--mount=type=secret` for build time; ✅ ECS `secrets` (Secrets Manager/SSM) or fetch at startup via the task role for runtime.",
+     "body_md": "❌ `ENV API_KEY=...`, ❌ `COPY .env`, ❌ `ARG TOKEN` used in `RUN` (visible in history), ❌ secrets in image labels. ✅ BuildKit `--mount=type=secret` for build time; ✅ ECS `secrets` (Secrets Manager/SSM) or fetch at startup via the task role for runtime."
+    },
+    {
+     "id": "Q31",
+     "title": "SBOM, scanning and signing",
+     "short_md": "- **SBOM** (Software Bill of Materials, SPDX/CycloneDX via Syft or `docker buildx --sbom`): lists every package → answer \"are we affected by CVE-X?\" quickly. - **Scanning** (Trivy, Grype, ECR enhanced scanning/Inspector): finds known CVEs; gate CI on critical/high with fix available. - **Signing** (Cosign/Sigstore, AWS Signer for ECR): proves the image came from your pipeline; verify before deploy. - **Provenance** (SLSA attestations): how/where it was built.",
+     "body_md": "- **SBOM** (Software Bill of Materials, SPDX/CycloneDX via Syft or `docker buildx --sbom`): lists every package → answer \"are we affected by CVE-X?\" quickly.\n- **Scanning** (Trivy, Grype, ECR enhanced scanning/Inspector): finds known CVEs; gate CI on critical/high with fix available.\n- **Signing** (Cosign/Sigstore, AWS Signer for ECR): proves the image came from your pipeline; verify before deploy.\n- **Provenance** (SLSA attestations): how/where it was built."
+    },
+    {
+     "id": "Q32",
+     "title": "Image tags: why not `latest`?",
+     "short_md": "`latest` is just a mutable default tag — you can't tell what's running, rollbacks are ambiguous, and nodes may cache different versions. Use commit-SHA tags + digests; enable ECR tag immutability.",
+     "body_md": "`latest` is just a mutable default tag — you can't tell what's running, rollbacks are ambiguous, and nodes may cache different versions. Use commit-SHA tags + digests; enable ECR tag immutability."
+    },
+    {
+     "id": "Q33",
+     "title": "Offline-friendly / air-gapped secure image",
+     "short_md": "Mirror base images and packages into an internal registry/artifact repository (ECR pull-through cache, CodeArtifact), pin digests, vendor wheels, build with no internet (`--network=none` for steps), scan and sign internally.",
+     "body_md": "Mirror base images and packages into an internal registry/artifact repository (ECR pull-through cache, CodeArtifact), pin digests, vendor wheels, build with no internet (`--network=none` for steps), scan and sign internally."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 7,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q34",
+     "title": "Container crash-loops. How do you debug?",
+     "short_md": "1. `docker logs` / CloudWatch logs — error at startup? 2. `docker inspect` → `State.ExitCode`, `OOMKilled`. 3. Exit code meaning (Q27): 137 → memory; 127 → bad command; exec format error → architecture. 4. Run interactively: `docker run --rm -it --entrypoint sh img` and start the app manually. 5. Check env vars/secrets present, config file paths, permissions (non-root can't write to `/app`?), dependency reachable (DB DNS).",
+     "body_md": "1. `docker logs` / CloudWatch logs — error at startup?\n2. `docker inspect` → `State.ExitCode`, `OOMKilled`.\n3. Exit code meaning (Q27): 137 → memory; 127 → bad command; exec format error → architecture.\n4. Run interactively: `docker run --rm -it --entrypoint sh img` and start the app manually.\n5. Check env vars/secrets present, config file paths, permissions (non-root can't write to `/app`?), dependency reachable (DB DNS)."
+    },
+    {
+     "id": "Q35",
+     "title": "Works locally but ECS can't pull the image (`CannotPullContainerError`)",
+     "short_md": "- **Network:** task in private subnet with no NAT and no **VPC endpoints** for ECR (`ecr.api`, `ecr.dkr`) + **S3 gateway endpoint** (layers are stored in S3) + CloudWatch Logs endpoint. - **Permissions:** task **execution role** lacks `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` (use `AmazonECSTaskExecutionRolePolicy`). - **Image reference:** wrong tag/digest/region/account; repository policy for cross-account. - **Architecture:** ARM image on X86 task (or vice versa) → task fails after pull.",
+     "body_md": "- **Network:** task in private subnet with no NAT and no **VPC endpoints** for ECR (`ecr.api`, `ecr.dkr`) + **S3 gateway endpoint** (layers are stored in S3) + CloudWatch Logs endpoint.\n- **Permissions:** task **execution role** lacks `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` (use `AmazonECSTaskExecutionRolePolicy`).\n- **Image reference:** wrong tag/digest/region/account; repository policy for cross-account.\n- **Architecture:** ARM image on X86 task (or vice versa) → task fails after pull."
+    },
+    {
+     "id": "Q36",
+     "title": "ECS task stops after ~30 s with \"unhealthy\"",
+     "short_md": "App binds `127.0.0.1` instead of `0.0.0.0`; wrong port; health-check path returns 404/redirect; app slower to start than grace period/`startPeriod`; health check command missing in image (`curl` not installed in slim/distroless); security group blocks ALB → task port; dependency failure making `/health` fail.",
+     "body_md": "App binds `127.0.0.1` instead of `0.0.0.0`; wrong port; health-check path returns 404/redirect; app slower to start than grace period/`startPeriod`; health check command missing in image (`curl` not installed in slim/distroless); security group blocks ALB → task port; dependency failure making `/health` fail."
+    },
+    {
+     "id": "Q37",
+     "title": "Build is slow in CI",
+     "short_md": "No layer cache between runners → use registry cache (`--cache-from/--cache-to type=registry`), order instructions for cache, cache mounts for package managers, smaller build context (`.dockerignore`), native ARM builders instead of emulation.",
+     "body_md": "No layer cache between runners → use registry cache (`--cache-from/--cache-to type=registry`), order instructions for cache, cache mounts for package managers, smaller build context (`.dockerignore`), native ARM builders instead of emulation."
+    },
+    {
+     "id": "Q38",
+     "title": "Image is 2.5 GB",
+     "short_md": "`docker history` to see which layers are large → compilers and dev deps (multi-stage), CUDA/torch where not needed (CPU wheels), caches left in layers (clean in same RUN or cache mounts), copying `.git`/data folders (`.dockerignore`).",
+     "body_md": "`docker history` to see which layers are large → compilers and dev deps (multi-stage), CUDA/torch where not needed (CPU wheels), caches left in layers (clean in same RUN or cache mounts), copying `.git`/data folders (`.dockerignore`)."
+    },
+    {
+     "id": "Q39",
+     "title": "Container gets OOM-killed under load",
+     "short_md": "Measure per-worker memory; reduce workers or increase memory; fix leaks (unbounded caches); stream large files instead of loading; set Python `MALLOC_ARENA_MAX` for glibc fragmentation if needed; add memory alarms.",
+     "body_md": "Measure per-worker memory; reduce workers or increase memory; fix leaks (unbounded caches); stream large files instead of loading; set Python `MALLOC_ARENA_MAX` for glibc fragmentation if needed; add memory alarms."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 8,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| Container | process + namespaces + cgroups + layered FS |\n| Image vs container | template vs running instance + writable layer |\n| Tag vs digest | movable label vs immutable hash |\n| Layers | cache until changed; order deps before source |\n| Multi-stage | build tools in builder, small runtime |\n| CMD vs ENTRYPOINT | args vs executable; use exec form |\n| ARG vs ENV | build-time vs runtime; neither for secrets |\n| BuildKit | cache mounts, secret mounts, multi-arch |\n| Non-root | `USER 10001`, read-only FS, drop caps |\n| SIGTERM | PID 1 must handle it; grace period then SIGKILL |\n| Health | Docker vs ECS vs ALB checks differ |\n| Exit 137 | OOM / SIGKILL; 127 bad command; exec format = arch |\n| Networking | bridge DNS by name; ECS awsvpc = ENI per task |\n| Supply chain | pin, scan, SBOM, sign, immutable ECR tags |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://docs.docker.com/get-started/docker-overview/\n- Dockerfile reference: https://docs.docker.com/reference/dockerfile/\n- Build best practices: https://docs.docker.com/build/building/best-practices/\n- BuildKit secrets: https://docs.docker.com/build/building/secrets/\n- Amazon ECR: https://docs.aws.amazon.com/AmazonECR/latest/userguide/what-is-ecr.html",
+   "questions": []
+  }
+ ]
+}

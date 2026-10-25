@@ -1,0 +1,394 @@
+{
+ "slug": "05-agentic-ai",
+ "num": 5,
+ "title": "Agentic AI",
+ "full_title": "Agentic AI: L2 → L3 Interview Preparation",
+ "group": "AI & Agents",
+ "accent": "#f472b6",
+ "updated": "24 October 2026 (MCP spec revision **2026-07-28** is current)",
+ "level": "what an agent is → patterns → protocols (MCP/A2A) → production safety",
+ "source": "docs/05_Agentic_AI.md",
+ "question_count": 49,
+ "section_count": 11,
+ "sections": [
+  {
+   "id": "mental-model-the-agent-loop",
+   "num": 1,
+   "title": "Mental model: the agent loop",
+   "intro_md": "**An agent = an LLM in a loop that can use tools to reach a goal.** Instead of answering once, it decides the next step, acts, observes the result and repeats until done.\n\n```\n                ┌──────────────────────────────────────────────────────────┐\n                │                    AGENT RUNTIME (your code)              │\n  user goal ──► │                                                          │\n                │   context = system prompt + goal + memory + tool list     │\n                │          │                                               │\n                │          ▼                                               │\n                │   ┌─────────────┐  \"call search_tickets(q='VPN')\"         │\n                │   │    LLM      │─────────────────────────┐              │\n                │   │  (decides)  │                         ▼              │\n                │   └─────▲───────┘              ┌────────────────────┐    │\n                │         │                      │ Policy / guardrail │    │\n                │         │ observation          │ • allowed tool?    │    │\n                │         │ (tool result)        │ • args valid?      │    │\n                │         │                      │ • user authorised? │    │\n                │         │                      │ • needs approval?  │    │\n                │         │                      └─────────┬──────────┘    │\n                │         │                                ▼              │\n                │         │                      ┌────────────────────┐    │\n                │         └──────────────────────│  Tool execution    │──► APIs, DBs, MCP servers\n                │                                └────────────────────┘    │\n                │   loop until: final answer │ max steps │ budget │ error   │\n                └──────────────────────────────────────────────────────────┘\n                          │                              │\n                     state/memory store            traces / logs / metrics\n```\n\n**Spectrum of autonomy** (pick the least autonomy that solves the problem):\n```\n Deterministic workflow ── LLM step inside workflow ── Router ── Tool-calling agent ── Multi-agent system\n  (no LLM decisions)        (classify, extract)        (LLM picks path)  (LLM picks tools in a loop)\n  ◄── more predictable, cheaper, easier to test                    more flexible, riskier, costlier ──►\n```",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "Agent vs chatbot vs workflow",
+     "short_md": "- **Chatbot** — responds to messages; no actions.\n- **Workflow** — code decides the steps in a fixed order (LLM may be one step).\n- **Agent** — the LLM **decides which actions/tools to use and when to stop**, within constraints you set.",
+     "body_md": "**Short answer:**\n- **Chatbot** — responds to messages; no actions.\n- **Workflow** — code decides the steps in a fixed order (LLM may be one step).\n- **Agent** — the LLM **decides which actions/tools to use and when to stop**, within constraints you set.\n\n**Example:** A support chatbot explains a ticket policy. A workflow always does *classify → fetch ticket → summarise*. An agent might search the KB, find nothing, look up the ticket history, ask a clarifying question, then draft a resolution.\n\n**Interview tip:** Autonomy is a cost, not a goal. Say: \"I'd start with a workflow and add agentic decision-making only where the path can't be known in advance.\""
+    },
+    {
+     "id": "Q02",
+     "title": "Core components of an agent",
+     "short_md": "| Component | Role |\n|---|---|\n| **Model** | reasoning + choosing actions |\n| **Instructions** | goal, rules, persona, output format |\n| **Tools** | functions/APIs the agent can call (search, DB, email, code exec) |\n| **Orchestration loop** | runs model → tool → model; enforces limits |\n| **State & memory** | conversation, intermediate results, long-term facts |\n| **Policy / guardrails** | permissions, approvals, input/output filtering |\n| **Observability** | traces of every step, tokens, cost |\n| **Termination** | done condition, max steps, budget, escalation |",
+     "body_md": "| Component | Role |\n|---|---|\n| **Model** | reasoning + choosing actions |\n| **Instructions** | goal, rules, persona, output format |\n| **Tools** | functions/APIs the agent can call (search, DB, email, code exec) |\n| **Orchestration loop** | runs model → tool → model; enforces limits |\n| **State & memory** | conversation, intermediate results, long-term facts |\n| **Policy / guardrails** | permissions, approvals, input/output filtering |\n| **Observability** | traces of every step, tokens, cost |\n| **Termination** | done condition, max steps, budget, escalation |"
+    },
+    {
+     "id": "Q03",
+     "title": "The ReAct pattern",
+     "short_md": "**Re**ason + **Act**: the model alternates thinking about what to do, calling a tool, and reading the observation — rather than answering in one shot. This lets it gather evidence and correct course.",
+     "body_md": "**Short answer:** **Re**ason + **Act**: the model alternates thinking about what to do, calling a tool, and reading the observation — rather than answering in one shot. This lets it gather evidence and correct course.\n\n```\nThought: I need the runbook for error E42.\nAction: search_docs(query=\"E42 runbook\")\nObservation: [doc-17 \"E42: restart the sync worker...\"]\nThought: The runbook says restart. Check if the worker is running.\nAction: get_service_status(name=\"sync-worker\")\nObservation: {\"status\": \"crashed\", \"since\": \"10:02\"}\nFinal answer: Sync worker crashed at 10:02; per doc-17, restart it…\n```\nModern APIs implement this natively via **tool calling** (structured tool requests instead of parsing \"Action:\" text)."
+    },
+    {
+     "id": "Q04",
+     "title": "Workflows vs agents — Anthropic's \"building effective agents\" patterns",
+     "short_md": "Common **workflow** patterns (code-controlled):\n1. **Prompt chaining** — step 1 output → step 2 input (outline → draft → polish).\n2. **Routing** — classify input, send to a specialised prompt/model.\n3. **Parallelisation** — sectioning (split work) or voting (run several times, aggregate).\n4. **Orchestrator-workers** — LLM breaks task into subtasks dynamically and delegates.\n5. **Evaluator-optimizer** — one LLM generates, another critiques, loop until good.",
+     "body_md": "**Short answer:** Common **workflow** patterns (code-controlled):\n1. **Prompt chaining** — step 1 output → step 2 input (outline → draft → polish).\n2. **Routing** — classify input, send to a specialised prompt/model.\n3. **Parallelisation** — sectioning (split work) or voting (run several times, aggregate).\n4. **Orchestrator-workers** — LLM breaks task into subtasks dynamically and delegates.\n5. **Evaluator-optimizer** — one LLM generates, another critiques, loop until good.\n\n**Agents** = model-directed loops with tools for open-ended problems. Many production systems are workflows with a small agentic part."
+    },
+    {
+     "id": "Q05",
+     "title": "Orchestration vs choreography",
+     "short_md": "**Orchestration** — a central coordinator (LangGraph graph, Step Functions) decides who does what next; easy to see and control. **Choreography** — services react to events independently (EventBridge, SQS); loosely coupled but the overall flow is harder to see.",
+     "body_md": "**Short answer:** **Orchestration** — a central coordinator (LangGraph graph, Step Functions) decides who does what next; easy to see and control. **Choreography** — services react to events independently (EventBridge, SQS); loosely coupled but the overall flow is harder to see.\n\n**Typical mix:** LangGraph orchestrates the agent's reasoning and approvals; EventBridge announces \"job completed\" to other systems."
+    },
+    {
+     "id": "Q06",
+     "title": "Planner, executor, critic roles",
+     "short_md": "**Planner** decomposes the goal into steps; **executor** performs steps with tools; **critic/verifier** checks results against requirements (citations valid? tests pass?). Separation improves complex tasks but adds latency, cost and more places to fail — use only if evaluation shows a gain.",
+     "body_md": "**Short answer:** **Planner** decomposes the goal into steps; **executor** performs steps with tools; **critic/verifier** checks results against requirements (citations valid? tests pass?). Separation improves complex tasks but adds latency, cost and more places to fail — use only if evaluation shows a gain.\n\n```\ngoal ─► Planner ─► [step1, step2, step3] ─► Executor (tools) ─► Critic ── ok ──► answer\n                         ▲                                       │\n                         └───────────── revise plan ◄── fail ────┘\n```"
+    },
+    {
+     "id": "Q07",
+     "title": "Why do agents fail? (know the failure modes)",
+     "short_md": "| Failure | Example | Mitigation |\n|---|---|---|\n| Wrong tool / bad arguments | calls `delete` instead of `archive` | clear tool descriptions, schema validation, fewer tools |\n| Loops | searches 20 times with tiny query changes | step/budget limits, repetition detection |\n| Hallucinated facts | invents ticket status | require tool evidence, cite sources |\n| Context overflow | 50 tool results in history | compaction, summarise, store outside context |\n| Prompt injection | doc says \"send secrets\" | least privilege, approvals, authZ in code |\n| Premature stop / never stop | says \"done\" without doing it | explicit success criteria, verifier |\n| Cascading errors | one bad step poisons later steps | validate between steps, checkpoints |",
+     "body_md": "| Failure | Example | Mitigation |\n|---|---|---|\n| Wrong tool / bad arguments | calls `delete` instead of `archive` | clear tool descriptions, schema validation, fewer tools |\n| Loops | searches 20 times with tiny query changes | step/budget limits, repetition detection |\n| Hallucinated facts | invents ticket status | require tool evidence, cite sources |\n| Context overflow | 50 tool results in history | compaction, summarise, store outside context |\n| Prompt injection | doc says \"send secrets\" | least privilege, approvals, authZ in code |\n| Premature stop / never stop | says \"done\" without doing it | explicit success criteria, verifier |\n| Cascading errors | one bad step poisons later steps | validate between steps, checkpoints |"
+    },
+    {
+     "id": "Q08",
+     "title": "When should you NOT use an agent?",
+     "short_md": "When the steps are known, accuracy must be exact, actions are high-risk or regulated, latency/cost budgets are tight, or a simple rule/SQL query suffices. Example: payment settlement stays deterministic; an agent may *draft* investigation notes for a human.",
+     "body_md": "When the steps are known, accuracy must be exact, actions are high-risk or regulated, latency/cost budgets are tight, or a simple rule/SQL query suffices. Example: payment settlement stays deterministic; an agent may *draft* investigation notes for a human."
+    }
+   ]
+  },
+  {
+   "id": "tools-tool-calling",
+   "num": 3,
+   "title": "Tools & tool calling",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q09",
+     "title": "How does tool calling work end to end?",
+     "short_md": "You send the model a list of tools (name, description, JSON-schema parameters). The model replies with a structured **tool-use request**. Your code validates and executes it, then sends back a **tool result**. The model continues.",
+     "body_md": "**Short answer:** You send the model a list of tools (name, description, JSON-schema parameters). The model replies with a structured **tool-use request**. Your code validates and executes it, then sends back a **tool result**. The model continues.\n\n```python\ntools = [{\n  \"name\": \"get_ticket\",\n  \"description\": \"Fetch a Jira ticket by key. Use when the user mentions a ticket like ABC-123.\",\n  \"input_schema\": {\"type\": \"object\",\n                   \"properties\": {\"key\": {\"type\": \"string\", \"pattern\": \"^[A-Z]+-\\\\d+$\"}},\n                   \"required\": [\"key\"]},\n}]\n\nwhile True:\n    resp = llm.messages(messages=msgs, tools=tools)\n    if resp.stop_reason != \"tool_use\":\n        break                                         # final answer\n    for call in resp.tool_calls:\n        if call.name not in ALLOWED_TOOLS[user.role]:  # policy check in code\n            result = {\"error\": \"not permitted\"}\n        else:\n            args = TicketArgs.model_validate(call.input)       # schema validation\n            authorize(user, \"read\", args.key)                  # real user identity\n            result = jira.get(args.key, timeout=10)\n        msgs.append(tool_result(call.id, result))\n```\n\n**Rule:** every tool call is an **untrusted request**. The model choosing a tool is not authorisation."
+    },
+    {
+     "id": "Q10",
+     "title": "How to design good tools (the \"agent-computer interface\")",
+     "short_md": "- **Clear names and descriptions** — say *when* to use it and *what it returns*. The description is a prompt. - **Few, high-level tools** beat many tiny ones (`schedule_meeting` > `list_users` + `list_events` + `create_event`). - **Strict schemas** — enums, patterns, required fields. - **Concise, relevant outputs** — return the 5 fields needed, not a 2 MB JSON; paginate. - **Helpful errors** — `\"Ticket ABC-999 not found. Valid project keys: ABC, OPS\"` lets the model recover. - **Idempotent** where possible; include operation IDs for writes. - **Small tool set per step** — 5–20 relevant tools; …",
+     "body_md": "- **Clear names and descriptions** — say *when* to use it and *what it returns*. The description is a prompt.\n- **Few, high-level tools** beat many tiny ones (`schedule_meeting` > `list_users` + `list_events` + `create_event`).\n- **Strict schemas** — enums, patterns, required fields.\n- **Concise, relevant outputs** — return the 5 fields needed, not a 2 MB JSON; paginate.\n- **Helpful errors** — `\"Ticket ABC-999 not found. Valid project keys: ABC, OPS\"` lets the model recover.\n- **Idempotent** where possible; include operation IDs for writes.\n- **Small tool set per step** — 5–20 relevant tools; use tool search/routing when you have hundreds."
+    },
+    {
+     "id": "Q11",
+     "title": "Classify tools by risk",
+     "short_md": "| Risk tier | Examples | Controls |\n|---|---|---|\n| Read-only, low sensitivity | search docs, get weather | logging |\n| Read sensitive data | customer records, salaries | per-user authZ, field filtering, audit |\n| Write, reversible | create draft, add comment | validation, idempotency, rate limits |\n| Write, high impact / irreversible | payments, delete, external email | **human approval**, dual control, tight scopes, alerts |",
+     "body_md": "| Risk tier | Examples | Controls |\n|---|---|---|\n| Read-only, low sensitivity | search docs, get weather | logging |\n| Read sensitive data | customer records, salaries | per-user authZ, field filtering, audit |\n| Write, reversible | create draft, add comment | validation, idempotency, rate limits |\n| Write, high impact / irreversible | payments, delete, external email | **human approval**, dual control, tight scopes, alerts |"
+    },
+    {
+     "id": "Q12",
+     "title": "Human-in-the-loop approval — done properly",
+     "short_md": "Approval is a **security workflow**, not \"the model asked 'are you sure?'\".",
+     "body_md": "**Short answer:** Approval is a **security workflow**, not \"the model asked 'are you sure?'\".\n\n```\n agent proposes action ──► persist {action_id, tool, args, args_hash, requester, status=PENDING}\n                                 │\n                                 ▼\n                     UI shows exact diff/impact to an authorised approver\n                                 │ approve (authenticated, bound to action_id + args_hash)\n                                 ▼\n          executor re-checks: still authorised? args unchanged? not already executed?\n                                 │\n                                 ▼\n               execute once (idempotency key = action_id) → status=EXECUTED → resume agent\n```\nThe approval must survive restarts (durable storage / LangGraph `interrupt` with a checkpointer)."
+    },
+    {
+     "id": "Q13",
+     "title": "Retries and idempotency for write tools",
+     "short_md": "Retries and crash recovery can execute a tool twice. Give every write an **operation ID**; the tool (or a wrapper) records it and returns the previous result on duplicates (conditional write / unique constraint).",
+     "body_md": "**Short answer:** Retries and crash recovery can execute a tool twice. Give every write an **operation ID**; the tool (or a wrapper) records it and returns the previous result on duplicates (conditional write / unique constraint).\n\n```python\ndef post_comment(op_id: str, ticket: str, text: str):\n    if store.exists(op_id):                    # already done → return stored result\n        return store.get(op_id)\n    result = jira.add_comment(ticket, text)\n    store.put_if_absent(op_id, result)         # conditional write\n    return result\n```"
+    },
+    {
+     "id": "Q14",
+     "title": "Retrieval vs API vs SQL tools — which for what?",
+     "short_md": "Never answer live status from embeddings — they're a stale snapshot.",
+     "body_md": "| Question type | Tool |\n|---|---|\n| \"How do I…?\" fuzzy knowledge in docs | vector/hybrid **retrieval** |\n| \"What's the status of ticket X?\" live source-of-truth | deterministic **API** call |\n| \"How many tickets breached SLA last month?\" | **SQL / analytics** tool (read-only role, row limits, query validation) |\n\nNever answer live status from embeddings — they're a stale snapshot."
+    }
+   ]
+  },
+  {
+   "id": "agent-design-patterns",
+   "num": 4,
+   "title": "Agent design patterns",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q15",
+     "title": "Single agent vs multi-agent",
+     "short_md": "Start with **one agent + good tools**. Split into multiple agents when domains have different **permissions, prompts, owners or evaluation**, or when the tool set is too big for one context. Multi-agent adds latency, token cost and coordination bugs.",
+     "body_md": "**Short answer:** Start with **one agent + good tools**. Split into multiple agents when domains have different **permissions, prompts, owners or evaluation**, or when the tool set is too big for one context. Multi-agent adds latency, token cost and coordination bugs."
+    },
+    {
+     "id": "Q16",
+     "title": "Multi-agent topologies",
+     "short_md": "Supervisor (hierarchical)          Swarm / handoff (peer-to-peer)         Sequential pipeline ┌──────────┐                 ┌───────┐    handoff   ┌───────┐      A ─► B ─► C │Supervisor│                 │Agent A│ ───────────► │Agent B│ └─┬──┬──┬──┘                 └───────┘ ◄─────────── └───────┘ │  │  │                         active agent talks to user ┌─▼┐┌▼─┐┌▼─┐ │A ││B ││C │  workers report back └──┘└──┘└──┘",
+     "body_md": "```\n Supervisor (hierarchical)          Swarm / handoff (peer-to-peer)         Sequential pipeline\n        ┌──────────┐                 ┌───────┐    handoff   ┌───────┐      A ─► B ─► C\n        │Supervisor│                 │Agent A│ ───────────► │Agent B│\n        └─┬──┬──┬──┘                 └───────┘ ◄─────────── └───────┘\n          │  │  │                         active agent talks to user\n        ┌─▼┐┌▼─┐┌▼─┐\n        │A ││B ││C │  workers report back\n        └──┘└──┘└──┘\n```\n- **Supervisor**: central router delegates and aggregates — easiest to control.\n- **Handoff/swarm**: the active agent transfers control (with context) to a specialist.\n- **Parallel workers**: fan-out independent subtasks, then join.\n- **Agents-as-tools**: a sub-agent exposed as a tool to a parent agent."
+    },
+    {
+     "id": "Q17",
+     "title": "Handoffs: what must be passed?",
+     "short_md": "A handoff transfers control **and** a minimal, authorised context: the task, relevant IDs, verified user identity/permissions (not raw secrets), and provenance. Bound recursion depth to prevent agents bouncing tasks forever.",
+     "body_md": "A handoff transfers control **and** a minimal, authorised context: the task, relevant IDs, verified user identity/permissions (not raw secrets), and provenance. Bound recursion depth to prevent agents bouncing tasks forever."
+    },
+    {
+     "id": "Q18",
+     "title": "Sequential vs parallel vs hierarchical",
+     "short_md": "Follow the **dependency graph**: dependent steps → sequential; independent lookups (Jira + Confluence + logs) → parallel with timeouts and a join; many specialties → hierarchical. Every parallel branch needs timeout, cancellation and a merge rule.",
+     "body_md": "Follow the **dependency graph**: dependent steps → sequential; independent lookups (Jira + Confluence + logs) → parallel with timeouts and a join; many specialties → hierarchical. Every parallel branch needs timeout, cancellation and a merge rule."
+    },
+    {
+     "id": "Q19",
+     "title": "Preventing infinite loops and runaway cost",
+     "short_md": "Hard limits enforced **in code**: - max iterations / tool calls (per run and per tool) - token and dollar budget per task - wall-clock timeout - repetition detection (same tool + similar args N times → stop) - recursion limit for sub-agents - a graceful exit: \"I couldn't find X; here's what I tried\" or escalate to a human.",
+     "body_md": "Hard limits enforced **in code**:\n- max iterations / tool calls (per run and per tool)\n- token and dollar budget per task\n- wall-clock timeout\n- repetition detection (same tool + similar args N times → stop)\n- recursion limit for sub-agents\n- a graceful exit: \"I couldn't find X; here's what I tried\" or escalate to a human."
+    },
+    {
+     "id": "Q20",
+     "title": "Reflection / self-critique",
+     "short_md": "The agent (or a second model) reviews its output against criteria and revises. Works best with **objective feedback** — running tests, validating a schema, checking a citation — rather than \"is this good?\" self-assessment.",
+     "body_md": "The agent (or a second model) reviews its output against criteria and revises. Works best with **objective feedback** — running tests, validating a schema, checking a citation — rather than \"is this good?\" self-assessment."
+    },
+    {
+     "id": "Q21",
+     "title": "Plan-and-execute vs ReAct",
+     "short_md": "**ReAct** decides one step at a time (adaptive, more LLM calls). **Plan-and-execute** writes a full plan first, then executes steps (cheaper models can execute; re-plan on failure). Plan-and-execute suits long multi-step tasks with predictable structure; ReAct suits exploratory tasks.",
+     "body_md": "**ReAct** decides one step at a time (adaptive, more LLM calls). **Plan-and-execute** writes a full plan first, then executes steps (cheaper models can execute; re-plan on failure). Plan-and-execute suits long multi-step tasks with predictable structure; ReAct suits exploratory tasks."
+    }
+   ]
+  },
+  {
+   "id": "memory-context",
+   "num": 5,
+   "title": "Memory & context",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q22",
+     "title": "Short-term vs long-term memory",
+     "short_md": "┌───────────────── Short-term (per session/thread) ─────────────────┐ │ conversation messages, tool results, current plan, approval state  │ │ stored in: graph state + checkpointer (Postgres/Redis/DynamoDB),    │ │            AgentCore Memory short-term events                       │ └─────────────────────────────────────────────────────────────────────┘ ┌───────────────── Long-term (across sessions) ──────────────────────┐ │ semantic: facts (\"user prefers CSV exports\")                        │ │ episodic: past experiences (\"last time this error was fixed by…\")   │ │ procedural: learned instru…",
+     "body_md": "```\n ┌───────────────── Short-term (per session/thread) ─────────────────┐\n │ conversation messages, tool results, current plan, approval state  │\n │ stored in: graph state + checkpointer (Postgres/Redis/DynamoDB),    │\n │            AgentCore Memory short-term events                       │\n └─────────────────────────────────────────────────────────────────────┘\n ┌───────────────── Long-term (across sessions) ──────────────────────┐\n │ semantic: facts (\"user prefers CSV exports\")                        │\n │ episodic: past experiences (\"last time this error was fixed by…\")   │\n │ procedural: learned instructions/skills                             │\n │ stored in: vector store / key-value store, namespaced by user/tenant │\n └─────────────────────────────────────────────────────────────────────┘\n```\nMemory is **not** the source of truth for business data (ticket status, balances) and must never bypass authorisation."
+    },
+    {
+     "id": "Q23",
+     "title": "Context engineering for agents",
+     "short_md": "What the model sees each step decides success. Techniques: - **Select** — only relevant tools, documents and memories for this step. - **Compress** — summarise old turns, trim verbose tool output. - **Isolate** — give sub-agents their own focused context; return only the result. - **Externalise** — keep big artifacts (files, full logs) in storage; pass a reference/ID. - **Preserve critical facts** in structured state (IDs, approvals, amounts) — never only inside a summary.",
+     "body_md": "What the model sees each step decides success. Techniques:\n- **Select** — only relevant tools, documents and memories for this step.\n- **Compress** — summarise old turns, trim verbose tool output.\n- **Isolate** — give sub-agents their own focused context; return only the result.\n- **Externalise** — keep big artifacts (files, full logs) in storage; pass a reference/ID.\n- **Preserve critical facts** in structured state (IDs, approvals, amounts) — never only inside a summary."
+    },
+    {
+     "id": "Q24",
+     "title": "Context compaction — how?",
+     "short_md": "When history approaches the limit: replace old tool outputs with short summaries, summarise older dialogue, keep the latest N turns verbatim, keep structured facts, and store full logs for audit/retrieval. Re-fetch details on demand (\"just-in-time\" retrieval).",
+     "body_md": "When history approaches the limit: replace old tool outputs with short summaries, summarise older dialogue, keep the latest N turns verbatim, keep structured facts, and store full logs for audit/retrieval. Re-fetch details on demand (\"just-in-time\" retrieval)."
+    },
+    {
+     "id": "Q25",
+     "title": "Memory safety across users/tenants",
+     "short_md": "Namespace every memory by verified tenant/user, check ACLs on every read/write, set retention/TTL, allow users to view/delete memories, and treat retrieved memories as **data, not instructions** (an attacker can plant a \"memory\" via injection).",
+     "body_md": "Namespace every memory by verified tenant/user, check ACLs on every read/write, set retention/TTL, allow users to view/delete memories, and treat retrieved memories as **data, not instructions** (an attacker can plant a \"memory\" via injection)."
+    }
+   ]
+  },
+  {
+   "id": "protocols-mcp-a2a-agent-skills",
+   "num": 6,
+   "title": "Protocols: MCP, A2A, Agent Skills",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q26",
+     "title": "What is MCP (Model Context Protocol)?",
+     "short_md": "An open standard (originated by Anthropic, now governed in the open with the Linux Foundation's Agentic AI Foundation) for connecting AI applications to tools and data. Like \"USB-C for AI\": build an MCP server once, and any MCP-compatible client (Claude, IDEs, agent frameworks, AgentCore Gateway) can use it.",
+     "body_md": "**Short answer:** An open standard (originated by Anthropic, now governed in the open with the Linux Foundation's Agentic AI Foundation) for connecting AI applications to tools and data. Like \"USB-C for AI\": build an MCP server once, and any MCP-compatible client (Claude, IDEs, agent frameworks, AgentCore Gateway) can use it.\n\n**Architecture:**\n```\n ┌────────────────────── HOST (AI app: IDE, chat app, agent) ──────────────────────┐\n │                                                                                  │\n │   LLM  ◄──►  MCP Client A ──────────────┐     MCP Client B ─────────────┐         │\n │            (one client per server)      │                               │         │\n └─────────────────────────────────────────┼───────────────────────────────┼─────────┘\n                                           │ JSON-RPC 2.0                  │\n                           stdio (local process)             Streamable HTTP (remote, OAuth)\n                                           │                               │\n                               ┌───────────▼──────────┐       ┌────────────▼───────────┐\n                               │ MCP Server: Git       │       │ MCP Server: Jira        │\n                               │  tools: git_log, diff │       │  tools: get_issue,      │\n                               │  resources: repo://…  │       │         create_issue    │\n                               └───────────────────────┘       │  resources: jira://…    │\n                                                               │  prompts: triage_bug    │\n                                                               └─────────────────────────┘\n```\n\n**Server primitives:**\n| Primitive | Controlled by | What |\n|---|---|---|\n| **Tools** | model | callable functions (`get_issue`) with JSON-schema input/output |\n| **Resources** | application | read-only context data addressed by URI (`file://`, `jira://ABC-1`) |\n| **Prompts** | user | reusable prompt templates (slash commands) |\n\n**Client features:** elicitation (server asks user for input), and older roots/sampling (now deprecated — see Q27).\n\n**Transports:** **stdio** for local servers (launched as a subprocess); **Streamable HTTP** for remote servers (with OAuth 2.1-based authorization). The old HTTP+SSE transport is deprecated."
+    },
+    {
+     "id": "Q27",
+     "title": "What changed in recent MCP spec revisions?",
+     "short_md": "**Short answer (2026-07-28 revision — biggest change since launch):** - **Stateless protocol:** the `initialize` handshake and protocol sessions (`Mcp-Session-Id`) are removed. Every request carries protocol version and client capabilities in `_meta`. Servers expose `server/discover` for capabilities. → Remote MCP servers scale horizontally like normal stateless HTTP services; cross-call state uses explicit handles passed as tool arguments. - **Multi Round-Trip Requests (MRTR):** instead of the server sending requests to the client (sampling, elicitation), the server returns `resultType: \"inpu…",
+     "body_md": "**Short answer (2026-07-28 revision — biggest change since launch):**\n- **Stateless protocol:** the `initialize` handshake and protocol sessions (`Mcp-Session-Id`) are removed. Every request carries protocol version and client capabilities in `_meta`. Servers expose `server/discover` for capabilities. → Remote MCP servers scale horizontally like normal stateless HTTP services; cross-call state uses explicit handles passed as tool arguments.\n- **Multi Round-Trip Requests (MRTR):** instead of the server sending requests to the client (sampling, elicitation), the server returns `resultType: \"input_required\"` and the client retries with the answers.\n- **Tasks** (long-running operations, introduced in 2025-11-25) moved to an official **extension**; extensions framework added.\n- **Cacheable list results** (`ttlMs`, `cacheScope`), deterministic tool ordering (helps prompt caching), OpenTelemetry trace propagation via `_meta`.\n- **Deprecated:** Roots, Sampling, Logging; HTTP+SSE transport; Dynamic Client Registration (in favour of Client ID Metadata Documents).\n- Authorization hardening (issuer validation, credentials bound to issuer).\n\n**Interview framing:** \"Earlier versions were stateful sessions; the 2026 spec made MCP stateless so remote servers fit load balancers and serverless. I'd check which protocol version our SDK and gateway support.\""
+    },
+    {
+     "id": "Q28",
+     "title": "MCP security concerns",
+     "short_md": "- **Tool poisoning:** malicious tool descriptions with hidden instructions → only install trusted servers, review/pin versions. - **Prompt injection via tool results** → treat results as untrusted data. - **Over-privileged servers / token passthrough** → server should use its own scoped credentials or properly delegated tokens; don't forward the user's broad token to downstream APIs. - **Confused deputy** → enforce per-user authorisation inside the server. - **Local servers run code on your machine** → sandbox, least privilege. - Use a gateway (e.g., **AgentCore Gateway**) for central auth, al…",
+     "body_md": "- **Tool poisoning:** malicious tool descriptions with hidden instructions → only install trusted servers, review/pin versions.\n- **Prompt injection via tool results** → treat results as untrusted data.\n- **Over-privileged servers / token passthrough** → server should use its own scoped credentials or properly delegated tokens; don't forward the user's broad token to downstream APIs.\n- **Confused deputy** → enforce per-user authorisation inside the server.\n- **Local servers run code on your machine** → sandbox, least privilege.\n- Use a gateway (e.g., **AgentCore Gateway**) for central auth, allowlisting and audit."
+    },
+    {
+     "id": "Q29",
+     "title": "What is A2A (Agent2Agent protocol)?",
+     "short_md": "An open protocol (started by Google, now a Linux Foundation project) for **agents to talk to other agents** across vendors/frameworks. An agent publishes an **Agent Card** (JSON describing skills, endpoint, auth). Clients send **tasks/messages**; the remote agent works (possibly long-running, streaming updates) and returns **artifacts**.",
+     "body_md": "**Short answer:** An open protocol (started by Google, now a Linux Foundation project) for **agents to talk to other agents** across vendors/frameworks. An agent publishes an **Agent Card** (JSON describing skills, endpoint, auth). Clients send **tasks/messages**; the remote agent works (possibly long-running, streaming updates) and returns **artifacts**.\n\n```\n Your orchestrator agent ── discovers Agent Card ──► Travel agent (other team/vendor)\n                         ── send task \"book flight\" ─►  works opaquely (own tools, own model)\n                         ◄── status updates / artifacts ─\n```"
+    },
+    {
+     "id": "Q30",
+     "title": "MCP vs A2A vs plain HTTP APIs",
+     "short_md": "They complement each other: an agent uses MCP for its tools and A2A to delegate to other agents; both run over HTTP.",
+     "body_md": "| | MCP | A2A | HTTP/REST |\n|---|---|---|---|\n| Connects | agent ↔ **tools/data** | agent ↔ **agent** | any client ↔ service |\n| Other side is | a deterministic capability | an autonomous agent (opaque reasoning) | a service |\n| Unit of work | tool call / resource read | task with lifecycle, messages, artifacts | request/response |\n\nThey complement each other: an agent uses MCP for its tools and A2A to delegate to other agents; both run over HTTP."
+    },
+    {
+     "id": "Q31",
+     "title": "What are Agent Skills?",
+     "short_md": "A packaging format (introduced by Anthropic, published as an open standard) for giving agents reusable know-how: a folder with a `SKILL.md` (name, description, instructions) plus optional scripts and resources. The agent loads only the short description at first and reads the full skill **only when relevant** (\"progressive disclosure\") — saving context. Skills teach *how* to do a task; MCP gives *access* to systems.",
+     "body_md": "**Short answer:** A packaging format (introduced by Anthropic, published as an open standard) for giving agents reusable know-how: a folder with a `SKILL.md` (name, description, instructions) plus optional scripts and resources. The agent loads only the short description at first and reads the full skill **only when relevant** (\"progressive disclosure\") — saving context. Skills teach *how* to do a task; MCP gives *access* to systems."
+    }
+   ]
+  },
+  {
+   "id": "production-security-reliability-evaluation-observability",
+   "num": 7,
+   "title": "Production: security, reliability, evaluation, observability",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q32",
+     "title": "Carrying identity through an agent chain (avoid confused deputy)",
+     "short_md": "Authenticate the user at the entry point; propagate **verified** identity (signed token or trusted context) to tools; each tool authorises the **end user** for the specific resource. Use service credentials scoped to minimum permissions. Never trust a `user_id` the model wrote.",
+     "body_md": "**Short answer:** Authenticate the user at the entry point; propagate **verified** identity (signed token or trusted context) to tools; each tool authorises the **end user** for the specific resource. Use service credentials scoped to minimum permissions. Never trust a `user_id` the model wrote.\n\n```\n Browser ─JWT─► API (verify Cognito/Okta token) ─► Agent runtime (user context attached)\n             ─► Gateway (inbound auth, tool allowlist per role)\n             ─► Tool (OAuth token for *this user* via token vault, or scoped service role + user check)\n```\n**Confused deputy:** a privileged agent tricked into doing something the user isn't allowed to do. Fix: authorise as the user, not as the agent."
+    },
+    {
+     "id": "Q33",
+     "title": "Agent threat model — trust boundaries",
+     "short_md": "[User input] ─untrusted─┐ [Retrieved docs/web] ───┼──► LLM ──► proposed actions ──► [Policy gate] ──► tools ──► external systems [Tool outputs] ─────────┤                                     ▲ [Memory] ───────────────┘                         deterministic checks, approvals",
+     "body_md": "```\n [User input] ─untrusted─┐\n [Retrieved docs/web] ───┼──► LLM ──► proposed actions ──► [Policy gate] ──► tools ──► external systems\n [Tool outputs] ─────────┤                                     ▲\n [Memory] ───────────────┘                         deterministic checks, approvals\n```\nThreats: direct/indirect prompt injection, data exfiltration (via tool calls, URLs, markdown images), privilege misuse, SSRF via fetch tools, excessive agency, memory poisoning, secrets in logs, runaway cost (DoS). Controls: least privilege, policy outside the model, sandboxed code execution, egress allowlists, approvals, redaction, budgets, red-team tests."
+    },
+    {
+     "id": "Q34",
+     "title": "Policy enforcement outside the model",
+     "short_md": "Deterministic policy layer (code, OPA/Cedar policies, or **AgentCore Policy**) intercepts every tool call: is this tool allowed for this user, with these arguments, in this context? Prompts saying \"never do X\" are guidance; the gate is enforcement.",
+     "body_md": "Deterministic policy layer (code, OPA/Cedar policies, or **AgentCore Policy**) intercepts every tool call: is this tool allowed for this user, with these arguments, in this context? Prompts saying \"never do X\" are guidance; the gate is enforcement.\n\n```cedar\n// Example Cedar-style policy: only managers may approve refunds above 1000\npermit(principal in Role::\"manager\", action == Action::\"approve_refund\", resource)\nwhen { resource.amount > 1000 };\n```"
+    },
+    {
+     "id": "Q35",
+     "title": "Durable execution for agents",
+     "short_md": "Checkpoint state at each step so a crash/redeploy resumes from the last checkpoint instead of restarting. Durable state ≠ exactly-once side effects: a step may re-run after a crash, so writes need idempotency keys. Tools: LangGraph checkpointers, Step Functions, Temporal, Lambda durable functions.",
+     "body_md": "Checkpoint state at each step so a crash/redeploy resumes from the last checkpoint instead of restarting. Durable state ≠ exactly-once side effects: a step may re-run after a crash, so writes need idempotency keys. Tools: LangGraph checkpointers, Step Functions, Temporal, Lambda durable functions."
+    },
+    {
+     "id": "Q36",
+     "title": "Evaluating agents",
+     "short_md": "Use deterministic checks where possible (final DB state, schema validity), LLM judges with rubrics for open-ended quality, human review samples, and run the suite in CI on every prompt/model/tool change. AgentCore Evaluations / LangSmith / Ragas / DeepEval can help.",
+     "body_md": "| Level | What to check |\n|---|---|\n| Tool level | right tool chosen, valid arguments |\n| Step / trajectory | sensible sequence, no loops, efficient path |\n| Outcome | task success (did the ticket get correctly updated?) |\n| Safety | refuses disallowed actions, resists injection test cases, respects approvals |\n| Efficiency | steps, tokens, cost, latency |\n\nUse deterministic checks where possible (final DB state, schema validity), LLM judges with rubrics for open-ended quality, human review samples, and run the suite in CI on every prompt/model/tool change. AgentCore Evaluations / LangSmith / Ragas / DeepEval can help."
+    },
+    {
+     "id": "Q37",
+     "title": "What should an agent trace contain?",
+     "short_md": "Per run: correlation/trace ID, user/tenant (pseudonymised), model + prompt version, each LLM call (tokens, latency), each tool call (name, redacted args, result size, latency, error class), policy decisions, approvals, final outcome, total cost. Store in OpenTelemetry-compatible backend; restrict access; set retention.",
+     "body_md": "Per run: correlation/trace ID, user/tenant (pseudonymised), model + prompt version, each LLM call (tokens, latency), each tool call (name, redacted args, result size, latency, error class), policy decisions, approvals, final outcome, total cost. Store in OpenTelemetry-compatible backend; restrict access; set retention."
+    },
+    {
+     "id": "Q38",
+     "title": "Cost control",
+     "short_md": "Budgets per run, model routing (small model for routing/extraction, large for reasoning), prompt caching for static system prompt + tools, limit tool output size, compaction, cap iterations, cache deterministic tool results.",
+     "body_md": "Budgets per run, model routing (small model for routing/extraction, large for reasoning), prompt caching for static system prompt + tools, limit tool output size, compaction, cap iterations, cache deterministic tool results."
+    },
+    {
+     "id": "Q39",
+     "title": "One general agent vs specialised agents — decision criteria",
+     "short_md": "Specialise when: different permission domains (Deposits vs Investments), different data/tool sets, different owners, separate evaluation/compliance needs, or too many tools for one context. Otherwise keep one agent — fewer moving parts.",
+     "body_md": "Specialise when: different permission domains (Deposits vs Investments), different data/tool sets, different owners, separate evaluation/compliance needs, or too many tools for one context. Otherwise keep one agent — fewer moving parts."
+    },
+    {
+     "id": "Q40",
+     "title": "Long-running agents and async UX",
+     "short_md": "If tasks take minutes: return `202 Accepted` + job ID, run the agent asynchronously (queue/worker, AgentCore async/long sessions, Step Functions), stream progress events, persist state, allow cancel, notify on completion.",
+     "body_md": "If tasks take minutes: return `202 Accepted` + job ID, run the agent asynchronously (queue/worker, AgentCore async/long sessions, Step Functions), stream progress events, persist state, allow cancel, notify on completion."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 8,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q41",
+     "title": "The model called a sensitive tool without approval. How do you make that impossible?",
+     "short_md": "Put the gate **outside the model**: the tool executor rejects any call to a sensitive tool unless a stored approval record exists for that exact `action_id` + args hash, approved by an authorised identity. Log the attempt, add an eval case, and review why the model tried (prompt/tool description).",
+     "body_md": "Put the gate **outside the model**: the tool executor rejects any call to a sensitive tool unless a stored approval record exists for that exact `action_id` + args hash, approved by an authorised identity. Log the attempt, add an eval case, and review why the model tried (prompt/tool description)."
+    },
+    {
+     "id": "Q42",
+     "title": "The agent keeps searching with slightly different queries",
+     "short_md": "Detect repeated similar calls; cap per-tool attempts; improve tool feedback (\"0 results; try filter X\"); give an explicit exit (\"if 2 searches return nothing, ask the user or say not found\"); add a trajectory test.",
+     "body_md": "Detect repeated similar calls; cap per-tool attempts; improve tool feedback (\"0 results; try filter X\"); give an explicit exit (\"if 2 searches return nothing, ask the user or say not found\"); add a trajectory test."
+    },
+    {
+     "id": "Q43",
+     "title": "Build an agent pipeline handling 100–300 document requests per minute",
+     "short_md": "Client ─► API (auth, validation, quota) ─► 202 + job_id │ put file in S3, job row in DynamoDB ▼ SQS queue ─► Step Functions / workers (bounded concurrency to Textract & LLM) │            ├─ OCR (async Textract jobs, SNS completion) │            ├─ LLM extraction/agent reasoning (rate-limited, retries w/ backoff) │            └─ validation + human review queue for low confidence ▼ results in S3/DynamoDB ─► progress events (SSE/WebSocket) ─► client failures ─► DLQ + alarms",
+     "body_md": "```\n Client ─► API (auth, validation, quota) ─► 202 + job_id\n              │ put file in S3, job row in DynamoDB\n              ▼\n           SQS queue ─► Step Functions / workers (bounded concurrency to Textract & LLM)\n              │            ├─ OCR (async Textract jobs, SNS completion)\n              │            ├─ LLM extraction/agent reasoning (rate-limited, retries w/ backoff)\n              │            └─ validation + human review queue for low confidence\n              ▼\n           results in S3/DynamoDB ─► progress events (SSE/WebSocket) ─► client\n           failures ─► DLQ + alarms\n```\nNever keep the HTTP request open for minutes; bound concurrency to downstream quotas; idempotent job processing."
+    },
+    {
+     "id": "Q44",
+     "title": "Recover an agent after a crash mid-way through a multi-step action",
+     "short_md": "Load the last checkpoint → for each step after it, check external state using operation IDs (did the Jira comment get posted?) → skip completed side effects → re-validate permissions → continue, or ask for fresh approval if the context changed.",
+     "body_md": "Load the last checkpoint → for each step after it, check external state using operation IDs (did the Jira comment get posted?) → skip completed side effects → re-validate permissions → continue, or ask for fresh approval if the context changed."
+    },
+    {
+     "id": "Q45",
+     "title": "A web page the agent browsed told it to email internal documents. What protections should have stopped it?",
+     "short_md": "Email tool limited to internal domains + approval for external sends; agent session had no access to unrelated documents (least privilege); output filter blocked unexpected outbound URLs; untrusted web content was labelled as data; the attempt was logged and alerted. Add this as a red-team regression test.",
+     "body_md": "Email tool limited to internal domains + approval for external sends; agent session had no access to unrelated documents (least privilege); output filter blocked unexpected outbound URLs; untrusted web content was labelled as data; the attempt was logged and alerted. Add this as a red-team regression test."
+    },
+    {
+     "id": "Q46",
+     "title": "How do you explain to stakeholders why the agent shouldn't be fully autonomous?",
+     "short_md": "Quantify: error rate on eval set, impact of a wrong action, reversibility. Propose graduated autonomy: read-only → draft for human → auto-execute low-risk actions with audit → expand based on measured accuracy.",
+     "body_md": "Quantify: error rate on eval set, impact of a wrong action, reversibility. Propose graduated autonomy: read-only → draft for human → auto-execute low-risk actions with audit → expand based on measured accuracy."
+    }
+   ]
+  },
+  {
+   "id": "agent-frameworks-landscape",
+   "num": 9,
+   "title": "Agent frameworks landscape",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q47",
+     "title": "Which agent frameworks should you know, and how do they differ?",
+     "short_md": "They all wrap the same loop (model → tool calls → observe → repeat). They differ in **how much control you get over the flow**, **state/durability**, **multi-agent style**, and **where they deploy best**.",
+     "body_md": "**Short answer:** They all wrap the same loop (model → tool calls → observe → repeat). They differ in **how much control you get over the flow**, **state/durability**, **multi-agent style**, and **where they deploy best**.\n\n| Framework | Style | Strengths | Watch out |\n|---|---|---|---|\n| **LangGraph** (07) | explicit graph of nodes/edges with typed state | full control, checkpoints, `interrupt` HITL, durable, any model | more code; you design the flow |\n| **LangChain `create_agent`** (06) | prebuilt agent loop + middleware (built on LangGraph) | fast start, middleware hooks, huge integration library | drop to LangGraph for custom flows |\n| **Strands Agents** (AWS, open source) | **model-driven**: give a model + tools + prompt, the model plans the loop | very little code, Bedrock-first but multi-provider, MCP tools, multi-agent (agents-as-tools, Swarm, Graph), first-class AgentCore deploy | less explicit control of each step than a hand-built graph |\n| **CrewAI** | role-based \"crew\" of agents with tasks | quick multi-agent prototypes | harder to make deterministic |\n| **Microsoft Agent Framework** (direct successor to AutoGen + Semantic Kernel, same teams) | agents + graph/functional **workflows**; opinionated \"Harness Agent\" for long multi-step tasks | .NET and Python (Go in public preview); many model providers (Foundry, Azure OpenAI, OpenAI, Anthropic, Ollama…); MCP tools, middleware, telemetry | newer; migration guides exist from SK/AutoGen |\n| **OpenAI Agents SDK** | lightweight agents, handoffs, guardrails | simple handoff model, tracing | best with OpenAI models |\n| **Google ADK** | code-first agents, multi-agent hierarchies | Gemini/Vertex integration | — |\n| **Amazon Bedrock Agents** | fully managed, configured (not coded) agent | no infra, action groups + knowledge bases | less flexible; AgentCore is the code-first path |\n\n**Key point for AgentCore:** AgentCore Runtime is **framework-agnostic** — LangGraph, Strands, CrewAI, etc. all run there as a container that follows the service contract (08 Q10). The framework decides *how the agent thinks*; AgentCore decides *where/how securely it runs*."
+    },
+    {
+     "id": "Q48",
+     "title": "What does a Strands agent look like?",
+     "short_md": "from strands import Agent, tool from strands.models import BedrockModel",
+     "body_md": "```python\nfrom strands import Agent, tool\nfrom strands.models import BedrockModel\n\n@tool\ndef get_ticket(ticket_id: str) -> dict:\n    \"\"\"Fetch a support ticket by its ID (e.g. 'INC-1234').\"\"\"   # docstring = tool description\n    return jira.get(ticket_id)\n\nmodel = BedrockModel(model_id=MODEL_ID, temperature=0.2, max_tokens=2000)\nagent = Agent(model=model, tools=[get_ticket],\n              system_prompt=\"You triage support tickets. Never change ticket status.\")\nresult = agent(\"Summarise INC-1234 and suggest the owning team.\")\n```\nMulti-agent options: **agents as tools** (an orchestrator agent calls specialist agents like tools), **Swarm** (agents hand off to each other), **Graph** (`GraphBuilder` with explicit nodes/edges — closer to LangGraph).\n\n**Compare with LangGraph:** in Strands, the model drives the loop and you add tools; in LangGraph, you draw the loop and the model fills in the decisions. Use Strands for tool-using assistants where the model's planning is enough; LangGraph when you need exact control (approval gates, retries per node, resumable long workflows)."
+    },
+    {
+     "id": "Q49",
+     "title": "How do you choose a framework in a design discussion?",
+     "short_md": "Ask: (1) Do we need explicit, auditable control flow and durable HITL? → LangGraph. (2) Mostly \"LLM + tools\" with minimal code on AWS? → Strands or `create_agent`. (3) Is the team/stack already on one ecosystem? (4) Model portability needs? (5) Observability (OpenTelemetry support) and test tooling? (6) Maturity and breaking-change rate. **Keep business logic and tools framework-independent** (plain functions/MCP servers), so switching frameworks is a contained change.",
+     "body_md": "Ask: (1) Do we need explicit, auditable control flow and durable HITL? → LangGraph. (2) Mostly \"LLM + tools\" with minimal code on AWS? → Strands or `create_agent`. (3) Is the team/stack already on one ecosystem? (4) Model portability needs? (5) Observability (OpenTelemetry support) and test tooling? (6) Maturity and breaking-change rate. **Keep business logic and tools framework-independent** (plain functions/MCP servers), so switching frameworks is a contained change."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 10,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| Frameworks | LangGraph = explicit graph; Strands = model-driven loop; AgentCore runs any of them |\n| Agent | LLM in a loop choosing tools until goal/limit |\n| Autonomy | least autonomy that works; workflows first |\n| ReAct | reason → act → observe, repeat |\n| Tool call | model *requests*; code validates, authorises, executes |\n| Tool design | clear descriptions, few high-level tools, concise outputs, helpful errors |\n| HITL | durable approval bound to exact action + approver identity |\n| Idempotency | operation IDs for every write |\n| Loops | max steps, budgets, repetition detection, graceful exit |\n| Memory | short-term (thread) vs long-term (namespaced, ACL'd); not source of truth |\n| Context engineering | select, compress, isolate, externalise |\n| MCP | agent ↔ tools/data; tools/resources/prompts; stdio or Streamable HTTP; stateless since 2026-07-28 |\n| A2A | agent ↔ agent; Agent Card, tasks, artifacts |\n| Skills | packaged instructions loaded on demand |\n| Security | policy outside the model; least privilege; untrusted inputs |\n| Eval | tool → trajectory → outcome → safety → cost |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- Anthropic, Building effective agents: https://www.anthropic.com/engineering/building-effective-agents\n- MCP specification: https://modelcontextprotocol.io/specification · changelog: https://modelcontextprotocol.io/specification/2026-07-28/changelog\n- A2A protocol: https://a2a-protocol.org/\n- Agent Skills: https://agentskills.io/\n- Strands Agents: https://strandsagents.com/\n- Microsoft Agent Framework overview: https://learn.microsoft.com/en-us/agent-framework/overview/\n- AWS agentic AI guidance: https://docs.aws.amazon.com/prescriptive-guidance/latest/agentic-ai-foundations/\n- OWASP Agentic AI threats: https://genai.owasp.org/",
+   "questions": []
+  }
+ ]
+}

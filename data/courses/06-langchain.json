@@ -1,0 +1,292 @@
+{
+ "slug": "06-langchain",
+ "num": 6,
+ "title": "LangChain",
+ "full_title": "LangChain: L2 → L3 Interview Preparation",
+ "group": "AI & Agents",
+ "accent": "#fb7185",
+ "updated": "24 October 2026 (LangChain **v1.x** — `create_agent` + middleware, built on LangGraph)",
+ "level": "components → agents → production",
+ "source": "docs/06_LangChain.md",
+ "question_count": 36,
+ "section_count": 8,
+ "sections": [
+  {
+   "id": "mental-model-the-langchain-ecosystem",
+   "num": 1,
+   "title": "Mental model: the LangChain ecosystem",
+   "intro_md": "LangChain is a **framework of standard interfaces + integrations** so you can swap models, vector stores and tools without rewriting your app, plus a ready-made **agent loop**.\n\n```\n ┌──────────────────────────────── Your application ─────────────────────────────────┐\n │                                                                                    │\n │  langchain (v1)            high-level: create_agent(), middleware, structured output│\n │      │ built on                                                                    │\n │  langgraph                 low-level runtime: state graph, checkpoints, interrupts, │\n │      │                     streaming, durable execution (see 07_LangGraph.md)      │\n │  langchain-core            base interfaces: Runnable, BaseChatModel, messages,      │\n │      │                     tools, retrievers, prompts, callbacks                   │\n │  integrations              langchain-aws (Bedrock), langchain-openai,               │\n │                            langchain-anthropic, langchain-postgres, -mcp-adapters…  │\n │  langchain-classic         legacy chains (RetrievalQA, LLMChain…) moved here in v1  │\n └────────────────────────────────────────────────────────────────────────────────────┘\n           │ traces                                         │ deploy\n           ▼                                                ▼\n       LangSmith (observability, evals, prompt hub)    LangSmith Deployment / AgentCore / your ECS\n```\n\n**What an agent built with `create_agent` looks like inside** (it compiles to a LangGraph graph):\n```\n          ┌───────────────── middleware hooks ─────────────────┐\n START ─► before_agent ─► before_model ─► [ MODEL ] ─► after_model ─┐\n                              ▲          (wrap_model_call)          │\n                              │                                    ▼\n                              │                    tool calls in response?\n                              │                    ├─ yes ─► [ TOOLS ] (wrap_tool_call) ─┐\n                              └────────────────────┼─────────────────────────────────────┘\n                                                   └─ no ──► after_agent ─► END\n```",
+   "questions": []
+  },
+  {
+   "id": "core-building-blocks",
+   "num": 2,
+   "title": "Core building blocks",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "LangChain vs LangGraph — what is each for?",
+     "short_md": "**LangChain** gives standard components (chat models, tools, retrievers, prompts) and a high-level, production-ready agent (`create_agent`) you configure with middleware. **LangGraph** is the lower-level orchestration runtime: you design the graph, state and control flow yourself, with persistence, interrupts and streaming. LangChain v1 agents **run on LangGraph**.",
+     "body_md": "**Short answer:** **LangChain** gives standard components (chat models, tools, retrievers, prompts) and a high-level, production-ready agent (`create_agent`) you configure with middleware. **LangGraph** is the lower-level orchestration runtime: you design the graph, state and control flow yourself, with persistence, interrupts and streaming. LangChain v1 agents **run on LangGraph**.\n\n**Rule of thumb:** standard tool-calling agent → `create_agent`. Custom branching, parallel steps, multi-agent graphs, complex approvals → LangGraph, using LangChain components inside nodes."
+    },
+    {
+     "id": "Q02",
+     "title": "Chat models and messages",
+     "short_md": "A chat model wrapper exposes any provider through one interface (`invoke`, `stream`, `batch`, async versions). Input/output are **messages** with roles.",
+     "body_md": "**Short answer:** A chat model wrapper exposes any provider through one interface (`invoke`, `stream`, `batch`, async versions). Input/output are **messages** with roles.\n\n| Message | Role |\n|---|---|\n| `SystemMessage` | instructions |\n| `HumanMessage` | user input |\n| `AIMessage` | model output; may contain `tool_calls`; has `usage_metadata` |\n| `ToolMessage` | result of a tool call, linked by `tool_call_id` |\n\n```python\nfrom langchain.chat_models import init_chat_model\nfrom langchain.messages import SystemMessage, HumanMessage\n\nmodel = init_chat_model(\"anthropic.claude-sonnet-...\", model_provider=\"bedrock_converse\", temperature=0)\nresp = model.invoke([SystemMessage(\"Be concise.\"), HumanMessage(\"What is RAG?\")])\nprint(resp.content, resp.usage_metadata)        # {'input_tokens': 18, 'output_tokens': 42, ...}\nprint(resp.content_blocks)                      # v1: provider-agnostic blocks (text, reasoning, tool_call, image…)\n```\n`init_chat_model` lets you switch providers by string/config. v1 adds **standard content blocks** so reasoning, citations and tool calls look the same across providers."
+    },
+    {
+     "id": "Q03",
+     "title": "Prompt templates",
+     "short_md": "Templates parameterise prompts so they're reusable, testable and versionable. Use `ChatPromptTemplate` with placeholders and `MessagesPlaceholder` for history.",
+     "body_md": "**Short answer:** Templates parameterise prompts so they're reusable, testable and versionable. Use `ChatPromptTemplate` with placeholders and `MessagesPlaceholder` for history.\n\n```python\nfrom langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a support assistant for {product}. Use only the context.\\n<context>{context}</context>\"),\n    MessagesPlaceholder(\"history\"),\n    (\"human\", \"{question}\"),\n])\nmsgs = prompt.invoke({\"product\": \"Payments\", \"context\": ctx, \"history\": [], \"question\": q})\n```\n**Pitfall:** user/retrieved text inserted into the **system** role gains authority → keep untrusted text in clearly delimited data sections."
+    },
+    {
+     "id": "Q04",
+     "title": "Runnables and LCEL",
+     "short_md": "Almost everything in LangChain implements the **Runnable** interface: `invoke`, `batch`, `stream`, `ainvoke`, `astream`… **LCEL** (LangChain Expression Language) composes runnables with `|`, giving streaming, batching and tracing for free.",
+     "body_md": "**Short answer:** Almost everything in LangChain implements the **Runnable** interface: `invoke`, `batch`, `stream`, `ainvoke`, `astream`… **LCEL** (LangChain Expression Language) composes runnables with `|`, giving streaming, batching and tracing for free.\n\n```python\nfrom langchain_core.output_parsers import StrOutputParser\nfrom langchain_core.runnables import RunnableParallel, RunnablePassthrough\n\nchain = prompt | model | StrOutputParser()           # prompt → model → string\nchain.invoke({...}); chain.batch([{...}, {...}], config={\"max_concurrency\": 5})\n\nrag = (RunnableParallel(context=retriever | format_docs, question=RunnablePassthrough())\n       | rag_prompt | model | StrOutputParser())\n```\nUseful runnables: `RunnableLambda` (wrap a function), `RunnableParallel` (fan-out), `RunnableBranch` (if/else), `.with_retry()`, `.with_fallbacks([...])`, `.with_config(run_name=...)`.\n\n**When to use LCEL vs agents:** LCEL for **fixed pipelines** (preprocess → prompt → model → parse). Agents/LangGraph when the model decides the path."
+    },
+    {
+     "id": "Q05",
+     "title": "Tools and the `@tool` decorator",
+     "short_md": "A tool = function + name + description + argument schema. `@tool` derives the schema from type hints and the docstring. The model sees name/description/schema and decides when to call it.",
+     "body_md": "**Short answer:** A tool = function + name + description + argument schema. `@tool` derives the schema from type hints and the docstring. The model sees name/description/schema and decides when to call it.\n\n```python\nfrom langchain.tools import tool, ToolRuntime\nfrom pydantic import BaseModel, Field\n\nclass TicketArgs(BaseModel):\n    key: str = Field(pattern=r\"^[A-Z]+-\\d+$\", description=\"Jira key like OPS-123\")\n\n@tool(args_schema=TicketArgs)\ndef get_ticket(key: str, runtime: ToolRuntime) -> dict:\n    \"\"\"Fetch a Jira ticket's status and assignee. Use when the user mentions a ticket key.\"\"\"\n    user = runtime.context.user_id               # trusted context injected by your app, not by the model\n    authorize(user, \"read\", key)\n    return jira.get(key, fields=[\"status\", \"assignee\"])\n```\n`ToolRuntime` gives the tool access to state, runtime context, store and stream writer **without exposing these as model-visible arguments**.\n\n**Pitfall:** the docstring is part of the prompt — vague descriptions → wrong tool choice."
+    },
+    {
+     "id": "Q06",
+     "title": "Binding tools to a model (without an agent)",
+     "short_md": "model_with_tools = model.bind_tools([get_ticket]) ai = model_with_tools.invoke(\"What's the status of OPS-12?\") ai.tool_calls     # [{'name': 'get_ticket', 'args': {'key': 'OPS-12'}, 'id': 'call_1'}]",
+     "body_md": "```python\nmodel_with_tools = model.bind_tools([get_ticket])\nai = model_with_tools.invoke(\"What's the status of OPS-12?\")\nai.tool_calls     # [{'name': 'get_ticket', 'args': {'key': 'OPS-12'}, 'id': 'call_1'}]\n```\nYou must run the tool and send a `ToolMessage` back yourself — that loop is exactly what `create_agent` automates."
+    },
+    {
+     "id": "Q07",
+     "title": "Structured output with a plain model",
+     "short_md": "from pydantic import BaseModel class Invoice(BaseModel): invoice_no: str total: float currency: str",
+     "body_md": "```python\nfrom pydantic import BaseModel\nclass Invoice(BaseModel):\n    invoice_no: str\n    total: float\n    currency: str\n\nextractor = model.with_structured_output(Invoice)   # uses native JSON schema or tool calling\ninv = extractor.invoke(ocr_text)                    # -> Invoice instance\n```\n`include_raw=True` returns the raw message + parsing error for debugging."
+    },
+    {
+     "id": "Q08",
+     "title": "Document loaders and text splitters",
+     "short_md": "Loaders read sources (PDF, web, S3, Confluence) into `Document(page_content, metadata)`. Splitters chunk them for retrieval.",
+     "body_md": "**Short answer:** Loaders read sources (PDF, web, S3, Confluence) into `Document(page_content, metadata)`. Splitters chunk them for retrieval.\n\n```python\nfrom langchain_text_splitters import RecursiveCharacterTextSplitter\nsplitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150,\n                                          separators=[\"\\n## \", \"\\n\\n\", \"\\n\", \" \"])\nchunks = splitter.split_documents(docs)   # metadata (source, page) copied to every chunk\n```\nAlso `MarkdownHeaderTextSplitter` (keeps header path in metadata), token-based splitters, code-aware splitters. Always keep `source`, `page`, `tenant_id`, ACL in metadata."
+    },
+    {
+     "id": "Q09",
+     "title": "Output parsers",
+     "short_md": "`StrOutputParser`, `JsonOutputParser`, `PydanticOutputParser`. Today, prefer **native structured output** (`with_structured_output` / `response_format`) over parsing free text. Parsing success ≠ correctness — still validate business rules.",
+     "body_md": "`StrOutputParser`, `JsonOutputParser`, `PydanticOutputParser`. Today, prefer **native structured output** (`with_structured_output` / `response_format`) over parsing free text. Parsing success ≠ correctness — still validate business rules."
+    }
+   ]
+  },
+  {
+   "id": "agents-create-agent-and-middleware",
+   "num": 3,
+   "title": "Agents: `create_agent` and middleware",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q10",
+     "title": "How does `create_agent` work?",
+     "short_md": "It builds a ReAct-style tool-calling agent as a LangGraph graph: call model → if it requested tools, execute them → feed results back → repeat until the model gives a final answer (or a limit is hit). You configure model, tools, system prompt, structured output, middleware, checkpointer and context schema.",
+     "body_md": "**Short answer:** It builds a ReAct-style tool-calling agent as a LangGraph graph: call model → if it requested tools, execute them → feed results back → repeat until the model gives a final answer (or a limit is hit). You configure model, tools, system prompt, structured output, middleware, checkpointer and context schema.\n\n```python\nfrom dataclasses import dataclass\nfrom langchain.agents import create_agent\nfrom langgraph.checkpoint.memory import InMemorySaver\n\n@dataclass\nclass Ctx:\n    user_id: str\n    tenant_id: str\n\nagent = create_agent(\n    model=\"anthropic:claude-sonnet-...\",     # or a model instance\n    tools=[get_ticket, search_runbooks],\n    system_prompt=\"You are an on-call assistant. Cite runbook IDs.\",\n    context_schema=Ctx,                       # trusted per-run context\n    checkpointer=InMemorySaver(),             # use Postgres/Redis saver in production\n)\n\nresult = agent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"OPS-12 is failing, what do I do?\"}]},\n    config={\"configurable\": {\"thread_id\": \"conv-42\"}},   # conversation memory key\n    context=Ctx(user_id=\"u1\", tenant_id=\"t1\"),\n)\nprint(result[\"messages\"][-1].content)\n```\n(`create_react_agent` from `langgraph.prebuilt` is the older equivalent; v1 recommends `langchain.agents.create_agent`.)"
+    },
+    {
+     "id": "Q11",
+     "title": "What is middleware and why does it matter?",
+     "short_md": "Middleware hooks into the agent loop to customise behaviour **without forking the agent**: dynamic prompts, summarisation, approvals, PII redaction, retries, limits, model fallbacks, tool filtering. It's how you make a generic agent production-grade.",
+     "body_md": "**Short answer:** Middleware hooks into the agent loop to customise behaviour **without forking the agent**: dynamic prompts, summarisation, approvals, PII redaction, retries, limits, model fallbacks, tool filtering. It's how you make a generic agent production-grade.\n\n| Hook | Runs | Typical use |\n|---|---|---|\n| `before_agent` / `after_agent` | once per invocation | load user profile, final audit |\n| `before_model` / `after_model` | around each model call (node-style) | trim/summarise messages, check output |\n| `wrap_model_call` | wraps the model call | retry, fallback model, dynamic tool selection, change prompt |\n| `wrap_tool_call` | wraps each tool call | authorisation, retries, error handling, logging |\n\n```python\nfrom langchain.agents.middleware import wrap_tool_call, before_model\n\n@wrap_tool_call\ndef enforce_permissions(request, handler):\n    user = request.runtime.context.user_id\n    if request.tool_call[\"name\"] in WRITE_TOOLS and not is_editor(user):\n        return ToolMessage(content=\"Permission denied\", tool_call_id=request.tool_call[\"id\"])\n    return handler(request)                  # run the tool\n\n@before_model\ndef trim_history(state, runtime):\n    if len(state[\"messages\"]) > 40:\n        ...                                  # return a state update to drop/condense old messages\n    return None\n\nagent = create_agent(model, tools, middleware=[enforce_permissions, trim_history])\n```"
+    },
+    {
+     "id": "Q12",
+     "title": "Built-in middleware you should know",
+     "short_md": "| Middleware | Purpose |\n|---|---|\n| `SummarizationMiddleware` | summarise old messages near a token threshold |\n| `HumanInTheLoopMiddleware` | pause before chosen tool calls for approve / edit / reject |\n| `PIIMiddleware` | detect & redact/mask/block emails, cards, custom patterns (input, output, tool results) |\n| `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` | cap model/tool calls per run or thread (runaway protection) |\n| `ModelFallbackMiddleware` | switch to a backup model on errors |\n| Retry middleware (model/tool) | retry transient failures with backoff |\n| LLM tool selector | pre-select relevant tools when you have many |\n| Context editing | clear old tool outputs from context |\n| Todo list / planning, filesystem (Deep Agents) | long-horizon task planning |",
+     "body_md": "| Middleware | Purpose |\n|---|---|\n| `SummarizationMiddleware` | summarise old messages near a token threshold |\n| `HumanInTheLoopMiddleware` | pause before chosen tool calls for approve / edit / reject |\n| `PIIMiddleware` | detect & redact/mask/block emails, cards, custom patterns (input, output, tool results) |\n| `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` | cap model/tool calls per run or thread (runaway protection) |\n| `ModelFallbackMiddleware` | switch to a backup model on errors |\n| Retry middleware (model/tool) | retry transient failures with backoff |\n| LLM tool selector | pre-select relevant tools when you have many |\n| Context editing | clear old tool outputs from context |\n| Todo list / planning, filesystem (Deep Agents) | long-horizon task planning |"
+    },
+    {
+     "id": "Q13",
+     "title": "Human-in-the-loop with `create_agent`",
+     "short_md": "from langchain.agents.middleware import HumanInTheLoopMiddleware from langgraph.types import Command",
+     "body_md": "```python\nfrom langchain.agents.middleware import HumanInTheLoopMiddleware\nfrom langgraph.types import Command\n\nagent = create_agent(\n    model, tools=[read_data, execute_sql],\n    middleware=[HumanInTheLoopMiddleware(interrupt_on={\n        \"execute_sql\": {\"allowed_decisions\": [\"approve\", \"reject\"]},   # pause before running\n        \"read_data\": False,                                             # safe, no approval\n    })],\n    checkpointer=postgres_saver,               # REQUIRED: pause state must persist\n)\ncfg = {\"configurable\": {\"thread_id\": \"t-1\"}}\nout = agent.invoke({\"messages\": [(\"user\", \"Delete records older than 30 days\")]}, cfg, version=\"v2\")\nout.interrupts      # shows proposed SQL for the reviewer\n\nagent.invoke(Command(resume={\"decisions\": [{\"type\": \"approve\"}]}), cfg, version=\"v2\")\n```\n**Production notes:** bind the decision to an authenticated reviewer in **your API**, store an audit record, and make the tool itself idempotent — the framework pauses/resumes, it doesn't know who's allowed to approve."
+    },
+    {
+     "id": "Q14",
+     "title": "Structured output from an agent (`response_format`)",
+     "short_md": "Pass a schema; result appears in `result[\"structured_response\"]`.\n- **`ProviderStrategy`** — uses provider-native schema enforcement (most reliable when supported).\n- **`ToolStrategy`** — implements structure as a special tool call (works with any tool-calling model; can retry on validation error).\n- Passing the schema type directly → LangChain picks the best strategy automatically.",
+     "body_md": "**Short answer:** Pass a schema; result appears in `result[\"structured_response\"]`.\n- **`ProviderStrategy`** — uses provider-native schema enforcement (most reliable when supported).\n- **`ToolStrategy`** — implements structure as a special tool call (works with any tool-calling model; can retry on validation error).\n- Passing the schema type directly → LangChain picks the best strategy automatically.\n\n```python\nfrom langchain.agents.structured_output import ToolStrategy\nagent = create_agent(model, tools=[lookup_customer], response_format=ToolStrategy(TriageResult))\nres = agent.invoke({\"messages\": [(\"user\", email_text)]})\nres[\"structured_response\"]     # TriageResult(...)\n```"
+    },
+    {
+     "id": "Q15",
+     "title": "Short-term memory in agents",
+     "short_md": "Short-term memory = the `messages` (and other state) of a **thread**, persisted by the checkpointer and keyed by `thread_id`. Long histories need trimming/summarisation middleware. Custom state fields: extend `AgentState` via `state_schema` or middleware state.",
+     "body_md": "Short-term memory = the `messages` (and other state) of a **thread**, persisted by the checkpointer and keyed by `thread_id`. Long histories need trimming/summarisation middleware. Custom state fields: extend `AgentState` via `state_schema` or middleware state."
+    },
+    {
+     "id": "Q16",
+     "title": "Long-term memory",
+     "short_md": "Use a LangGraph **store** (`InMemoryStore`, `PostgresStore`, with optional vector search) passed as `store=` to `create_agent`; tools/middleware read/write namespaced items like `(\"users\", user_id, \"prefs\")`. Namespace by verified identity.",
+     "body_md": "Use a LangGraph **store** (`InMemoryStore`, `PostgresStore`, with optional vector search) passed as `store=` to `create_agent`; tools/middleware read/write namespaced items like `(\"users\", user_id, \"prefs\")`. Namespace by verified identity."
+    },
+    {
+     "id": "Q17",
+     "title": "Streaming from agents",
+     "short_md": "for chunk in agent.stream(inputs, cfg, stream_mode=\"updates\"):   # step-by-step state updates print(chunk) for token, meta in agent.stream(inputs, cfg, stream_mode=\"messages\"):  # LLM tokens print(token.content, end=\"\")",
+     "body_md": "```python\nfor chunk in agent.stream(inputs, cfg, stream_mode=\"updates\"):   # step-by-step state updates\n    print(chunk)\nfor token, meta in agent.stream(inputs, cfg, stream_mode=\"messages\"):  # LLM tokens\n    print(token.content, end=\"\")\n# also: stream_mode=\"custom\" (tool progress via runtime.stream_writer), \"values\", \"debug\"\n```\nMap these to stable UI events (`token`, `tool_start`, `tool_result`, `approval_needed`, `done`, `error`) rather than exposing internal state."
+    }
+   ]
+  },
+  {
+   "id": "rag-with-langchain",
+   "num": 4,
+   "title": "RAG with LangChain",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q18",
+     "title": "Vector store vs retriever",
+     "short_md": "A **vector store** stores embeddings and does similarity search. A **retriever** is any runnable that takes a query and returns documents — it can wrap a vector store, BM25, hybrid search, a reranker, an API, or Bedrock Knowledge Bases.",
+     "body_md": "**Short answer:** A **vector store** stores embeddings and does similarity search. A **retriever** is any runnable that takes a query and returns documents — it can wrap a vector store, BM25, hybrid search, a reranker, an API, or Bedrock Knowledge Bases.\n\n```python\nfrom langchain_aws import BedrockEmbeddings\nfrom langchain_postgres import PGVector\n\nemb = BedrockEmbeddings(model_id=\"amazon.titan-embed-text-v2:0\")\nstore = PGVector(embeddings=emb, collection_name=\"docs\", connection=PG_URL)\nstore.add_documents(chunks)\n\nretriever = store.as_retriever(search_type=\"mmr\",\n                               search_kwargs={\"k\": 6, \"fetch_k\": 40, \"filter\": {\"tenant_id\": tid}})\ndocs = retriever.invoke(\"How do I rotate the DB password?\")\n```"
+    },
+    {
+     "id": "Q19",
+     "title": "Two-step RAG chain vs agentic RAG",
+     "short_md": "Two-step RAG (deterministic)                Agentic RAG question ─► retrieve ─► prompt ─► LLM       question ─► agent ──(decides)──► search tool (0..n times) • 1 retrieval, predictable latency/cost              • can reformulate, use several sources • best for simple Q&A over a KB                      • more flexible, more tokens, less predictable",
+     "body_md": "```\n Two-step RAG (deterministic)                Agentic RAG\n question ─► retrieve ─► prompt ─► LLM       question ─► agent ──(decides)──► search tool (0..n times)\n  • 1 retrieval, predictable latency/cost              • can reformulate, use several sources\n  • best for simple Q&A over a KB                      • more flexible, more tokens, less predictable\n```\n```python\nfrom langchain.tools import tool\n@tool\ndef search_policies(query: str) -> str:\n    \"\"\"Search HR policy documents. Returns passages with doc ids.\"\"\"\n    return format_docs(retriever.invoke(query))\nagent = create_agent(model, tools=[search_policies], system_prompt=\"Answer from policies; cite ids.\")\n```"
+    },
+    {
+     "id": "Q20",
+     "title": "Document-selective RAG (user picks specific documents)",
+     "short_md": "1. API receives `doc_ids` from the user; **authorise** each against user/tenant on the server. 2. Pass allowed IDs into the retriever **filter** (pre-retrieval), not into the prompt text. 3. Retrieve → rerank → generate with citations (`doc_id`, page). 4. If evidence is weak, answer \"not found in selected documents\".",
+     "body_md": "1. API receives `doc_ids` from the user; **authorise** each against user/tenant on the server.\n2. Pass allowed IDs into the retriever **filter** (pre-retrieval), not into the prompt text.\n3. Retrieve → rerank → generate with citations (`doc_id`, page).\n4. If evidence is weak, answer \"not found in selected documents\"."
+    },
+    {
+     "id": "Q21",
+     "title": "Choosing a vector store integration",
+     "short_md": "Decide on: metadata filtering, hybrid search, scale, ops ownership, tenancy isolation, backup, cost.",
+     "body_md": "| Store | When |\n|---|---|\n| FAISS / Chroma (local) | prototypes, tests, small single-node apps |\n| **pgvector** (Aurora/RDS Postgres) | you already run Postgres; SQL filters + vectors together |\n| **OpenSearch** | hybrid keyword + vector, large scale, filtering |\n| **Amazon S3 Vectors** | very large, cost-sensitive, latency-tolerant corpora |\n| Bedrock Knowledge Bases (`AmazonKnowledgeBasesRetriever`) | managed ingestion/chunking/embedding |\n| Pinecone/Milvus/Weaviate | managed/specialised vector DBs |\n\nDecide on: metadata filtering, hybrid search, scale, ops ownership, tenancy isolation, backup, cost."
+    },
+    {
+     "id": "Q22",
+     "title": "Rerankers and hybrid retrieval in LangChain",
+     "short_md": "`EnsembleRetriever` (combine BM25 + vector with weights / RRF), `ContextualCompressionRetriever` with a reranker (Cohere/Bedrock rerank, cross-encoder) to keep only top passages, `MultiQueryRetriever` for query variants, `ParentDocumentRetriever` for small-to-big retrieval.",
+     "body_md": "`EnsembleRetriever` (combine BM25 + vector with weights / RRF), `ContextualCompressionRetriever` with a reranker (Cohere/Bedrock rerank, cross-encoder) to keep only top passages, `MultiQueryRetriever` for query variants, `ParentDocumentRetriever` for small-to-big retrieval."
+    },
+    {
+     "id": "Q23",
+     "title": "Stale content after a document update",
+     "short_md": "Trace: did the change trigger re-ingestion? Did old chunks get **deleted** (stable IDs per chunk, upsert/delete by source ID)? Any cache with long TTL? Is the retriever pointed at the new index? Use a **record manager / indexing API** (dedupe + cleanup by source) and set a freshness SLO.",
+     "body_md": "Trace: did the change trigger re-ingestion? Did old chunks get **deleted** (stable IDs per chunk, upsert/delete by source ID)? Any cache with long TTL? Is the retriever pointed at the new index? Use a **record manager / indexing API** (dedupe + cleanup by source) and set a freshness SLO."
+    }
+   ]
+  },
+  {
+   "id": "production-engineering",
+   "num": 5,
+   "title": "Production engineering",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q24",
+     "title": "Retries, fallbacks and timeouts",
+     "short_md": "robust = (model.with_retry(stop_after_attempt=3, wait_exponential_jitter=True) .with_fallbacks([backup_model]))",
+     "body_md": "```python\nrobust = (model.with_retry(stop_after_attempt=3, wait_exponential_jitter=True)\n               .with_fallbacks([backup_model]))\n```\nFallback only for availability errors (throttling, 5xx), only to **approved** providers (data residency!), and verify the fallback supports the same features (tool calling, structured output, context length)."
+    },
+    {
+     "id": "Q25",
+     "title": "Risks of switching model providers silently",
+     "short_md": "Differences in tool-calling format, structured output support, system prompt handling, streaming event shapes, context window, tokenisation/cost, refusal behaviour. Mitigate with a **capability test suite** + eval set run per provider, and pinned model versions.",
+     "body_md": "Differences in tool-calling format, structured output support, system prompt handling, streaming event shapes, context window, tokenisation/cost, refusal behaviour. Mitigate with a **capability test suite** + eval set run per provider, and pinned model versions."
+    },
+    {
+     "id": "Q26",
+     "title": "Batching and concurrency",
+     "short_md": "`chain.batch(inputs, config={\"max_concurrency\": 10})` / `abatch`. Bound concurrency to provider quotas; keep input IDs to match results; handle partial failures (`return_exceptions=True`). For big offline jobs, use provider **batch inference** APIs (cheaper).",
+     "body_md": "`chain.batch(inputs, config={\"max_concurrency\": 10})` / `abatch`. Bound concurrency to provider quotas; keep input IDs to match results; handle partial failures (`return_exceptions=True`). For big offline jobs, use provider **batch inference** APIs (cheaper)."
+    },
+    {
+     "id": "Q27",
+     "title": "Tool-output (indirect) prompt injection",
+     "short_md": "Tool results may contain malicious instructions. Mitigations: authorise every action in code (`wrap_tool_call`), allowlist tools per user, HITL for sensitive tools, truncate/strip active content from results, label provenance, PII middleware, and red-team tests.",
+     "body_md": "Tool results may contain malicious instructions. Mitigations: authorise every action in code (`wrap_tool_call`), allowlist tools per user, HITL for sensitive tools, truncate/strip active content from results, label provenance, PII middleware, and red-team tests."
+    },
+    {
+     "id": "Q28",
+     "title": "Observability with LangSmith (or OpenTelemetry)",
+     "short_md": "Set `LANGSMITH_TRACING=true` + API key → every run, model call, tool call, token count, latency and error is traced as a tree. Use it for debugging, datasets and evaluations (offline + online). Configure **redaction** (hide inputs/outputs or mask PII) and retention; OTel export lets you feed enterprise tooling.",
+     "body_md": "Set `LANGSMITH_TRACING=true` + API key → every run, model call, tool call, token count, latency and error is traced as a tree. Use it for debugging, datasets and evaluations (offline + online). Configure **redaction** (hide inputs/outputs or mask PII) and retention; OTel export lets you feed enterprise tooling."
+    },
+    {
+     "id": "Q29",
+     "title": "Versioning and testing chains/agents",
+     "short_md": "Treat as versioned config: model ID, prompt, tool schemas, splitter settings, embedding model, retriever params. Tests: unit tests for tools (pure functions), fake chat models (`GenericFakeChatModel`) for deterministic agent-flow tests, eval datasets for quality, regression gates in CI.",
+     "body_md": "Treat as versioned config: model ID, prompt, tool schemas, splitter settings, embedding model, retriever params. Tests: unit tests for tools (pure functions), fake chat models (`GenericFakeChatModel`) for deterministic agent-flow tests, eval datasets for quality, regression gates in CI."
+    },
+    {
+     "id": "Q30",
+     "title": "Using MCP tools in LangChain",
+     "short_md": "from langchain_mcp_adapters.client import MultiServerMCPClient client = MultiServerMCPClient({ \"jira\": {\"transport\": \"streamable_http\", \"url\": \"https://mcp.internal/jira\", \"headers\": {...}}, \"git\":  {\"transport\": \"stdio\", \"command\": \"uvx\", \"args\": [\"mcp-server-git\"]}, }) tools = await client.get_tools()             # MCP tools → LangChain tools agent = create_agent(model, tools)",
+     "body_md": "```python\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\nclient = MultiServerMCPClient({\n    \"jira\": {\"transport\": \"streamable_http\", \"url\": \"https://mcp.internal/jira\", \"headers\": {...}},\n    \"git\":  {\"transport\": \"stdio\", \"command\": \"uvx\", \"args\": [\"mcp-server-git\"]},\n})\ntools = await client.get_tools()             # MCP tools → LangChain tools\nagent = create_agent(model, tools)\n```"
+    },
+    {
+     "id": "Q31",
+     "title": "Custom chat model wrapper — what must it handle?",
+     "short_md": "Message role conversion, tool-call mapping both ways, streaming + async, `usage_metadata`, stop reasons, error mapping (rate limits → retryable), callbacks/tracing, and capability flags (tool calling, structured output). Test with the standard integration test suite.",
+     "body_md": "Message role conversion, tool-call mapping both ways, streaming + async, `usage_metadata`, stop reasons, error mapping (rate limits → retryable), callbacks/tracing, and capability flags (tool calling, structured output). Test with the standard integration test suite."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 6,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q32",
+     "title": "`with_structured_output()` returns `None` or invalid fields",
+     "short_md": "Use `include_raw=True` to see the raw response and parsing error. Check: provider/model supports the chosen method; schema is supported (some providers reject certain JSON-schema features); field descriptions are clear; output wasn't truncated (`max_tokens`). Try `method=\"json_schema\"` vs function calling; add retries on validation errors.",
+     "body_md": "Use `include_raw=True` to see the raw response and parsing error. Check: provider/model supports the chosen method; schema is supported (some providers reject certain JSON-schema features); field descriptions are clear; output wasn't truncated (`max_tokens`). Try `method=\"json_schema\"` vs function calling; add retries on validation errors."
+    },
+    {
+     "id": "Q33",
+     "title": "The agent never calls your new tool",
+     "short_md": "Verify the tool is actually in the agent's tool list (MCP connection/auth succeeded?); test the tool directly; inspect the trace — is it in the model request? Improve name/description (\"Use this when…\"); check for too many similar tools; check middleware isn't filtering it; confirm the model supports tool calling.",
+     "body_md": "Verify the tool is actually in the agent's tool list (MCP connection/auth succeeded?); test the tool directly; inspect the trace — is it in the model request? Improve name/description (\"Use this when…\"); check for too many similar tools; check middleware isn't filtering it; confirm the model supports tool calling."
+    },
+    {
+     "id": "Q34",
+     "title": "Duplicate tool calls / duplicated side effects",
+     "short_md": "Causes: retries (middleware or client), graph resume replaying a node, model calling twice, client reconnect re-submitting. Fix: distinguish retries from new requests (idempotency key per operation), make write tools idempotent, inspect traces for which layer repeated.",
+     "body_md": "Causes: retries (middleware or client), graph resume replaying a node, model calling twice, client reconnect re-submitting. Fix: distinguish retries from new requests (idempotency key per operation), make write tools idempotent, inspect traces for which layer repeated."
+    },
+    {
+     "id": "Q35",
+     "title": "Agent cost exploded in production",
+     "short_md": "Check traces for: long message history (add summarisation), huge tool outputs (truncate), loops (add call limits), big system prompt not cached, expensive model used for trivial steps (route). Add per-run budgets.",
+     "body_md": "Check traces for: long message history (add summarisation), huge tool outputs (truncate), loops (add call limits), big system prompt not cached, expensive model used for trivial steps (route). Add per-run budgets."
+    },
+    {
+     "id": "Q36",
+     "title": "When do you move from `create_agent` to a custom LangGraph graph?",
+     "short_md": "When you need explicit multi-step control flow (fixed stages, branching, parallel fan-out), multiple agents with handoffs, custom state beyond messages, complex approval workflows, or deterministic steps mixed with LLM steps. Keep LangChain models/tools/retrievers inside the graph's nodes.",
+     "body_md": "When you need explicit multi-step control flow (fixed stages, branching, parallel fan-out), multiple agents with handoffs, custom state beyond messages, complex approval workflows, or deterministic steps mixed with LLM steps. Keep LangChain models/tools/retrievers inside the graph's nodes."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 7,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| LangChain v1 | components + `create_agent`; runs on LangGraph |\n| Messages | System / Human / AI (tool_calls, usage) / Tool |\n| `init_chat_model` | provider-agnostic model init |\n| Runnable/LCEL | `prompt | model | parser`; invoke/batch/stream |\n| `@tool` | schema from hints + docstring; docstring = prompt |\n| `ToolRuntime` | trusted context/state/store in tools, hidden from model |\n| `create_agent` | model ↔ tools loop + middleware + checkpointer |\n| Middleware | before/after model & agent; wrap model/tool calls |\n| HITL | `HumanInTheLoopMiddleware` + checkpointer + `Command(resume=...)` |\n| Structured output | `response_format`: ProviderStrategy / ToolStrategy |\n| Retriever | query → docs; wraps vector store / hybrid / KB |\n| Reliability | `.with_retry`, `.with_fallbacks`, call-limit middleware |\n| Legacy chains | `langchain-classic` |\n| Tracing | LangSmith / OTel with redaction |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://docs.langchain.com/oss/python/langchain/overview\n- Agents: https://docs.langchain.com/oss/python/langchain/agents\n- Middleware: https://docs.langchain.com/oss/python/langchain/middleware\n- Structured output: https://docs.langchain.com/oss/python/langchain/structured-output\n- Human-in-the-loop: https://docs.langchain.com/oss/python/langchain/human-in-the-loop\n- v1 release notes / migration: https://docs.langchain.com/oss/python/releases/langchain-v1",
+   "questions": []
+  }
+ ]
+}

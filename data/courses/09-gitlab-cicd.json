@@ -1,0 +1,376 @@
+{
+ "slug": "09-gitlab-cicd",
+ "num": 9,
+ "title": "GitLab CI/CD",
+ "full_title": "GitLab CI/CD: L2 → L3 Interview Preparation",
+ "group": "DevOps",
+ "accent": "#34d399",
+ "updated": "24 October 2026",
+ "level": "pipeline basics → advanced YAML → secure deployments to AWS",
+ "source": "docs/09_GitLab_CICD.md",
+ "question_count": 46,
+ "section_count": 11,
+ "sections": [
+  {
+   "id": "mental-model-how-a-gitlab-pipeline-runs",
+   "num": 1,
+   "title": "Mental model: how a GitLab pipeline runs",
+   "intro_md": "```\n git push / MR / tag / schedule / API trigger\n            │\n            ▼\n ┌─────────────────────────── GitLab server ───────────────────────────┐\n │ reads .gitlab-ci.yml (+ includes/components) → evaluates workflow:rules│\n │ → creates PIPELINE → evaluates each job's rules → creates JOBS         │\n │                                                                       │\n │  stage: build        stage: test             stage: deploy             │\n │  ┌───────────┐       ┌──────────┐            ┌──────────────────┐       │\n │  │ build-img │──────►│ unit     │──────────► │ deploy-staging   │       │\n │  └───────────┘ needs │ lint     │            │ (environment)    │       │\n │                      │ scan     │            ├──────────────────┤       │\n │                      └──────────┘            │ deploy-prod      │       │\n │                                              │ when: manual +   │       │\n │                                              │ protected env    │       │\n │  job queue ◄─────────────────────────────────└──────────────────┘       │\n └──────┬────────────────────────────────────────────────────────────────┘\n        │ runners poll for jobs (matching tags)\n        ▼\n ┌──────────────── GitLab Runner (your EC2/EKS or GitLab-hosted) ─────────┐\n │ executor: docker / kubernetes / shell / docker-autoscaler               │\n │ 1. start clean container from job `image:`                              │\n │ 2. clone repo at commit SHA, restore cache, download artifacts          │\n │ 3. run before_script + script                                           │\n │ 4. upload artifacts / reports / cache, stream logs                      │\n └──────────────────────────────────────────────────────────────────────────┘\n```\n\n**Key terms:** *pipeline* = one run for a commit; *stage* = group of jobs (order); *job* = unit of work run by a runner; *runner* = agent executing jobs; *executor* = how the runner isolates the job.",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "CI vs Continuous Delivery vs Continuous Deployment",
+     "short_md": "- **CI** — every change is automatically built and tested, merged often.\n- **Continuous Delivery** — every passing change is *deployable*; a human approves production release.\n- **Continuous Deployment** — every passing change goes to production automatically.",
+     "body_md": "**Short answer:**\n- **CI** — every change is automatically built and tested, merged often.\n- **Continuous Delivery** — every passing change is *deployable*; a human approves production release.\n- **Continuous Deployment** — every passing change goes to production automatically.\n\nGitLab implements all three with `.gitlab-ci.yml`, environments, approvals and runners."
+    },
+    {
+     "id": "Q02",
+     "title": "What is `.gitlab-ci.yml`? Show a minimal pipeline.",
+     "short_md": "stages: [build, test, deploy]",
+     "body_md": "```yaml\nstages: [build, test, deploy]\n\ndefault:\n  image: python:3.13-slim\n  interruptible: true           # newer pipeline on same ref may cancel this one\n\nvariables:\n  PIP_CACHE_DIR: \"$CI_PROJECT_DIR/.cache/pip\"\n\nbuild:\n  stage: build\n  script:\n    - pip install uv && uv sync --frozen\n    - uv build\n  artifacts:\n    paths: [dist/]\n    expire_in: 1 week\n\nunit-tests:\n  stage: test\n  script:\n    - uv run pytest --junitxml=report.xml --cov=app --cov-report=xml\n  coverage: '/TOTAL.*\\s+(\\d+%)$/'\n  artifacts:\n    reports:\n      junit: report.xml\n      coverage_report: { coverage_format: cobertura, path: coverage.xml }\n\ndeploy-staging:\n  stage: deploy\n  script: ./deploy.sh staging\n  environment: { name: staging, url: https://staging.example.com }\n  rules:\n    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH\n```"
+    },
+    {
+     "id": "Q03",
+     "title": "Runners and executors",
+     "short_md": "A **runner** is a process (on your VM, Kubernetes cluster, or GitLab-hosted) that polls GitLab for jobs. The **executor** decides how a job runs:",
+     "body_md": "**Short answer:** A **runner** is a process (on your VM, Kubernetes cluster, or GitLab-hosted) that polls GitLab for jobs. The **executor** decides how a job runs:\n\n| Executor | Isolation | Notes |\n|---|---|---|\n| `docker` | container per job | most common; clean environment |\n| `kubernetes` | pod per job | scales on EKS; good for many teams |\n| `docker-autoscaler` / instance | VMs created on demand | replaces old docker-machine autoscaling |\n| `shell` | none (runs on host) | fast but jobs share host → security risk |\n\n**Scopes:** instance (all projects), group, or project runners; select with `tags:`. **Protected runners** only run jobs for protected branches/tags → use them for production deploys."
+    },
+    {
+     "id": "Q04",
+     "title": "Jobs, stages, pipelines — execution order",
+     "short_md": "Stages run in order; jobs in the same stage run in parallel; a stage starts when the previous stage succeeds — **unless** you use `needs` (DAG) to start jobs as soon as their dependencies finish. A failed job fails the pipeline unless `allow_failure: true`.",
+     "body_md": "Stages run in order; jobs in the same stage run in parallel; a stage starts when the previous stage succeeds — **unless** you use `needs` (DAG) to start jobs as soon as their dependencies finish. A failed job fails the pipeline unless `allow_failure: true`."
+    },
+    {
+     "id": "Q05",
+     "title": "Artifacts vs cache",
+     "short_md": "cache: key: files: [uv.lock]           # new cache when lockfile changes paths: [.cache/uv] policy: pull                 # most jobs only pull; one job pull-push",
+     "body_md": "| | Artifacts | Cache |\n|---|---|---|\n| Purpose | **outputs** passed to later jobs / downloaded (build output, reports) | **speed up** jobs by reusing downloaded deps |\n| Guarantee | reliable; tied to the pipeline | best-effort; may be missing |\n| Example | `dist/`, `report.xml`, `plan.tfplan` | `.cache/pip`, `node_modules/.cache` |\n\n```yaml\ncache:\n  key:\n    files: [uv.lock]           # new cache when lockfile changes\n  paths: [.cache/uv]\n  policy: pull                 # most jobs only pull; one job pull-push\n```\n**Rule:** never rely on cache for correctness; never put secrets in artifacts (they're downloadable)."
+    },
+    {
+     "id": "Q06",
+     "title": "CI/CD variables and secrets",
+     "short_md": "Variables come from YAML, project/group/instance settings, pipeline triggers, and predefined variables (`CI_COMMIT_SHA`, `CI_COMMIT_BRANCH`, `CI_PIPELINE_SOURCE`, `CI_ENVIRONMENT_NAME`, `CI_REGISTRY_IMAGE` …). For secrets set in settings:\n- **Masked** (hidden in logs; \"masked and hidden\" can't be viewed in UI after creation).\n- **Protected** (only exposed to protected branches/tags).\n- **Environment-scoped** (only for `production` jobs).",
+     "body_md": "**Short answer:** Variables come from YAML, project/group/instance settings, pipeline triggers, and predefined variables (`CI_COMMIT_SHA`, `CI_COMMIT_BRANCH`, `CI_PIPELINE_SOURCE`, `CI_ENVIRONMENT_NAME`, `CI_REGISTRY_IMAGE` …). For secrets set in settings:\n- **Masked** (hidden in logs; \"masked and hidden\" can't be viewed in UI after creation).\n- **Protected** (only exposed to protected branches/tags).\n- **Environment-scoped** (only for `production` jobs).\n\nBetter: don't store long-lived cloud keys at all — use **OIDC** (`id_tokens`) to get short-lived AWS credentials, and fetch app secrets at runtime from AWS Secrets Manager / Vault (`secrets:` keyword supports external secret managers).\n\n**Pitfall:** masking isn't bulletproof (e.g., `echo $SECRET | base64` prints it). Restrict who can edit pipelines that run with secrets."
+    },
+    {
+     "id": "Q07",
+     "title": "Predefined pipeline sources",
+     "short_md": "`CI_PIPELINE_SOURCE` = `push`, `merge_request_event`, `schedule`, `web`, `api`, `trigger`, `parent_pipeline`, `pipeline` … — used in `rules` to decide which jobs run where.",
+     "body_md": "`CI_PIPELINE_SOURCE` = `push`, `merge_request_event`, `schedule`, `web`, `api`, `trigger`, `parent_pipeline`, `pipeline` … — used in `rules` to decide which jobs run where."
+    },
+    {
+     "id": "Q08",
+     "title": "Merge request pipelines, merged-results pipelines and merge trains",
+     "short_md": "- **Branch pipeline** — runs for a push to a branch. - **MR pipeline** — runs in the context of an MR (`merge_request_event`), can access MR variables. - **Merged-results pipeline** — tests the result of merging the MR into the target branch. - **Merge train** — queue of MRs; each is tested on top of the ones ahead → main never breaks from \"green individually, red together\" merges.",
+     "body_md": "- **Branch pipeline** — runs for a push to a branch.\n- **MR pipeline** — runs in the context of an MR (`merge_request_event`), can access MR variables.\n- **Merged-results pipeline** — tests the result of merging the MR into the target branch.\n- **Merge train** — queue of MRs; each is tested on top of the ones ahead → main never breaks from \"green individually, red together\" merges."
+    }
+   ]
+  },
+  {
+   "id": "controlling-pipelines",
+   "num": 3,
+   "title": "Controlling pipelines",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q09",
+     "title": "`rules` and `workflow:rules`",
+     "short_md": "`workflow:rules` decides **whether a pipeline is created at all**. Job `rules` decide **whether each job is added** and how (`when: on_success | manual | delayed | never`, `allow_failure`, variables). First matching rule wins. (`rules` replaced the older `only/except`.)",
+     "body_md": "**Short answer:** `workflow:rules` decides **whether a pipeline is created at all**. Job `rules` decide **whether each job is added** and how (`when: on_success | manual | delayed | never`, `allow_failure`, variables). First matching rule wins. (`rules` replaced the older `only/except`.)\n\n```yaml\nworkflow:\n  rules:\n    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\"      # MR pipelines\n    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS\n      when: never                                           # avoid duplicate branch pipeline when MR open\n    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH\n    - if: $CI_COMMIT_TAG\n\nfrontend-tests:\n  script: npm test\n  rules:\n    - changes: [frontend/**/*]                              # only if frontend changed\n```"
+    },
+    {
+     "id": "Q10",
+     "title": "`needs` and DAG pipelines",
+     "short_md": "`needs` lets a job start as soon as the listed jobs finish, ignoring stage order — a **directed acyclic graph**. It also limits which artifacts are downloaded.",
+     "body_md": "**Short answer:** `needs` lets a job start as soon as the listed jobs finish, ignoring stage order — a **directed acyclic graph**. It also limits which artifacts are downloaded.\n\n```yaml\nlint:           { stage: test, script: ruff check . }\nbuild-image:    { stage: build, script: ./build.sh }\nscan-image:     { stage: test, needs: [build-image], script: trivy image $IMG }\ndeploy-dev:     { stage: deploy, needs: [scan-image, lint], script: ./deploy.sh dev }\n```\n`needs: []` = start immediately."
+    },
+    {
+     "id": "Q11",
+     "title": "`parallel` and `parallel:matrix`",
+     "short_md": "test: parallel: 4                         # split tests into 4 jobs (CI_NODE_INDEX / CI_NODE_TOTAL) script: pytest --splits $CI_NODE_TOTAL --group $CI_NODE_INDEX",
+     "body_md": "```yaml\ntest:\n  parallel: 4                         # split tests into 4 jobs (CI_NODE_INDEX / CI_NODE_TOTAL)\n  script: pytest --splits $CI_NODE_TOTAL --group $CI_NODE_INDEX\n\nbuild:\n  parallel:\n    matrix:\n      - SERVICE: [api, worker, agent]\n        ARCH: [amd64, arm64]          # 6 jobs\n  script: ./build.sh $SERVICE $ARCH\n```"
+    },
+    {
+     "id": "Q12",
+     "title": "Manual jobs, approvals and `when`",
+     "short_md": "`when: manual` makes a job wait for a click; with **protected environments**, only allowed users/groups can run it, and **deployment approvals** can require N approvers. `when: delayed` + `start_in: 30 minutes` for timed rollouts.",
+     "body_md": "`when: manual` makes a job wait for a click; with **protected environments**, only allowed users/groups can run it, and **deployment approvals** can require N approvers. `when: delayed` + `start_in: 30 minutes` for timed rollouts."
+    },
+    {
+     "id": "Q13",
+     "title": "`resource_group` — prevent concurrent deploys",
+     "short_md": "deploy-prod: resource_group: production         # only one job in this group runs at a time environment: production",
+     "body_md": "```yaml\ndeploy-prod:\n  resource_group: production         # only one job in this group runs at a time\n  environment: production\n```\nPrevents two pipelines from running `terraform apply` or ECS deploys against the same environment simultaneously. (`process_mode: oldest_first` to keep order.)"
+    },
+    {
+     "id": "Q14",
+     "title": "`interruptible` and auto-cancel",
+     "short_md": "`interruptible: true` + project setting \"auto-cancel redundant pipelines\" (or `workflow:auto_cancel:on_new_commit: interruptible`) cancels outdated pipelines when you push again. Never mark deploy jobs interruptible.",
+     "body_md": "`interruptible: true` + project setting \"auto-cancel redundant pipelines\" (or `workflow:auto_cancel:on_new_commit: interruptible`) cancels outdated pipelines when you push again. Never mark deploy jobs interruptible."
+    },
+    {
+     "id": "Q15",
+     "title": "Parent-child and multi-project pipelines",
+     "short_md": "- **Parent-child:** `trigger: include: path/child.yml` — split a monorepo's pipeline per component; children can be **generated dynamically** by a job. - **Multi-project (downstream):** `trigger: project: group/other-repo` — e.g., app repo triggers the deployment repo. - `strategy: depend` makes the parent wait for and mirror the child's status.",
+     "body_md": "- **Parent-child:** `trigger: include: path/child.yml` — split a monorepo's pipeline per component; children can be **generated dynamically** by a job.\n- **Multi-project (downstream):** `trigger: project: group/other-repo` — e.g., app repo triggers the deployment repo.\n- `strategy: depend` makes the parent wait for and mirror the child's status.\n\n```yaml\napi-pipeline:\n  trigger:\n    include: services/api/.gitlab-ci.yml\n    strategy: depend\n  rules:\n    - changes: [services/api/**/*]\n```"
+    },
+    {
+     "id": "Q16",
+     "title": "Retry, timeout, allow_failure",
+     "short_md": "integration-tests: retry: max: 2 when: [runner_system_failure, stuck_or_timeout_failure]   # retry infra flakiness, not test failures timeout: 20m allow_failure: exit_codes: [137]",
+     "body_md": "```yaml\nintegration-tests:\n  retry:\n    max: 2\n    when: [runner_system_failure, stuck_or_timeout_failure]   # retry infra flakiness, not test failures\n  timeout: 20m\n  allow_failure:\n    exit_codes: [137]\n```"
+    }
+   ]
+  },
+  {
+   "id": "reuse-structure",
+   "num": 4,
+   "title": "Reuse & structure",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q17",
+     "title": "`include`, `extends`, YAML anchors, `!reference`",
+     "short_md": "include: - project: platform/ci-templates ref: v3.2.0                       # pin a version! file: /python.yml - local: /ci/deploy.yml",
+     "body_md": "```yaml\ninclude:\n  - project: platform/ci-templates\n    ref: v3.2.0                       # pin a version!\n    file: /python.yml\n  - local: /ci/deploy.yml\n\n.python-base:                          # hidden job (starts with .) = template\n  image: python:3.13-slim\n  before_script: [pip install uv, uv sync --frozen]\n\nunit:\n  extends: .python-base\n  script: uv run pytest\n\nlint:\n  extends: .python-base\n  script:\n    - !reference [.python-base, before_script]   # reuse specific sections\n    - uv run ruff check .\n```"
+    },
+    {
+     "id": "Q18",
+     "title": "CI/CD components and the CI/CD Catalog",
+     "short_md": "Components are **versioned, reusable pipeline building blocks** with typed **inputs**, published to the **CI/CD Catalog**. Better than copy-paste templates: semantic versions, documented inputs, discoverable.",
+     "body_md": "**Short answer:** Components are **versioned, reusable pipeline building blocks** with typed **inputs**, published to the **CI/CD Catalog**. Better than copy-paste templates: semantic versions, documented inputs, discoverable.\n\n```yaml\n# Consumer\ninclude:\n  - component: $CI_SERVER_FQDN/platform/components/docker-build@2.1.0\n    inputs:\n      image_name: $CI_REGISTRY_IMAGE/api\n      dockerfile: services/api/Dockerfile\n\n# Component definition (templates/docker-build.yml in the component project)\nspec:\n  inputs:\n    image_name: { type: string }\n    dockerfile: { type: string, default: Dockerfile }\n---\ndocker-build:\n  script: docker build -f $[[ inputs.dockerfile ]] -t $[[ inputs.image_name ]]:$CI_COMMIT_SHA .\n```"
+    },
+    {
+     "id": "Q19",
+     "title": "`spec:inputs` for pipelines",
+     "short_md": "Pipelines (and included files) can declare typed inputs with defaults/options, validated at pipeline creation — safer than free-form variables for manual/API-triggered pipelines (e.g., `environment: {options: [dev, staging, prod]}`).",
+     "body_md": "Pipelines (and included files) can declare typed inputs with defaults/options, validated at pipeline creation — safer than free-form variables for manual/API-triggered pipelines (e.g., `environment: {options: [dev, staging, prod]}`)."
+    },
+    {
+     "id": "Q20",
+     "title": "Monorepo strategies",
+     "short_md": "Use `rules:changes` (with `compare_to: refs/heads/main` for MRs), parent-child pipelines per service, shared components for common steps, caching per service lockfile, and a final aggregation job if needed.",
+     "body_md": "Use `rules:changes` (with `compare_to: refs/heads/main` for MRs), parent-child pipelines per service, shared components for common steps, caching per service lockfile, and a final aggregation job if needed."
+    }
+   ]
+  },
+  {
+   "id": "deployments-to-aws",
+   "num": 5,
+   "title": "Deployments to AWS",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q21",
+     "title": "OIDC federation from GitLab to AWS (no stored keys)",
+     "short_md": "GitLab issues a signed **ID token (JWT)** per job via `id_tokens`. AWS IAM trusts GitLab as an **OIDC identity provider**; the job calls `sts:AssumeRoleWithWebIdentity` and gets **short-lived credentials**. The IAM role trust policy restricts **which project, branch/tag and environment** may assume it.",
+     "body_md": "**Short answer:** GitLab issues a signed **ID token (JWT)** per job via `id_tokens`. AWS IAM trusts GitLab as an **OIDC identity provider**; the job calls `sts:AssumeRoleWithWebIdentity` and gets **short-lived credentials**. The IAM role trust policy restricts **which project, branch/tag and environment** may assume it.\n\n```\n job ──(id_token: JWT with claims project_path, ref, ref_protected, environment)──► AWS STS\n     ◄──────────────── temporary credentials (1 h) for role \"deploy-prod\" ─────────────────\n```\n```yaml\ndeploy-prod:\n  image: amazon/aws-cli:2.17.0\n  id_tokens:\n    AWS_ID_TOKEN:\n      aud: https://gitlab.example.com\n  script:\n    - >\n      export $(aws sts assume-role-with-web-identity\n      --role-arn $PROD_ROLE_ARN --role-session-name \"gl-$CI_PIPELINE_ID\"\n      --web-identity-token \"$AWS_ID_TOKEN\" --duration-seconds 3600\n      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text\n      | awk '{print \"AWS_ACCESS_KEY_ID=\"$1\" AWS_SECRET_ACCESS_KEY=\"$2\" AWS_SESSION_TOKEN=\"$3}')\n    - aws ecs update-service --cluster prod --service api --force-new-deployment\n  environment: production\n```\n```json\n// IAM role trust policy (condition keys use the IdP host)\n{ \"Effect\": \"Allow\",\n  \"Principal\": { \"Federated\": \"arn:aws:iam::123456789012:oidc-provider/gitlab.example.com\" },\n  \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n  \"Condition\": {\n    \"StringEquals\": { \"gitlab.example.com:aud\": \"https://gitlab.example.com\" },\n    \"StringLike\":   { \"gitlab.example.com:sub\": \"project_path:payments/api:ref_type:branch:ref:main\" } } }\n```\n**Pitfall:** a trust policy that only checks `aud` lets *any* project on that GitLab assume the role."
+    },
+    {
+     "id": "Q22",
+     "title": "Build and tag a Docker image properly",
+     "short_md": "build-image: image: docker:27 services: [docker:27-dind]           # or use Kaniko/Buildah rootless builders variables: { DOCKER_TLS_CERTDIR: \"/certs\" } script: - echo \"$CI_REGISTRY_PASSWORD\" | docker login -u \"$CI_REGISTRY_USER\" --password-stdin $CI_REGISTRY - docker buildx build --platform linux/arm64 --cache-from type=registry,ref=$CI_REGISTRY_IMAGE:cache --cache-to type=registry,ref=$CI_REGISTRY_IMAGE:cache,mode=max -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --push .",
+     "body_md": "```yaml\nbuild-image:\n  image: docker:27\n  services: [docker:27-dind]           # or use Kaniko/Buildah rootless builders\n  variables: { DOCKER_TLS_CERTDIR: \"/certs\" }\n  script:\n    - echo \"$CI_REGISTRY_PASSWORD\" | docker login -u \"$CI_REGISTRY_USER\" --password-stdin $CI_REGISTRY\n    - docker buildx build --platform linux/arm64\n        --cache-from type=registry,ref=$CI_REGISTRY_IMAGE:cache\n        --cache-to type=registry,ref=$CI_REGISTRY_IMAGE:cache,mode=max\n        -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --push .\n```\nTag with the **commit SHA** (immutable, traceable); deploy by **digest**; add semver tags on release. For ECR, log in via OIDC credentials (`aws ecr get-login-password`). Docker-in-Docker needs privileged runners — prefer rootless builders (BuildKit rootless, Kaniko, Buildah) on shared runners."
+    },
+    {
+     "id": "Q23",
+     "title": "Environments and protected deployments",
+     "short_md": "`environment:` records deployments (history, current version, URL, rollback button). **Protected environments** restrict who can deploy; **approval rules** require sign-off; environment-scoped variables give each environment its own config; `deployment_tier` classifies (production/staging/development); `on_stop` + `auto_stop_in` for review apps.",
+     "body_md": "`environment:` records deployments (history, current version, URL, rollback button). **Protected environments** restrict who can deploy; **approval rules** require sign-off; environment-scoped variables give each environment its own config; `deployment_tier` classifies (production/staging/development); `on_stop` + `auto_stop_in` for review apps."
+    },
+    {
+     "id": "Q24",
+     "title": "Terraform in GitLab safely",
+     "short_md": "plan: stage: plan script: - terraform init -input=false - terraform plan -out=plan.tfplan -input=false - terraform show -json plan.tfplan > plan.json      # for policy checks (OPA/Checkov) & MR widget artifacts: { paths: [plan.tfplan, plan.json], expire_in: 1 day } resource_group: tf-prod",
+     "body_md": "```yaml\nplan:\n  stage: plan\n  script:\n    - terraform init -input=false\n    - terraform plan -out=plan.tfplan -input=false\n    - terraform show -json plan.tfplan > plan.json      # for policy checks (OPA/Checkov) & MR widget\n  artifacts: { paths: [plan.tfplan, plan.json], expire_in: 1 day }\n  resource_group: tf-prod\n\napply:\n  stage: apply\n  needs: [plan]\n  script: terraform apply -input=false plan.tfplan      # apply EXACTLY the reviewed plan\n  when: manual\n  environment: production\n  resource_group: tf-prod\n  rules: [{ if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH }]\n```\nRemote state with locking (S3 + lockfile, or GitLab-managed Terraform state), OIDC roles split into read-only plan role and apply role, pinned provider versions via lockfile, policy checks before apply."
+    },
+    {
+     "id": "Q25",
+     "title": "Deploying to ECS / Lambda / S3+CloudFront",
+     "short_md": "- **ECS:** register new task definition with the new image digest → update service → wait for steady state (`aws ecs wait services-stable`) → circuit breaker auto-rollback; or CodeDeploy blue/green. - **Lambda:** publish version → shift alias traffic (CodeDeploy canary/linear) with alarms. - **SPA:** upload hashed assets → upload `index.html` → CloudFront invalidation.",
+     "body_md": "- **ECS:** register new task definition with the new image digest → update service → wait for steady state (`aws ecs wait services-stable`) → circuit breaker auto-rollback; or CodeDeploy blue/green.\n- **Lambda:** publish version → shift alias traffic (CodeDeploy canary/linear) with alarms.\n- **SPA:** upload hashed assets → upload `index.html` → CloudFront invalidation."
+    },
+    {
+     "id": "Q26",
+     "title": "Atomic and rollbackable deployments",
+     "short_md": "Immutable artifacts (image digest / versioned bundle), deploy references not rebuilds, health checks and alarms gate traffic shift, keep the previous version runnable, one-click rollback (GitLab environment \"re-deploy previous\", ECS previous task definition, Lambda alias back), DB migrations backward-compatible (expand → migrate → contract).",
+     "body_md": "Immutable artifacts (image digest / versioned bundle), deploy references not rebuilds, health checks and alarms gate traffic shift, keep the previous version runnable, one-click rollback (GitLab environment \"re-deploy previous\", ECS previous task definition, Lambda alias back), DB migrations backward-compatible (expand → migrate → contract)."
+    },
+    {
+     "id": "Q27",
+     "title": "Promotion: build once, deploy many",
+     "short_md": "Build the artifact once on main → push to registry → deploy the **same digest** to dev → staging → prod with environment-specific config injected at deploy time. Never rebuild for production.",
+     "body_md": "Build the artifact once on main → push to registry → deploy the **same digest** to dev → staging → prod with environment-specific config injected at deploy time. Never rebuild for production."
+    }
+   ]
+  },
+  {
+   "id": "security-supply-chain",
+   "num": 6,
+   "title": "Security & supply chain",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q28",
+     "title": "How CI/CD becomes an attack path",
+     "short_md": "- Malicious MR modifies `.gitlab-ci.yml` to print secrets → protected variables + protected runners + MR pipelines from forks run without secrets. - Compromised dependency/plugin/image runs in your job → pin versions/digests, use lockfiles, scan. - Over-privileged deploy credentials → OIDC with narrow trust conditions, least-privilege roles per environment. - Shared shell runners leak between projects → isolated ephemeral executors. - Tampered artifacts → checksums, signing (Cosign/Sigstore), provenance (SLSA attestations).",
+     "body_md": "- Malicious MR modifies `.gitlab-ci.yml` to print secrets → protected variables + protected runners + MR pipelines from forks run without secrets.\n- Compromised dependency/plugin/image runs in your job → pin versions/digests, use lockfiles, scan.\n- Over-privileged deploy credentials → OIDC with narrow trust conditions, least-privilege roles per environment.\n- Shared shell runners leak between projects → isolated ephemeral executors.\n- Tampered artifacts → checksums, signing (Cosign/Sigstore), provenance (SLSA attestations)."
+    },
+    {
+     "id": "Q29",
+     "title": "Types of scanning",
+     "short_md": "Use **security policies** (scan execution / merge request approval policies) so teams can't silently remove scans.",
+     "body_md": "| Scan | Finds | GitLab feature / tool |\n|---|---|---|\n| **SAST** | insecure code patterns | SAST (Semgrep-based) |\n| **Secret detection** | leaked keys in commits | Secret Detection (+ push protection) |\n| **Dependency scanning / SCA** | vulnerable libraries | Dependency Scanning |\n| **Container scanning** | OS/package CVEs in images | Container Scanning (Trivy) |\n| **IaC scanning** | insecure Terraform/K8s config | IaC Scanning (KICS), Checkov, tfsec |\n| **DAST** | runtime web vulnerabilities | DAST |\n| **License compliance** | disallowed licenses | dependency/license reports |\n\nUse **security policies** (scan execution / merge request approval policies) so teams can't silently remove scans."
+    },
+    {
+     "id": "Q30",
+     "title": "Secrets and logs in pipelines",
+     "short_md": "Prefer OIDC and runtime secret fetch over stored secrets; masked + protected + environment-scoped variables; never `set -x` with secrets; don't write secrets into artifacts or Docker image layers (use BuildKit secret mounts); rotate on exposure; limit who can run pipelines on protected branches.",
+     "body_md": "Prefer OIDC and runtime secret fetch over stored secrets; masked + protected + environment-scoped variables; never `set -x` with secrets; don't write secrets into artifacts or Docker image layers (use BuildKit secret mounts); rotate on exposure; limit who can run pipelines on protected branches."
+    },
+    {
+     "id": "Q31",
+     "title": "Signing and provenance",
+     "short_md": "Sign images with Cosign using GitLab's OIDC ID token (keyless, Sigstore), generate SBOM (Syft / CycloneDX), store attestations; verify signatures at deploy time (admission policy) so only images built by your pipeline run in production.",
+     "body_md": "Sign images with Cosign using GitLab's OIDC ID token (keyless, Sigstore), generate SBOM (Syft / CycloneDX), store attestations; verify signatures at deploy time (admission policy) so only images built by your pipeline run in production."
+    },
+    {
+     "id": "Q32",
+     "title": "Protecting the pipeline definition itself",
+     "short_md": "Protected branches + code owners for `.gitlab-ci.yml` and `ci/` folder, required approvals, compliance pipelines / pipeline execution policies enforced by the security team, pinned includes/components by version.",
+     "body_md": "Protected branches + code owners for `.gitlab-ci.yml` and `ci/` folder, required approvals, compliance pipelines / pipeline execution policies enforced by the security team, pinned includes/components by version."
+    }
+   ]
+  },
+  {
+   "id": "performance-reliability",
+   "num": 7,
+   "title": "Performance & reliability",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q33",
+     "title": "Optimising pipeline duration",
+     "short_md": "Measure first (pipeline analytics: slowest jobs). Then: `needs` DAG, `rules:changes` to skip unaffected work, caching keyed by lockfile, Docker layer/registry cache, smaller images, test splitting with `parallel`, fail-fast lint jobs first, `interruptible` + auto-cancel, autoscaling runners, avoid huge artifacts.",
+     "body_md": "Measure first (pipeline analytics: slowest jobs). Then: `needs` DAG, `rules:changes` to skip unaffected work, caching keyed by lockfile, Docker layer/registry cache, smaller images, test splitting with `parallel`, fail-fast lint jobs first, `interruptible` + auto-cancel, autoscaling runners, avoid huge artifacts."
+    },
+    {
+     "id": "Q34",
+     "title": "Flaky tests and CI reliability",
+     "short_md": "Track flaky tests (JUnit reports show history), quarantine them with an owner and deadline, retry only infra failures, use deterministic test data, containerised dependencies (`services:` Postgres/Redis), and timeouts.",
+     "body_md": "Track flaky tests (JUnit reports show history), quarantine them with an owner and deadline, retry only infra failures, use deterministic test data, containerised dependencies (`services:` Postgres/Redis), and timeouts."
+    },
+    {
+     "id": "Q35",
+     "title": "CI environment vs production parity",
+     "short_md": "Use the same base image / runtime version, same build artifact, ephemeral real dependencies (Postgres container, LocalStack/moto or a sandbox AWS account), contract tests against real APIs in staging. Document known gaps (IAM, network, scale) and cover them with staging smoke tests.",
+     "body_md": "Use the same base image / runtime version, same build artifact, ephemeral real dependencies (Postgres container, LocalStack/moto or a sandbox AWS account), contract tests against real APIs in staging. Document known gaps (IAM, network, scale) and cover them with staging smoke tests."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 8,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q36",
+     "title": "Deployment works on `main` but fails in an MR pipeline",
+     "short_md": "Likely **protected variables/OIDC role conditions** only available on protected `main`, so MR jobs lack credentials — by design. Also check `rules` (job not created), different pipeline source variables, fork MRs running without secrets. Fix: MR pipelines should run tests/plan with a read-only role, not deploy.",
+     "body_md": "Likely **protected variables/OIDC role conditions** only available on protected `main`, so MR jobs lack credentials — by design. Also check `rules` (job not created), different pipeline source variables, fork MRs running without secrets. Fix: MR pipelines should run tests/plan with a read-only role, not deploy."
+    },
+    {
+     "id": "Q37",
+     "title": "Pipeline triggers twice for one push",
+     "short_md": "Both a **branch pipeline** and an **MR pipeline** were created. Fix with `workflow:rules` (the `$CI_OPEN_MERGE_REQUESTS` pattern in Q09) or choose MR pipelines only. Also check webhooks/schedules/trigger jobs creating extra pipelines.",
+     "body_md": "Both a **branch pipeline** and an **MR pipeline** were created. Fix with `workflow:rules` (the `$CI_OPEN_MERGE_REQUESTS` pattern in Q09) or choose MR pipelines only. Also check webhooks/schedules/trigger jobs creating extra pipelines."
+    },
+    {
+     "id": "Q38",
+     "title": "Two pipelines deployed at once and corrupted Terraform state / ECS service",
+     "short_md": "Add `resource_group` for each environment, use state locking, make deploy jobs non-interruptible, and ensure only one branch deploys to each environment.",
+     "body_md": "Add `resource_group` for each environment, use state locking, make deploy jobs non-interruptible, and ensure only one branch deploys to each environment."
+    },
+    {
+     "id": "Q39",
+     "title": "Job fails with \"no space left on device\" / slow runners",
+     "short_md": "Runner disk full from Docker images/cache → prune policies, ephemeral autoscaled runners, smaller images, clean build directories, reduce artifact sizes.",
+     "body_md": "Runner disk full from Docker images/cache → prune policies, ephemeral autoscaled runners, smaller images, clean build directories, reduce artifact sizes."
+    },
+    {
+     "id": "Q40",
+     "title": "Design an ideal pipeline for an AI service (FastAPI + LangGraph agent)",
+     "short_md": "MR pipeline:   lint (ruff) ─┬─ type check (mypy) ─┬─ unit tests (fake LLM) ──┐ ├─ SAST / secret / dependency scan              ├─► terraform plan (read-only role) └─ build image (SHA) ─► container scan ─► SBOM ─┘     + policy check └─► LLM eval suite (golden set, cost/latency budget) main pipeline: same + push signed image ─► deploy dev (auto) ─► integration/smoke tests ─► deploy staging (auto) ─► eval + load test ─► deploy prod (manual, protected env, approvals, resource_group, canary/blue-green, auto-rollback on alarms)",
+     "body_md": "```\n MR pipeline:   lint (ruff) ─┬─ type check (mypy) ─┬─ unit tests (fake LLM) ──┐\n                             ├─ SAST / secret / dependency scan              ├─► terraform plan (read-only role)\n                             └─ build image (SHA) ─► container scan ─► SBOM ─┘     + policy check\n                                                    └─► LLM eval suite (golden set, cost/latency budget)\n main pipeline: same + push signed image ─► deploy dev (auto) ─► integration/smoke tests\n                ─► deploy staging (auto) ─► eval + load test ─► deploy prod (manual, protected env,\n                   approvals, resource_group, canary/blue-green, auto-rollback on alarms)\n```\nCredentials via OIDC per environment; prompts/model IDs/tool schemas versioned with the code; eval results attached as MR reports."
+    }
+   ]
+  },
+  {
+   "id": "git-essentials",
+   "num": 9,
+   "title": "Git essentials",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q41",
+     "title": "How does Git store history? (commits, branches, HEAD)",
+     "short_md": "A **commit** is a snapshot of the project plus a pointer to its parent commit(s), identified by a SHA hash. A **branch** is just a movable label pointing at a commit. **HEAD** points to what you have checked out. Creating a branch is cheap because it only creates a pointer.",
+     "body_md": "**Short answer:** A **commit** is a snapshot of the project plus a pointer to its parent commit(s), identified by a SHA hash. A **branch** is just a movable label pointing at a commit. **HEAD** points to what you have checked out. Creating a branch is cheap because it only creates a pointer.\n\n```\n          A ── B ── C        ← main\n                     \\\n                      D ── E ← feature   (HEAD)\ngit commit on feature → new commit F after E, \"feature\" label moves to F; main stays at C\n```\nThree areas: **working directory** (your files) → `git add` → **staging area/index** → `git commit` → **repository**."
+    },
+    {
+     "id": "Q42",
+     "title": "Merge vs rebase vs squash",
+     "short_md": "Before:     A ── B ── C          main \\ D ── E         feature",
+     "body_md": "```\nBefore:     A ── B ── C          main\n                 \\\n                  D ── E         feature\n\nMERGE:      A ── B ── C ──── M   main      (M has two parents; true history kept)\n                 \\          /\n                  D ── E ──\n\nREBASE:     A ── B ── C ── D' ── E'        (feature's commits replayed on top of C; linear; NEW hashes)\n\nSQUASH:     A ── B ── C ── S               (all feature commits become one commit S)\n```\n| | Merge | Rebase | Squash merge |\n|---|---|---|---|\n| History | true, with merge commits | linear, rewritten | one commit per MR |\n| Safe on shared branches? | yes | **no** — never rebase commits others already pulled | yes (done at merge time) |\n| Use for | integrating to main | updating *your own* feature branch onto latest main | clean main history per feature |\n\n**Golden rule:** rebase only local/private commits. If you must update a pushed feature branch after rebase, use `git push --force-with-lease` (refuses if someone else pushed)."
+    },
+    {
+     "id": "Q43",
+     "title": "Branching strategies",
+     "short_md": "Pair with **protected branches**, required MR approvals, required pipelines, and merge trains (Q08).",
+     "body_md": "| Strategy | How | Fits |\n|---|---|---|\n| **Trunk-based** | short-lived branches (hours–2 days) merged to `main` often; feature flags hide unfinished work | CI/CD, frequent deploys (recommended default) |\n| **GitLab Flow** | `main` + environment/release branches (`production`, `release/1.4`) | controlled promotion between environments |\n| **GitFlow** | `develop`, `feature/*`, `release/*`, `hotfix/*`, `main` | versioned products with slow releases; heavy for web services |\n\nPair with **protected branches**, required MR approvals, required pipelines, and merge trains (Q08)."
+    },
+    {
+     "id": "Q44",
+     "title": "Resolving merge conflicts",
+     "short_md": "A conflict happens when both sides changed the same lines. Git marks them:",
+     "body_md": "A conflict happens when both sides changed the same lines. Git marks them:\n```\n<<<<<<< HEAD\ntimeout = 30\n=======\ntimeout = 60\n>>>>>>> feature/longer-timeout\n```\nDecide the correct combined result (talk to the other author if unclear), remove the markers, run the tests, `git add`, then `git commit` (merge) or `git rebase --continue`. Reduce conflicts with small, frequent merges and clear module ownership."
+    },
+    {
+     "id": "Q45",
+     "title": "Undoing things: `restore`, `reset`, `revert`, `reflog`",
+     "short_md": "| Command | Does | Safe on shared history? |\n|---|---|---|\n| `git restore file` | discard uncommitted changes to a file | yes (local only) |\n| `git restore --staged file` | unstage | yes |\n| `git reset --soft HEAD~1` | undo last commit, keep changes staged | local only |\n| `git reset --hard <sha>` | move branch and **discard** changes | ⚠ destroys local work; never on shared branches |\n| `git revert <sha>` | create a new commit that undoes an old one | **yes — the way to undo on `main`** |\n| `git reflog` | log of where HEAD has been | rescue \"lost\" commits after a bad reset/rebase |",
+     "body_md": "| Command | Does | Safe on shared history? |\n|---|---|---|\n| `git restore file` | discard uncommitted changes to a file | yes (local only) |\n| `git restore --staged file` | unstage | yes |\n| `git reset --soft HEAD~1` | undo last commit, keep changes staged | local only |\n| `git reset --hard <sha>` | move branch and **discard** changes | ⚠ destroys local work; never on shared branches |\n| `git revert <sha>` | create a new commit that undoes an old one | **yes — the way to undo on `main`** |\n| `git reflog` | log of where HEAD has been | rescue \"lost\" commits after a bad reset/rebase |"
+    },
+    {
+     "id": "Q46",
+     "title": "`cherry-pick`, tags, `stash`, `bisect`",
+     "short_md": "- **cherry-pick:** copy one commit onto another branch (e.g. a hotfix from `main` into `release/1.4`). - **Tags:** named pointers to a release commit (`v1.4.2`, semantic versioning MAJOR.MINOR.PATCH); a tag pipeline can publish the release. - **stash:** park uncommitted work temporarily. - **bisect:** binary-search the history to find the commit that introduced a bug (`git bisect start; git bisect bad; git bisect good v1.3`).",
+     "body_md": "- **cherry-pick:** copy one commit onto another branch (e.g. a hotfix from `main` into `release/1.4`).\n- **Tags:** named pointers to a release commit (`v1.4.2`, semantic versioning MAJOR.MINOR.PATCH); a tag pipeline can publish the release.\n- **stash:** park uncommitted work temporarily.\n- **bisect:** binary-search the history to find the commit that introduced a bug (`git bisect start; git bisect bad; git bisect good v1.3`).\n\n**Pitfall:** a secret committed and then deleted in a later commit is still in history — rotate it first, then rewrite history if required (16 Q31)."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 10,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| Merge vs rebase | merge keeps history; rebase only private commits; squash for clean main |\n| Undo on main | `git revert`, never `reset --hard` shared history; `reflog` to rescue |\n| Branching | trunk-based + feature flags by default |\n| Pipeline/stage/job | run / ordered group / unit of work |\n| Runner/executor | agent that runs jobs / how it isolates them |\n| `rules` / `workflow:rules` | include job / create pipeline |\n| `needs` | DAG; start when deps finish |\n| Artifacts vs cache | outputs (reliable) vs speed-up (best effort) |\n| Variables | masked, protected, env-scoped; prefer OIDC |\n| `id_tokens` | JWT for AWS `AssumeRoleWithWebIdentity` |\n| Trust policy | restrict `sub` to project + ref |\n| `resource_group` | one deploy at a time per env |\n| Environments | deployment history, protection, approvals, rollback |\n| Components | versioned reusable CI with typed inputs (Catalog) |\n| Parent-child | split/dynamic pipelines; `strategy: depend` |\n| Merge trains | test MRs in merge order |\n| Supply chain | pin, scan, sign, SBOM, protected runners |\n| Deploy | build once, deploy same digest everywhere |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://docs.gitlab.com/ci/ · YAML reference: https://docs.gitlab.com/ci/yaml/\n- Rules: https://docs.gitlab.com/ci/jobs/job_rules/\n- Components: https://docs.gitlab.com/ci/components/\n- OIDC with AWS: https://docs.gitlab.com/ci/cloud_services/aws/\n- Environments: https://docs.gitlab.com/ci/environments/\n- Application security: https://docs.gitlab.com/user/application_security/",
+   "questions": []
+  }
+ ]
+}

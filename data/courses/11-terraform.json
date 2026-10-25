@@ -1,0 +1,330 @@
+{
+ "slug": "11-terraform",
+ "num": 11,
+ "title": "Terraform",
+ "full_title": "Terraform: L2 → L3 Interview Preparation",
+ "group": "DevOps",
+ "accent": "#fb923c",
+ "updated": "24 October 2026 (Terraform 1.x; AWS provider v6)",
+ "level": "IaC basics → state & modules → safe production workflows",
+ "source": "docs/11_Terraform.md",
+ "question_count": 41,
+ "section_count": 9,
+ "sections": [
+  {
+   "id": "mental-model-how-terraform-works",
+   "num": 1,
+   "title": "Mental model: how Terraform works",
+   "intro_md": "**Terraform is declarative:** you describe the **desired end state**; Terraform computes the difference from reality and makes API calls to close the gap.\n\n```\n   *.tf files (desired state)          terraform.tfstate (what TF created & last saw)        Real AWS\n  ┌──────────────────────────┐        ┌────────────────────────────────────┐        ┌─────────────────┐\n  │ resource \"aws_s3_bucket\" │        │ aws_s3_bucket.logs:                │        │ bucket          │\n  │   \"logs\" { ... }         │        │   id = \"acme-logs\", arn = ...      │        │ \"acme-logs\"     │\n  └────────────┬─────────────┘        └──────────────────┬─────────────────┘        └────────┬────────┘\n               │                                         │                                  │\n               └──────────────────────┬──────────────────┴────────────── refresh (read) ────┘\n                                      ▼\n                          terraform plan = diff(config, state+reality)\n                          + create   ~ update in-place   -/+ replace   - destroy\n                                      ▼\n                          terraform apply → provider plugin → AWS APIs → update state\n```\n\n**Building blocks:**\n```\n Terraform CLI (core) ── builds dependency GRAPH, plans, applies in parallel\n      │ gRPC\n      ▼\n Providers (plugins: aws, kubernetes, gitlab, random…) ── translate resources into API calls\n      │\n Backend ── where state lives (S3 with locking, HCP Terraform, GitLab-managed state)\n```\n\n**Workflow:** `init` (download providers/modules, configure backend) → `fmt` / `validate` → `plan` (preview) → `apply` (execute) → `destroy` (when needed).",
+   "questions": []
+  },
+  {
+   "id": "fundamentals",
+   "num": 2,
+   "title": "Fundamentals",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "What is Infrastructure as Code and why Terraform?",
+     "short_md": "IaC = defining infrastructure in version-controlled code instead of console clicks → reviewable (PRs), repeatable (same code → same environment), auditable (git history), automatable (CI/CD). Terraform: declarative HCL, huge provider ecosystem (multi-cloud + SaaS), plan before apply, state tracking, modules.",
+     "body_md": "**Short answer:** IaC = defining infrastructure in version-controlled code instead of console clicks → reviewable (PRs), repeatable (same code → same environment), auditable (git history), automatable (CI/CD). Terraform: declarative HCL, huge provider ecosystem (multi-cloud + SaaS), plan before apply, state tracking, modules.\n\n| Tool | Notes |\n|---|---|\n| Terraform / OpenTofu (open-source fork) | declarative HCL, multi-provider |\n| CloudFormation / CDK | AWS-native; CDK uses real programming languages and synthesises CloudFormation |\n| Pulumi | general-purpose languages, multi-cloud |"
+    },
+    {
+     "id": "Q02",
+     "title": "Providers, resources and data sources",
+     "short_md": "- **Provider** — plugin that talks to an API (`aws`), configured with region/credentials.\n- **Resource** — something Terraform **creates and manages** (`aws_s3_bucket`).\n- **Data source** — something Terraform **reads** but doesn't manage (existing VPC, latest AMI, current account ID).",
+     "body_md": "**Short answer:**\n- **Provider** — plugin that talks to an API (`aws`), configured with region/credentials.\n- **Resource** — something Terraform **creates and manages** (`aws_s3_bucket`).\n- **Data source** — something Terraform **reads** but doesn't manage (existing VPC, latest AMI, current account ID).\n\n```hcl\nterraform {\n  required_version = \">= 1.10\"\n  required_providers {\n    aws = { source = \"hashicorp/aws\", version = \"~> 6.0\" }\n  }\n}\n\nprovider \"aws\" {\n  region = \"ap-south-1\"\n  default_tags { tags = { owner = \"payments\", managed_by = \"terraform\" } }\n}\n\ndata \"aws_caller_identity\" \"current\" {}\ndata \"aws_vpc\" \"main\" { tags = { Name = \"main\" } }\n\nresource \"aws_s3_bucket\" \"docs\" {\n  bucket = \"acme-docs-${data.aws_caller_identity.current.account_id}\"\n}\n```"
+    },
+    {
+     "id": "Q03",
+     "title": "What is Terraform state and why does it exist?",
+     "short_md": "State (`terraform.tfstate`, JSON) maps each resource **address** in your code (`aws_s3_bucket.docs`) to the **real object** (bucket name/ARN) and stores last-known attributes. Terraform needs it to know what it owns, to compute diffs, track dependencies, and for performance.",
+     "body_md": "**Short answer:** State (`terraform.tfstate`, JSON) maps each resource **address** in your code (`aws_s3_bucket.docs`) to the **real object** (bucket name/ARN) and stores last-known attributes. Terraform needs it to know what it owns, to compute diffs, track dependencies, and for performance.\n\n**Important facts:**\n- State can contain **secrets** in plain text (DB passwords, keys) → store it encrypted with restricted access.\n- Never keep production state locally or in git → use a **remote backend** with locking.\n- Without state, Terraform would try to create everything again."
+    },
+    {
+     "id": "Q04",
+     "title": "`init`, `fmt`, `validate`, `plan`, `apply`",
+     "short_md": "**Rule:** in CI, apply a **saved plan file** so what was reviewed is what runs.",
+     "body_md": "| Command | Does |\n|---|---|\n| `terraform init` | download providers/modules, configure backend, write `.terraform.lock.hcl` |\n| `terraform fmt -check` | canonical formatting (CI check) |\n| `terraform validate` | syntax and internal consistency (no API calls) |\n| `terraform plan -out=tfplan` | refresh + diff; save the exact plan |\n| `terraform apply tfplan` | apply exactly the reviewed plan |\n| `terraform destroy` | delete everything in this state |\n| `terraform output`, `state list`, `show` | inspect |\n\n**Rule:** in CI, apply a **saved plan file** so what was reviewed is what runs."
+    },
+    {
+     "id": "Q05",
+     "title": "Reading a plan",
+     "short_md": "~ resource \"aws_ecs_service\" \"api\" { ~ task_definition = \"api:41\" -> (known after apply) } -/+ resource \"aws_db_instance\" \"main\" { ~ engine_version = \"15.4\" -> \"16.3\" # forces replacement } Plan: 1 to add, 1 to change, 1 to destroy.",
+     "body_md": "```\n  # aws_ecs_service.api will be updated in-place\n  ~ resource \"aws_ecs_service\" \"api\" {\n      ~ task_definition = \"api:41\" -> (known after apply)\n    }\n  # aws_db_instance.main must be replaced\n-/+ resource \"aws_db_instance\" \"main\" {\n      ~ engine_version = \"15.4\" -> \"16.3\" # forces replacement\n    }\nPlan: 1 to add, 1 to change, 1 to destroy.\n```\nAlways look for **`-/+` (replace)** and **`-` (destroy)** on stateful resources (databases, buckets, EFS) and for \"forces replacement\" notes."
+    },
+    {
+     "id": "Q06",
+     "title": "Variables, locals and outputs",
+     "short_md": "variable \"environment\" { type        = string description = \"Deployment environment\" validation { condition     = contains([\"dev\", \"staging\", \"prod\"], var.environment) error_message = \"environment must be dev, staging or prod.\" } } variable \"db_password\" { type = string, sensitive = true }",
+     "body_md": "```hcl\nvariable \"environment\" {\n  type        = string\n  description = \"Deployment environment\"\n  validation {\n    condition     = contains([\"dev\", \"staging\", \"prod\"], var.environment)\n    error_message = \"environment must be dev, staging or prod.\"\n  }\n}\nvariable \"db_password\" { type = string, sensitive = true }\n\nlocals {\n  name_prefix = \"payments-${var.environment}\"          # computed once, reused\n  is_prod     = var.environment == \"prod\"\n}\n\noutput \"bucket_arn\" { value = aws_s3_bucket.docs.arn }\n```\nInputs: `-var`, `*.tfvars`, `TF_VAR_name` env vars. `sensitive = true` hides values in CLI output (but **not** from state)."
+    },
+    {
+     "id": "Q07",
+     "title": "The dependency graph and `depends_on`",
+     "short_md": "Terraform builds a graph from **references** (`aws_subnet.a.id` used in an instance → subnet first) and creates independent resources in parallel. `depends_on` adds a dependency Terraform can't infer (e.g., an IAM policy attachment that must exist before a Lambda runs). Overusing `depends_on` makes plans slower and values unknown longer.",
+     "body_md": "**Short answer:** Terraform builds a graph from **references** (`aws_subnet.a.id` used in an instance → subnet first) and creates independent resources in parallel. `depends_on` adds a dependency Terraform can't infer (e.g., an IAM policy attachment that must exist before a Lambda runs). Overusing `depends_on` makes plans slower and values unknown longer."
+    },
+    {
+     "id": "Q08",
+     "title": "`count` vs `for_each`",
+     "short_md": "Both create multiple instances. `count` indexes by **number** (`[0]`, `[1]`) — removing an item from the middle shifts indexes and **recreates** the following resources. `for_each` keys by **string/map key** — stable identity. Prefer `for_each` for collections.",
+     "body_md": "**Short answer:** Both create multiple instances. `count` indexes by **number** (`[0]`, `[1]`) — removing an item from the middle shifts indexes and **recreates** the following resources. `for_each` keys by **string/map key** — stable identity. Prefer `for_each` for collections.\n\n```hcl\n# ❌ removing \"b\" re-creates \"c\" (index 2 → 1)\nresource \"aws_sqs_queue\" \"q\" {\n  count = length(var.names)\n  name  = var.names[count.index]\n}\n\n# ✅ stable keys\nresource \"aws_sqs_queue\" \"q\" {\n  for_each = toset(var.names)          # or a map of objects\n  name     = each.key\n}\n\n# count is still fine for on/off toggles\nresource \"aws_cloudwatch_dashboard\" \"d\" { count = local.is_prod ? 1 : 0 ... }\n```"
+    },
+    {
+     "id": "Q09",
+     "title": "`lifecycle` settings",
+     "short_md": "resource \"aws_db_instance\" \"main\" { lifecycle { prevent_destroy       = true                 # plan errors if it would be destroyed create_before_destroy = false ignore_changes        = [tags[\"LastBackup\"]] # changed outside TF by design replace_triggered_by  = [aws_kms_key.db.id] precondition { condition     = var.environment != \"prod\" || self.multi_az error_message = \"Prod DB must be Multi-AZ.\" } } }",
+     "body_md": "```hcl\nresource \"aws_db_instance\" \"main\" {\n  # ...\n  lifecycle {\n    prevent_destroy       = true                 # plan errors if it would be destroyed\n    create_before_destroy = false\n    ignore_changes        = [tags[\"LastBackup\"]] # changed outside TF by design\n    replace_triggered_by  = [aws_kms_key.db.id]\n    precondition {\n      condition     = var.environment != \"prod\" || self.multi_az\n      error_message = \"Prod DB must be Multi-AZ.\"\n    }\n  }\n}\n```\n- `create_before_destroy` — build the replacement first (zero-downtime for e.g. launch templates, certs); names must not collide.\n- `ignore_changes` — for attributes managed elsewhere (ECS `desired_count` by autoscaling, `task_definition` by CI deploys). Overuse hides drift."
+    }
+   ]
+  },
+  {
+   "id": "language-features",
+   "num": 3,
+   "title": "Language features",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q10",
+     "title": "Expressions you should know",
+     "short_md": "locals { subnet_ids   = [for s in aws_subnet.private : s.id]                    # for expression by_az        = { for s in aws_subnet.private : s.availability_zone => s.id } public_names = [for n, cfg in var.services : n if cfg.public]          # filter image        = coalesce(var.image_override, \"${aws_ecr_repository.api.repository_url}:${var.tag}\") }",
+     "body_md": "```hcl\nlocals {\n  subnet_ids   = [for s in aws_subnet.private : s.id]                    # for expression\n  by_az        = { for s in aws_subnet.private : s.availability_zone => s.id }\n  public_names = [for n, cfg in var.services : n if cfg.public]          # filter\n  image        = coalesce(var.image_override, \"${aws_ecr_repository.api.repository_url}:${var.tag}\")\n}\n# splat: aws_instance.web[*].id   conditional: var.x ? a : b\n# functions: merge, lookup, try, can, jsonencode, templatefile, cidrsubnet, format\n```"
+    },
+    {
+     "id": "Q11",
+     "title": "Dynamic blocks",
+     "short_md": "resource \"aws_security_group\" \"api\" { dynamic \"ingress\" { for_each = var.allowed_cidrs content { from_port   = 443 to_port     = 443 protocol    = \"tcp\" cidr_blocks = [ingress.value] } } }",
+     "body_md": "```hcl\nresource \"aws_security_group\" \"api\" {\n  dynamic \"ingress\" {\n    for_each = var.allowed_cidrs\n    content {\n      from_port   = 443\n      to_port     = 443\n      protocol    = \"tcp\"\n      cidr_blocks = [ingress.value]\n    }\n  }\n}\n```\nUse sparingly — readability suffers."
+    },
+    {
+     "id": "Q12",
+     "title": "Multiple accounts and regions",
+     "short_md": "provider \"aws\" { region = \"ap-south-1\" } provider \"aws\" { alias  = \"dr\" region = \"ap-southeast-1\" assume_role { role_arn = \"arn:aws:iam::222222222222:role/terraform-deploy\" } } resource \"aws_s3_bucket\" \"replica\" { provider = aws.dr ... }",
+     "body_md": "```hcl\nprovider \"aws\" { region = \"ap-south-1\" }\nprovider \"aws\" {\n  alias  = \"dr\"\n  region = \"ap-southeast-1\"\n  assume_role { role_arn = \"arn:aws:iam::222222222222:role/terraform-deploy\" }\n}\nresource \"aws_s3_bucket\" \"replica\" { provider = aws.dr ... }\n\n# Pass aliased providers into a module\nmodule \"dr_bucket\" {\n  source    = \"./modules/bucket\"\n  providers = { aws = aws.dr }\n}\n```\nAWS provider v6 also allows a per-resource `region` argument for multi-region within one provider configuration."
+    },
+    {
+     "id": "Q13",
+     "title": "Importing existing resources",
+     "short_md": "Bring manually created resources under Terraform management without recreating them. Modern way: `import` blocks (reviewable in plan), optionally generating config.",
+     "body_md": "**Short answer:** Bring manually created resources under Terraform management without recreating them. Modern way: `import` blocks (reviewable in plan), optionally generating config.\n\n```hcl\nimport {\n  to = aws_s3_bucket.legacy\n  id = \"acme-legacy-bucket\"\n}\n```\n```bash\nterraform plan -generate-config-out=generated.tf   # draft HCL for imported resources; then clean it up\n```\nThen plan until there are **no changes** — confirms code matches reality."
+    },
+    {
+     "id": "Q14",
+     "title": "`moved` and `removed` blocks (refactoring safely)",
+     "short_md": "moved {                                  # renamed/moved into module → no destroy/recreate from = aws_s3_bucket.docs to   = module.storage.aws_s3_bucket.docs }",
+     "body_md": "```hcl\nmoved {                                  # renamed/moved into module → no destroy/recreate\n  from = aws_s3_bucket.docs\n  to   = module.storage.aws_s3_bucket.docs\n}\n\nremoved {                                # stop managing, but DON'T delete the real resource\n  from = aws_s3_bucket.old_logs\n  lifecycle { destroy = false }\n}\n```\nReplaces risky manual `terraform state mv` / `state rm` with reviewable code."
+    },
+    {
+     "id": "Q15",
+     "title": "Ephemeral values and write-only arguments (newer Terraform)",
+     "short_md": "Newer Terraform (1.10+) adds **ephemeral** variables/outputs/resources whose values are **never written to state or plan** (e.g., fetch a secret, generate a temporary token), and (1.11+) **write-only arguments** (e.g., `password_wo` on `aws_db_instance`) to send a secret to a resource without storing it in state. This closes the classic \"secrets in state\" problem.",
+     "body_md": "**Short answer:** Newer Terraform (1.10+) adds **ephemeral** variables/outputs/resources whose values are **never written to state or plan** (e.g., fetch a secret, generate a temporary token), and (1.11+) **write-only arguments** (e.g., `password_wo` on `aws_db_instance`) to send a secret to a resource without storing it in state. This closes the classic \"secrets in state\" problem.\n\n```hcl\nephemeral \"aws_secretsmanager_secret_version\" \"db\" { secret_id = aws_secretsmanager_secret.db.id }\n\nresource \"aws_db_instance\" \"main\" {\n  password_wo         = ephemeral.aws_secretsmanager_secret_version.db.secret_string\n  password_wo_version = 1          # bump to rotate\n}\n```\nAlternatively let AWS manage it: `manage_master_user_password = true` (RDS stores it in Secrets Manager)."
+    },
+    {
+     "id": "Q16",
+     "title": "Unknown values (\"known after apply\")",
+     "short_md": "Some attributes (IDs, ARNs, IPs) exist only after creation, so the plan shows `(known after apply)`. Dependent resources may then show changes that only resolve at apply. Using unknown values in `count`/`for_each` keys causes errors (\"value depends on resource attributes that cannot be determined until apply\") — use static keys.",
+     "body_md": "Some attributes (IDs, ARNs, IPs) exist only after creation, so the plan shows `(known after apply)`. Dependent resources may then show changes that only resolve at apply. Using unknown values in `count`/`for_each` keys causes errors (\"value depends on resource attributes that cannot be determined until apply\") — use static keys."
+    },
+    {
+     "id": "Q17",
+     "title": "Checks and validations",
+     "short_md": "`variable` validation, `precondition`/`postcondition` in lifecycle, and `check` blocks (assertions reported as warnings, e.g., \"health endpoint returns 200 after apply\").",
+     "body_md": "`variable` validation, `precondition`/`postcondition` in lifecycle, and `check` blocks (assertions reported as warnings, e.g., \"health endpoint returns 200 after apply\")."
+    }
+   ]
+  },
+  {
+   "id": "state-in-depth",
+   "num": 4,
+   "title": "State in depth",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q18",
+     "title": "Remote backend with locking (S3)",
+     "short_md": "Store state in S3 (versioned, encrypted, private) and enable locking so two applies can't run at once. Terraform 1.10+ supports **S3 native locking** (`use_lockfile = true`, a lock object in the bucket); the older DynamoDB-table locking is deprecated.",
+     "body_md": "**Short answer:** Store state in S3 (versioned, encrypted, private) and enable locking so two applies can't run at once. Terraform 1.10+ supports **S3 native locking** (`use_lockfile = true`, a lock object in the bucket); the older DynamoDB-table locking is deprecated.\n\n```hcl\nterraform {\n  backend \"s3\" {\n    bucket       = \"acme-tfstate-prod\"\n    key          = \"payments/api/terraform.tfstate\"\n    region       = \"ap-south-1\"\n    encrypt      = true\n    use_lockfile = true          # S3-native state locking\n  }\n}\n```\nBucket: versioning ON (recover old state), SSE-KMS, block public access, tight bucket policy, access logging. If a run crashes and leaves a lock: `terraform force-unlock <id>` only after confirming nothing is running."
+    },
+    {
+     "id": "Q19",
+     "title": "Drift — detection and handling",
+     "short_md": "Drift = real infrastructure differs from code/state (someone changed it in the console, or another tool/autoscaling did). Detect with scheduled `terraform plan -detailed-exitcode` (exit 2 = changes) or `plan -refresh-only`. Then decide: **revert** (apply code), **adopt** (update code to match), or **ignore** (`ignore_changes` if managed elsewhere). Prevent with SCPs/IAM restricting console writes, and change processes.",
+     "body_md": "**Short answer:** Drift = real infrastructure differs from code/state (someone changed it in the console, or another tool/autoscaling did). Detect with scheduled `terraform plan -detailed-exitcode` (exit 2 = changes) or `plan -refresh-only`. Then decide: **revert** (apply code), **adopt** (update code to match), or **ignore** (`ignore_changes` if managed elsewhere). Prevent with SCPs/IAM restricting console writes, and change processes."
+    },
+    {
+     "id": "Q20",
+     "title": "Workspaces — and their limits",
+     "short_md": "CLI workspaces give multiple **state files** for the same configuration (`terraform workspace new staging`; `terraform.workspace` in code). Fine for short-lived copies (feature environments). For dev/staging/prod they're weak: same backend, same credentials, easy to apply to the wrong one, environments can't differ structurally. Prefer **separate directories/root modules per environment** (or separate accounts + state files), sharing modules.",
+     "body_md": "**Short answer:** CLI workspaces give multiple **state files** for the same configuration (`terraform workspace new staging`; `terraform.workspace` in code). Fine for short-lived copies (feature environments). For dev/staging/prod they're weak: same backend, same credentials, easy to apply to the wrong one, environments can't differ structurally. Prefer **separate directories/root modules per environment** (or separate accounts + state files), sharing modules."
+    },
+    {
+     "id": "Q21",
+     "title": "`-target` and manual state edits — risks",
+     "short_md": "`-target` applies part of the graph, leaving the rest inconsistent; fine for emergencies, not routine. `terraform state rm/mv` and editing JSON can orphan or duplicate resources. Prefer `moved`/`removed`/`import` blocks; back up state (S3 versioning) before any manual operation.",
+     "body_md": "`-target` applies part of the graph, leaving the rest inconsistent; fine for emergencies, not routine. `terraform state rm/mv` and editing JSON can orphan or duplicate resources. Prefer `moved`/`removed`/`import` blocks; back up state (S3 versioning) before any manual operation."
+    },
+    {
+     "id": "Q22",
+     "title": "Splitting and migrating state",
+     "short_md": "Split large states by **blast radius and lifecycle** (network, data, compute per service). Move resources between states with `removed` (destroy=false) in the old + `import` in the new, or `terraform state mv -state-out` carefully. Plan both sides to confirm no create/destroy.",
+     "body_md": "Split large states by **blast radius and lifecycle** (network, data, compute per service). Move resources between states with `removed` (destroy=false) in the old + `import` in the new, or `terraform state mv -state-out` carefully. Plan both sides to confirm no create/destroy."
+    },
+    {
+     "id": "Q23",
+     "title": "Sharing data between states",
+     "short_md": "Use **data sources** (look up by tag/name), SSM Parameter Store outputs, or `terraform_remote_state` (reads another state's outputs — couples teams to state access). Prefer explicit published outputs (SSM) for loose coupling.",
+     "body_md": "Use **data sources** (look up by tag/name), SSM Parameter Store outputs, or `terraform_remote_state` (reads another state's outputs — couples teams to state access). Prefer explicit published outputs (SSM) for loose coupling."
+    },
+    {
+     "id": "Q24",
+     "title": "State security",
+     "short_md": "State may hold secrets and resource details → encrypt (SSE-KMS), restrict IAM to CI roles, enable versioning, never commit to git, use ephemeral/write-only for secrets, separate state per environment/account.",
+     "body_md": "State may hold secrets and resource details → encrypt (SSE-KMS), restrict IAM to CI roles, enable versioning, never commit to git, use ephemeral/write-only for secrets, separate state per environment/account."
+    },
+    {
+     "id": "Q25",
+     "title": "`.terraform.lock.hcl`",
+     "short_md": "Records exact provider versions + checksums chosen by `init`. Commit it → every machine/CI uses identical providers. Upgrade deliberately with `terraform init -upgrade`.",
+     "body_md": "Records exact provider versions + checksums chosen by `init`. Commit it → every machine/CI uses identical providers. Upgrade deliberately with `terraform init -upgrade`."
+    }
+   ]
+  },
+  {
+   "id": "modules-project-structure",
+   "num": 5,
+   "title": "Modules & project structure",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q26",
+     "title": "What is a module and how do you design one?",
+     "short_md": "A module is a folder of `.tf` files with inputs (variables) and outputs; the root module calls child modules. Good modules have a **clear purpose**, a small set of meaningful inputs, safe defaults, outputs others need, pinned versions, and no hidden provider configuration.",
+     "body_md": "**Short answer:** A module is a folder of `.tf` files with inputs (variables) and outputs; the root module calls child modules. Good modules have a **clear purpose**, a small set of meaningful inputs, safe defaults, outputs others need, pinned versions, and no hidden provider configuration.\n\n```hcl\nmodule \"api_service\" {\n  source  = \"git::https://gitlab.example.com/platform/tf-modules.git//ecs-service?ref=v2.3.0\"\n  name          = \"api\"\n  image         = var.api_image\n  cpu           = 512\n  memory        = 1024\n  desired_count = 3\n  subnet_ids    = module.network.private_subnet_ids\n  target_group_arn = module.alb.target_group_arns[\"api\"]\n}\n```"
+    },
+    {
+     "id": "Q27",
+     "title": "Repository layout",
+     "short_md": "infra/ ├── modules/                    # reusable, versioned │   ├── network/  ecs-service/  rds/  agentcore-runtime/ └── live/                       # root modules = deployable units, one state each ├── prod/ │   ├── network/      (backend key prod/network) │   ├── data/         (rds, s3) │   └── services/api/ └── staging/ ...",
+     "body_md": "```\ninfra/\n├── modules/                    # reusable, versioned\n│   ├── network/  ecs-service/  rds/  agentcore-runtime/\n└── live/                       # root modules = deployable units, one state each\n    ├── prod/\n    │   ├── network/      (backend key prod/network)\n    │   ├── data/         (rds, s3)\n    │   └── services/api/\n    └── staging/ ...\n```\nSplit by environment and by component lifecycle (network rarely changes; services change daily). Tools like Terragrunt or HCP Terraform Stacks help orchestrate many states."
+    },
+    {
+     "id": "Q28",
+     "title": "Module boundaries for ECS workloads",
+     "short_md": "- **Platform module** (once per env): VPC, ECS cluster, ALB, shared security groups, log groups. - **Service module** (per service): task definition, service, autoscaling, target group/listener rule, IAM task role, alarms. - **Deploy concern:** CI updates the image; Terraform owns infra. Use `ignore_changes = [task_definition]` if CI registers task definitions, or let Terraform own it with the image tag as a variable — but pick **one owner**.",
+     "body_md": "- **Platform module** (once per env): VPC, ECS cluster, ALB, shared security groups, log groups.\n- **Service module** (per service): task definition, service, autoscaling, target group/listener rule, IAM task role, alarms.\n- **Deploy concern:** CI updates the image; Terraform owns infra. Use `ignore_changes = [task_definition]` if CI registers task definitions, or let Terraform own it with the image tag as a variable — but pick **one owner**."
+    },
+    {
+     "id": "Q29",
+     "title": "Public registry modules — use or not?",
+     "short_md": "`terraform-aws-modules/*` are well-maintained and save time, but pin versions, read the code, and wrap them in a thin internal module if you need organisational defaults (tags, encryption, logging).",
+     "body_md": "`terraform-aws-modules/*` are well-maintained and save time, but pin versions, read the code, and wrap them in a thin internal module if you need organisational defaults (tags, encryption, logging)."
+    }
+   ]
+  },
+  {
+   "id": "security-testing-ci-cd",
+   "num": 6,
+   "title": "Security, testing & CI/CD",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q30",
+     "title": "Handling secrets in Terraform",
+     "short_md": "Don't put secrets in `.tf`/`tfvars` in git. Options in order of preference: let AWS generate/manage (RDS `manage_master_user_password`), ephemeral resources + write-only arguments, create the secret *container* in Terraform and set the value outside, `sensitive = true` (only hides output). Remember: anything in state is readable by whoever can read state.",
+     "body_md": "Don't put secrets in `.tf`/`tfvars` in git. Options in order of preference: let AWS generate/manage (RDS `manage_master_user_password`), ephemeral resources + write-only arguments, create the secret *container* in Terraform and set the value outside, `sensitive = true` (only hides output). Remember: anything in state is readable by whoever can read state."
+    },
+    {
+     "id": "Q31",
+     "title": "Validating beyond syntax",
+     "short_md": "run \"bucket_is_encrypted\" { command = plan assert { condition     = aws_s3_bucket_server_side_encryption_configuration.docs.rule[0].apply_server_side_encryption_by_default[0].sse_algorithm == \"aws:kms\" error_message = \"Bucket must use KMS encryption\" } }",
+     "body_md": "| Layer | Tool |\n|---|---|\n| Format / syntax | `terraform fmt -check`, `validate` |\n| Lint | TFLint (provider-specific rules, e.g., invalid instance types) |\n| Security / compliance | Checkov, Trivy (tfsec), KICS |\n| Policy as code on the plan | OPA/Conftest, Sentinel (HCP), on `terraform show -json` |\n| Unit/integration tests | **`terraform test`** (`*.tftest.hcl`, can mock providers), Terratest (Go) |\n| Cost | Infracost on the plan |\n\n```hcl\n# tests/bucket.tftest.hcl\nrun \"bucket_is_encrypted\" {\n  command = plan\n  assert {\n    condition     = aws_s3_bucket_server_side_encryption_configuration.docs.rule[0].apply_server_side_encryption_by_default[0].sse_algorithm == \"aws:kms\"\n    error_message = \"Bucket must use KMS encryption\"\n  }\n}\n```"
+    },
+    {
+     "id": "Q32",
+     "title": "Secure Terraform execution in CI",
+     "short_md": "OIDC short-lived credentials (no static keys); **separate roles**: read-only for `plan` on MRs, write role for `apply` only on protected branch/environment; one state lock per environment + `resource_group`; apply the saved plan; pinned providers/modules; protected `.gitlab-ci.yml`; audit with CloudTrail; restrict state bucket access to these roles.",
+     "body_md": "OIDC short-lived credentials (no static keys); **separate roles**: read-only for `plan` on MRs, write role for `apply` only on protected branch/environment; one state lock per environment + `resource_group`; apply the saved plan; pinned providers/modules; protected `.gitlab-ci.yml`; audit with CloudTrail; restrict state bucket access to these roles."
+    },
+    {
+     "id": "Q33",
+     "title": "Zero-downtime replacements",
+     "short_md": "When a change forces replacement: `create_before_destroy` for stateless resources (launch templates, certs, target groups — needs unique/prefix names), blue/green at the service level, for databases avoid replacement entirely (in-place modifications, snapshots, migration plans). Check the plan for `-/+` before apply.",
+     "body_md": "When a change forces replacement: `create_before_destroy` for stateless resources (launch templates, certs, target groups — needs unique/prefix names), blue/green at the service level, for databases avoid replacement entirely (in-place modifications, snapshots, migration plans). Check the plan for `-/+` before apply."
+    },
+    {
+     "id": "Q34",
+     "title": "`prevent_destroy` and other guardrails for prod",
+     "short_md": "`prevent_destroy` on stateful resources, deletion protection flags (RDS, ALB, DynamoDB), S3 `force_destroy = false`, plan review policies that fail on destroying tagged critical resources, IAM deny for `Delete*` on protected resources outside break-glass.",
+     "body_md": "`prevent_destroy` on stateful resources, deletion protection flags (RDS, ALB, DynamoDB), S3 `force_destroy = false`, plan review policies that fail on destroying tagged critical resources, IAM deny for `Delete*` on protected resources outside break-glass."
+    },
+    {
+     "id": "Q35",
+     "title": "Terraform vs CloudFormation/CDK — trade-offs",
+     "short_md": "Terraform: multi-cloud/SaaS providers, explicit state, plan output, large community; you manage state. CloudFormation: AWS-managed state, stack rollback, StackSets, drift detection; AWS-only, sometimes slower to support new features. CDK: real languages and abstractions over CloudFormation. Pick per organisation standards and team skills.",
+     "body_md": "Terraform: multi-cloud/SaaS providers, explicit state, plan output, large community; you manage state. CloudFormation: AWS-managed state, stack rollback, StackSets, drift detection; AWS-only, sometimes slower to support new features. CDK: real languages and abstractions over CloudFormation. Pick per organisation standards and team skills."
+    }
+   ]
+  },
+  {
+   "id": "scenario-debugging-questions",
+   "num": 7,
+   "title": "Scenario & debugging questions",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q36",
+     "title": "Plan wants to destroy a production resource unexpectedly",
+     "short_md": "**Stop — don't apply.** Read *why*: renamed resource or module path (→ `moved` block), `count` index shift (→ `for_each`), attribute that forces replacement (→ revert or plan migration), provider upgrade changed defaults (→ pin/adjust), wrong workspace/backend key (→ check `init` output), resource removed from code by mistake. Fix in code until the plan shows no destroy; add `prevent_destroy` going forward.",
+     "body_md": "**Stop — don't apply.** Read *why*: renamed resource or module path (→ `moved` block), `count` index shift (→ `for_each`), attribute that forces replacement (→ revert or plan migration), provider upgrade changed defaults (→ pin/adjust), wrong workspace/backend key (→ check `init` output), resource removed from code by mistake. Fix in code until the plan shows no destroy; add `prevent_destroy` going forward."
+    },
+    {
+     "id": "Q37",
+     "title": "ECS task definition changes but the service doesn't deploy new tasks",
+     "short_md": "`ignore_changes = [task_definition]` on the service; the service references an old revision/data source; deployment circuit breaker rolled back (check service events); new tasks failing health checks; image tag unchanged (`latest`) so nothing new was pulled → use immutable tags / `force_new_deployment`.",
+     "body_md": "`ignore_changes = [task_definition]` on the service; the service references an old revision/data source; deployment circuit breaker rolled back (check service events); new tasks failing health checks; image tag unchanged (`latest`) so nothing new was pulled → use immutable tags / `force_new_deployment`."
+    },
+    {
+     "id": "Q38",
+     "title": "\"Error acquiring the state lock\"",
+     "short_md": "Another run is active (wait) or a crashed run left the lock. Confirm in CI that no apply is running, then `terraform force-unlock <LOCK_ID>`. Prevent with `resource_group` and one pipeline per environment.",
+     "body_md": "Another run is active (wait) or a crashed run left the lock. Confirm in CI that no apply is running, then `terraform force-unlock <LOCK_ID>`. Prevent with `resource_group` and one pipeline per environment."
+    },
+    {
+     "id": "Q39",
+     "title": "Someone changed a security group in the console",
+     "short_md": "`plan` shows drift. Determine if the change was an emergency fix (adopt into code via PR) or unauthorised (revert by apply, investigate via CloudTrail). Add drift detection schedule and restrict console write permissions.",
+     "body_md": "`plan` shows drift. Determine if the change was an emergency fix (adopt into code via PR) or unauthorised (revert by apply, investigate via CloudTrail). Add drift detection schedule and restrict console write permissions."
+    },
+    {
+     "id": "Q40",
+     "title": "Provider upgrade breaks plans",
+     "short_md": "Read the provider upgrade guide (major versions rename/remove arguments), upgrade in a branch with `init -upgrade`, fix deprecations, run plans for every environment and confirm no unexpected replacements, then merge the new lockfile.",
+     "body_md": "Read the provider upgrade guide (major versions rename/remove arguments), upgrade in a branch with `init -upgrade`, fix deprecations, run plans for every environment and confirm no unexpected replacements, then merge the new lockfile."
+    },
+    {
+     "id": "Q41",
+     "title": "Bootstrap an enterprise multi-account AWS platform",
+     "short_md": "Management account ── AWS Organizations + IAM Identity Center (SSO) + SCPs ├── Security OU: log-archive (CloudTrail org trail, Config), security-tooling (GuardDuty, Security Hub) ├── Infrastructure OU: network (Transit Gateway, shared VPCs, DNS), shared-services (CI runners, ECR) └── Workloads OU: payments-dev / -staging / -prod accounts Tools: Control Tower / Account Factory for Terraform (AFT) to vend accounts with baselines Terraform: state bucket per account/env, OIDC roles per pipeline, modules for baselines",
+     "body_md": "```\n Management account ── AWS Organizations + IAM Identity Center (SSO) + SCPs\n   ├── Security OU: log-archive (CloudTrail org trail, Config), security-tooling (GuardDuty, Security Hub)\n   ├── Infrastructure OU: network (Transit Gateway, shared VPCs, DNS), shared-services (CI runners, ECR)\n   └── Workloads OU: payments-dev / -staging / -prod accounts\n Tools: Control Tower / Account Factory for Terraform (AFT) to vend accounts with baselines\n Terraform: state bucket per account/env, OIDC roles per pipeline, modules for baselines\n```\nExplain: blast-radius isolation per account, centralised logging/security, guardrails via SCPs, automated account vending."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 8,
+   "title": "Cheat sheet",
+   "intro_md": "| Concept | One-liner |\n|---|---|\n| Declarative | describe desired state; TF diffs and converges |\n| State | maps code addresses → real IDs; may contain secrets |\n| Backend | S3 + `use_lockfile`, encrypted, versioned |\n| Plan symbols | `+` create, `~` update, `-/+` replace, `-` destroy |\n| Resource vs data | manage vs read |\n| `for_each` > `count` | stable keys, no index shift |\n| lifecycle | prevent_destroy, create_before_destroy, ignore_changes |\n| Refactor | `moved`, `removed`, `import` blocks |\n| Secrets | ephemeral + write-only, AWS-managed passwords |\n| Drift | scheduled plan; revert/adopt/ignore |\n| Workspaces | not for prod env separation |\n| Modules | clear inputs/outputs, pinned versions |\n| Testing | validate, TFLint, Checkov, `terraform test`, OPA on plan |\n| CI | OIDC, plan role vs apply role, saved plan, one lock per env |",
+   "questions": []
+  },
+  {
+   "id": "official-references",
+   "num": null,
+   "title": "Official references",
+   "intro_md": "- https://developer.hashicorp.com/terraform/docs\n- State & backends: https://developer.hashicorp.com/terraform/language/state · https://developer.hashicorp.com/terraform/language/backend/s3\n- Refactoring (`moved`): https://developer.hashicorp.com/terraform/language/modules/develop/refactoring\n- Import blocks: https://developer.hashicorp.com/terraform/language/import\n- Ephemeral & write-only: https://developer.hashicorp.com/terraform/language/manage-sensitive-data\n- Tests: https://developer.hashicorp.com/terraform/language/tests\n- AWS provider: https://registry.terraform.io/providers/hashicorp/aws/latest/docs",
+   "questions": []
+  }
+ ]
+}

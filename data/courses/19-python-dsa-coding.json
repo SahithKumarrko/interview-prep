@@ -1,0 +1,393 @@
+{
+ "slug": "19-python-dsa-coding",
+ "num": 19,
+ "title": "Python Algorithms & Coding",
+ "full_title": "Python Algorithms & Coding: Interview Preparation",
+ "group": "Design & Coding",
+ "accent": "#f59e0b",
+ "updated": "24 October 2026",
+ "level": "complexity basics → core patterns with code → scale & concurrency problems",
+ "source": "docs/19_Python_DSA_Coding.md",
+ "question_count": 45,
+ "section_count": 14,
+ "sections": [
+  {
+   "id": "how-to-approach-a-coding-interview",
+   "num": 1,
+   "title": "How to approach a coding interview",
+   "intro_md": "```\n 1. Clarify     inputs, outputs, constraints (n up to?), duplicates? negatives? empty? sorted?\n 2. Examples    walk 1 normal + 2 edge cases by hand\n 3. Brute force state it + its complexity (shows you understand the problem)\n 4. Optimise    which pattern removes the repeated work? (see map below)\n 5. Code        clean names, helper functions, no premature cleverness\n 6. Test        run through your examples, then edge cases (empty, one item, all same, large)\n 7. Complexity  time AND space, explain why\n```\n\n**Constraint → expected complexity:**\n| n | Acceptable |\n|---|---|\n| ≤ 20 | O(2ⁿ), O(n!) backtracking |\n| ≤ 10³ | O(n²) |\n| ≤ 10⁵–10⁶ | O(n log n) or O(n) |\n| ≥ 10⁸ / streaming | O(n) single pass, O(1)/O(log n) memory, or distributed |",
+   "questions": []
+  },
+  {
+   "id": "pattern-recognition-map",
+   "num": 2,
+   "title": "Pattern recognition map",
+   "intro_md": "| Clue in the problem | Pattern |\n|---|---|\n| \"find pair/complement\", \"seen before\", counting | **Hash map / set** |\n| sorted array, pair with target, palindrome, in-place | **Two pointers** |\n| longest/shortest **contiguous** subarray/substring with condition | **Sliding window** |\n| sum of range, subarray sum = k | **Prefix sums** (+ hash map) |\n| sorted / monotonic answer space, \"minimum X such that…\" | **Binary search** |\n| top-k, k-th largest, merge k sorted, scheduling | **Heap** |\n| next greater/smaller element, histogram | **Monotonic stack** |\n| matching brackets, undo, evaluate expressions | **Stack** |\n| overlapping ranges, meetings | **Sort + intervals** |\n| shortest path in unweighted graph / grid, levels | **BFS** |\n| connected components, all paths, cycle detection | **DFS** |\n| dependencies, ordering, prerequisites | **Topological sort** |\n| weighted shortest path (non-negative) | **Dijkstra** |\n| dynamic connectivity, grouping | **Union-Find** |\n| prefix search, autocomplete | **Trie** |\n| all combinations/permutations/subsets | **Backtracking** |\n| optimal value with overlapping subproblems (\"max/min/number of ways\") | **Dynamic programming** |\n| O(1) get/put with eviction | **Hash map + doubly linked list (LRU)** |",
+   "questions": []
+  },
+  {
+   "id": "complexity",
+   "num": 3,
+   "title": "Complexity",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q01",
+     "title": "How do you analyse time and space complexity?",
+     "short_md": "Count how the number of operations grows with input size n, keep the dominant term, drop constants. Space = extra memory beyond the input (include recursion stack).",
+     "body_md": "**Short answer:** Count how the number of operations grows with input size n, keep the dominant term, drop constants. Space = extra memory beyond the input (include recursion stack).\n\n| Big-O | Example |\n|---|---|\n| O(1) | dict lookup, list append |\n| O(log n) | binary search, heap push/pop |\n| O(n) | single loop, `x in list` |\n| O(n log n) | sorting |\n| O(n²) | nested loops over n |\n| O(2ⁿ) | all subsets |\n\n**Python costs to know:** `list.append/pop()` O(1) amortised; `list.insert(0,x)` / `pop(0)` O(n) → use `deque`; `x in set/dict` O(1) avg; `x in list` O(n); slicing `a[i:j]` O(j−i) copy; string `+=` in loop can be O(n²) → `\"\".join(parts)`; `sorted` O(n log n)."
+    },
+    {
+     "id": "Q02",
+     "title": "What is amortised complexity?",
+     "short_md": "Average cost per operation over a sequence, even if some operations are expensive. A Python list over-allocates; occasionally `append` copies everything (O(n)), but averaged over many appends it's O(1).",
+     "body_md": "**Short answer:** Average cost per operation over a sequence, even if some operations are expensive. A Python list over-allocates; occasionally `append` copies everything (O(n)), but averaged over many appends it's O(1)."
+    },
+    {
+     "id": "Q03",
+     "title": "Recursion depth and space",
+     "short_md": "Each recursive call uses a stack frame → DFS on a 10⁵-deep chain hits Python's default recursion limit (~1000) → use iterative versions with an explicit stack, or `sys.setrecursionlimit` cautiously.",
+     "body_md": "Each recursive call uses a stack frame → DFS on a 10⁵-deep chain hits Python's default recursion limit (~1000) → use iterative versions with an explicit stack, or `sys.setrecursionlimit` cautiously."
+    }
+   ]
+  },
+  {
+   "id": "arrays-hashing-strings",
+   "num": 4,
+   "title": "Arrays, hashing, strings",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q04",
+     "title": "Frequency counting with hash maps",
+     "short_md": "from collections import Counter, defaultdict",
+     "body_md": "```python\nfrom collections import Counter, defaultdict\n\ndef top_words(text: str, k: int) -> list[tuple[str, int]]:\n    return Counter(text.lower().split()).most_common(k)       # O(n + m log k)\n\ndef group_anagrams(words: list[str]) -> list[list[str]]:\n    groups = defaultdict(list)\n    for w in words:\n        groups[tuple(sorted(w))].append(w)                    # key = sorted letters\n    return list(groups.values())                              # O(n · L log L)\n```"
+    },
+    {
+     "id": "Q05",
+     "title": "Two Sum (classic hash-map problem)",
+     "short_md": "**Idea:** for each number, check whether its complement was seen before. One pass, O(n) time, O(n) space (brute force O(n²)).",
+     "body_md": "**Idea:** for each number, check whether its complement was seen before. One pass, O(n) time, O(n) space (brute force O(n²)).\n\n```python\ndef two_sum(nums: list[int], target: int) -> list[int]:\n    seen = {}                                   # value -> index\n    for i, x in enumerate(nums):\n        if target - x in seen:\n            return [seen[target - x], i]\n        seen[x] = i\n    return []\n# two_sum([2, 7, 11, 15], 9) -> [0, 1]\n```"
+    },
+    {
+     "id": "Q06",
+     "title": "Two pointers",
+     "short_md": "**When:** sorted input, pairs, reversing, removing duplicates in place, palindromes.",
+     "body_md": "**When:** sorted input, pairs, reversing, removing duplicates in place, palindromes.\n\n```python\ndef pair_sum_sorted(nums: list[int], target: int) -> tuple[int, int] | None:\n    lo, hi = 0, len(nums) - 1\n    while lo < hi:\n        s = nums[lo] + nums[hi]\n        if s == target: return lo, hi\n        if s < target: lo += 1        # need bigger sum\n        else: hi -= 1                 # need smaller sum\n    return None                       # O(n) time, O(1) space\n\ndef is_palindrome(s: str) -> bool:\n    t = [c.lower() for c in s if c.isalnum()]\n    return t == t[::-1]\n```"
+    },
+    {
+     "id": "Q07",
+     "title": "Sliding window",
+     "short_md": "**When:** best contiguous subarray/substring under a condition. Expand right; shrink left while the window is invalid.",
+     "body_md": "**When:** best contiguous subarray/substring under a condition. Expand right; shrink left while the window is invalid.\n\n```python\ndef longest_unique_substring(s: str) -> int:\n    last = {}                        # char -> last index\n    left = best = 0\n    for right, ch in enumerate(s):\n        if ch in last and last[ch] >= left:\n            left = last[ch] + 1      # shrink past the duplicate\n        last[ch] = right\n        best = max(best, right - left + 1)\n    return best                      # \"abcabcbb\" -> 3, O(n)\n\ndef max_sum_k(nums: list[int], k: int) -> int:          # fixed-size window\n    window = sum(nums[:k]); best = window\n    for i in range(k, len(nums)):\n        window += nums[i] - nums[i - k]\n        best = max(best, window)\n    return best\n```"
+    },
+    {
+     "id": "Q08",
+     "title": "Prefix sums",
+     "short_md": "**When:** many range-sum queries, or count subarrays with sum = k.",
+     "body_md": "**When:** many range-sum queries, or count subarrays with sum = k.\n\n```python\nfrom itertools import accumulate\nprefix = [0, *accumulate(nums)]               # prefix[i] = sum(nums[:i])\nrange_sum = lambda i, j: prefix[j + 1] - prefix[i]   # O(1) per query\n\ndef subarray_sum_equals_k(nums: list[int], k: int) -> int:\n    count, running = 0, 0\n    seen = {0: 1}                             # prefix sum -> occurrences\n    for x in nums:\n        running += x\n        count += seen.get(running - k, 0)     # earlier prefix that makes a sum of k\n        seen[running] = seen.get(running, 0) + 1\n    return count                              # O(n); works with negatives (window doesn't)\n```"
+    },
+    {
+     "id": "Q09",
+     "title": "Binary search (and its invariant)",
+     "short_md": "**Invariant:** the answer always stays inside `[lo, hi]`. Also used on an **answer space** (\"minimum capacity to ship in D days\").",
+     "body_md": "**Invariant:** the answer always stays inside `[lo, hi]`. Also used on an **answer space** (\"minimum capacity to ship in D days\").\n\n```python\ndef first_ge(nums: list[int], target: int) -> int:\n    \"\"\"Index of first element >= target (len(nums) if none). Same as bisect_left.\"\"\"\n    lo, hi = 0, len(nums)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if nums[mid] < target: lo = mid + 1\n        else: hi = mid\n    return lo\n\ndef min_capacity(weights: list[int], days: int) -> int:\n    def ok(cap):                                  # can we ship within `days`?\n        need, load = 1, 0\n        for w in weights:\n            if load + w > cap: need, load = need + 1, 0\n            load += w\n        return need <= days\n    lo, hi = max(weights), sum(weights)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if ok(mid): hi = mid\n        else: lo = mid + 1\n    return lo\n```\n`import bisect` gives `bisect_left/bisect_right/insort`."
+    },
+    {
+     "id": "Q10",
+     "title": "Sorting — when is it the right tool?",
+     "short_md": "Python's `sort` is **Timsort**-derived (since 3.11 its merge order uses **Powersort**): O(n log n) worst, O(n) on nearly sorted data, **stable**. Sorting often turns a hard problem into a scan (intervals, dedupe, closest pairs). Custom order with `key=`.",
+     "body_md": "Python's `sort` is **Timsort**-derived (since 3.11 its merge order uses **Powersort**): O(n log n) worst, O(n) on nearly sorted data, **stable**. Sorting often turns a hard problem into a scan (intervals, dedupe, closest pairs). Custom order with `key=`.\n\n```python\npeople.sort(key=lambda p: (-p.score, p.name))     # score desc, name asc\n```"
+    },
+    {
+     "id": "Q11",
+     "title": "Merge overlapping intervals",
+     "short_md": "def merge(intervals: list[list[int]]) -> list[list[int]]: intervals.sort(key=lambda x: x[0]) merged = [] for start, end in intervals: if merged and start <= merged[-1][1]: merged[-1][1] = max(merged[-1][1], end)   # overlap → extend else: merged.append([start, end]) return merged                                      # [[1,3],[2,6],[8,10]] -> [[1,6],[8,10]]",
+     "body_md": "```python\ndef merge(intervals: list[list[int]]) -> list[list[int]]:\n    intervals.sort(key=lambda x: x[0])\n    merged = []\n    for start, end in intervals:\n        if merged and start <= merged[-1][1]:\n            merged[-1][1] = max(merged[-1][1], end)   # overlap → extend\n        else:\n            merged.append([start, end])\n    return merged                                      # [[1,3],[2,6],[8,10]] -> [[1,6],[8,10]]\n```\nO(n log n). Related: meeting rooms (sort starts and ends, or heap of end times)."
+    }
+   ]
+  },
+  {
+   "id": "stacks-queues-heaps",
+   "num": 5,
+   "title": "Stacks, queues, heaps",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q12",
+     "title": "Stack vs queue vs deque",
+     "short_md": "Stack = LIFO (`list.append/pop`); Queue = FIFO (`collections.deque.append/popleft`, O(1)); Deque = both ends O(1). `queue.Queue` is thread-safe (for producer/consumer threads); `asyncio.Queue` for coroutines.",
+     "body_md": "Stack = LIFO (`list.append/pop`); Queue = FIFO (`collections.deque.append/popleft`, O(1)); Deque = both ends O(1). `queue.Queue` is thread-safe (for producer/consumer threads); `asyncio.Queue` for coroutines.\n\n```python\ndef valid_brackets(s: str) -> bool:\n    pairs = {\")\": \"(\", \"]\": \"[\", \"}\": \"{\"}\n    stack = []\n    for ch in s:\n        if ch in \"([{\": stack.append(ch)\n        elif not stack or stack.pop() != pairs[ch]: return False\n    return not stack\n```"
+    },
+    {
+     "id": "Q13",
+     "title": "Monotonic stack",
+     "short_md": "**When:** \"next greater/smaller element\", stock span, largest rectangle. Keep the stack increasing/decreasing; each element pushed/popped once → O(n).",
+     "body_md": "**When:** \"next greater/smaller element\", stock span, largest rectangle. Keep the stack increasing/decreasing; each element pushed/popped once → O(n).\n\n```python\ndef next_greater(nums: list[int]) -> list[int]:\n    res = [-1] * len(nums)\n    stack = []                                   # indices with decreasing values\n    for i, x in enumerate(nums):\n        while stack and nums[stack[-1]] < x:\n            res[stack.pop()] = x                 # x is the next greater for that index\n        stack.append(i)\n    return res                                   # [2,1,2,4,3] -> [4,2,4,-1,-1]\n```"
+    },
+    {
+     "id": "Q14",
+     "title": "Heaps for top-k",
+     "short_md": "Python `heapq` is a **min-heap**. For top-k largest keep a min-heap of size k: O(n log k), memory O(k) — works on streams.",
+     "body_md": "Python `heapq` is a **min-heap**. For top-k largest keep a min-heap of size k: O(n log k), memory O(k) — works on streams.\n\n```python\nimport heapq\ndef top_k(nums, k):\n    heap = []\n    for x in nums:\n        heapq.heappush(heap, x)\n        if len(heap) > k:\n            heapq.heappop(heap)          # drop the smallest\n    return sorted(heap, reverse=True)\n# shortcuts: heapq.nlargest(k, nums), heapq.merge(*sorted_lists)\n# max-heap trick: push -x\n```"
+    },
+    {
+     "id": "Q15",
+     "title": "Merge k sorted lists / streams",
+     "short_md": "Push the first element of each list with its source index; pop smallest, push next from the same source. O(N log k).",
+     "body_md": "Push the first element of each list with its source index; pop smallest, push next from the same source. O(N log k)."
+    }
+   ]
+  },
+  {
+   "id": "linked-lists",
+   "num": 6,
+   "title": "Linked lists",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q16",
+     "title": "Reverse a linked list",
+     "short_md": "class Node: def __init__(self, val, next=None): self.val, self.next = val, next",
+     "body_md": "```python\nclass Node:\n    def __init__(self, val, next=None): self.val, self.next = val, next\n\ndef reverse(head: Node | None) -> Node | None:\n    prev = None\n    while head:\n        head.next, prev, head = prev, head, head.next   # re-point, advance\n    return prev                                          # O(n) time, O(1) space\n```\nExplain it step by step: keep `prev`, save `next`, point current back, move both forward."
+    },
+    {
+     "id": "Q17",
+     "title": "Fast & slow pointers",
+     "short_md": "Detect a cycle (Floyd), find the middle, k-th from end.",
+     "body_md": "Detect a cycle (Floyd), find the middle, k-th from end.\n\n```python\ndef has_cycle(head):\n    slow = fast = head\n    while fast and fast.next:\n        slow, fast = slow.next, fast.next.next\n        if slow is fast: return True\n    return False\n```"
+    }
+   ]
+  },
+  {
+   "id": "trees-tries",
+   "num": 7,
+   "title": "Trees & tries",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q18",
+     "title": "Tree traversals",
+     "short_md": "class TreeNode: def __init__(self, val, left=None, right=None): self.val, self.left, self.right = val, left, right",
+     "body_md": "```python\nclass TreeNode:\n    def __init__(self, val, left=None, right=None): self.val, self.left, self.right = val, left, right\n\ndef inorder(root):                       # left, node, right → sorted order for a BST\n    return inorder(root.left) + [root.val] + inorder(root.right) if root else []\n\nfrom collections import deque\ndef level_order(root):                   # BFS by levels\n    if not root: return []\n    out, q = [], deque([root])\n    while q:\n        level = []\n        for _ in range(len(q)):\n            n = q.popleft(); level.append(n.val)\n            if n.left: q.append(n.left)\n            if n.right: q.append(n.right)\n        out.append(level)\n    return out\n```\nPreorder (node first — copy/serialise), postorder (children first — delete, compute heights)."
+    },
+    {
+     "id": "Q19",
+     "title": "Common tree recursion: depth, validate BST",
+     "short_md": "def max_depth(root): return 1 + max(max_depth(root.left), max_depth(root.right)) if root else 0",
+     "body_md": "```python\ndef max_depth(root): return 1 + max(max_depth(root.left), max_depth(root.right)) if root else 0\n\ndef is_bst(root, lo=float(\"-inf\"), hi=float(\"inf\")):\n    if not root: return True\n    if not (lo < root.val < hi): return False\n    return is_bst(root.left, lo, root.val) and is_bst(root.right, root.val, hi)\n```"
+    },
+    {
+     "id": "Q20",
+     "title": "Trie (prefix tree)",
+     "short_md": "**When:** prefix search/autocomplete, many words sharing prefixes. Insert/search O(L).",
+     "body_md": "**When:** prefix search/autocomplete, many words sharing prefixes. Insert/search O(L).\n\n```python\nclass Trie:\n    def __init__(self): self.root = {}\n    def insert(self, word):\n        node = self.root\n        for ch in word: node = node.setdefault(ch, {})\n        node[\"$\"] = True                       # end marker\n    def starts_with(self, prefix):\n        node = self.root\n        for ch in prefix:\n            if ch not in node: return False\n            node = node[ch]\n        return True\n```"
+    },
+    {
+     "id": "Q21",
+     "title": "BST vs balanced trees vs sorted containers",
+     "short_md": "BST operations are O(h) — O(n) if unbalanced. Balanced trees (AVL/red-black) keep O(log n). In Python interviews, `bisect` on a sorted list (O(n) insert) or `sortedcontainers.SortedList` (O(log n)) are practical substitutes.",
+     "body_md": "BST operations are O(h) — O(n) if unbalanced. Balanced trees (AVL/red-black) keep O(log n). In Python interviews, `bisect` on a sorted list (O(n) insert) or `sortedcontainers.SortedList` (O(log n)) are practical substitutes."
+    }
+   ]
+  },
+  {
+   "id": "graphs",
+   "num": 8,
+   "title": "Graphs",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q22",
+     "title": "Representing graphs",
+     "short_md": "Adjacency list (`dict[node, list[node]]`) — memory O(V+E), best for sparse graphs. Adjacency matrix O(V²). Grids are implicit graphs (neighbours = 4 directions).",
+     "body_md": "Adjacency list (`dict[node, list[node]]`) — memory O(V+E), best for sparse graphs. Adjacency matrix O(V²). Grids are implicit graphs (neighbours = 4 directions)."
+    },
+    {
+     "id": "Q23",
+     "title": "BFS and DFS",
+     "short_md": "**BFS** explores level by level (queue) → shortest path in **unweighted** graphs. **DFS** goes deep (stack/recursion) → components, cycle detection, paths. Both O(V + E).",
+     "body_md": "**BFS** explores level by level (queue) → shortest path in **unweighted** graphs. **DFS** goes deep (stack/recursion) → components, cycle detection, paths. Both O(V + E).\n\n```python\nfrom collections import deque\ndef shortest_path_grid(grid, start, goal):\n    rows, cols = len(grid), len(grid[0])\n    q, dist = deque([start]), {start: 0}\n    while q:\n        r, c = q.popleft()\n        if (r, c) == goal: return dist[(r, c)]\n        for dr, dc in ((1,0), (-1,0), (0,1), (0,-1)):\n            nr, nc = r + dr, c + dc\n            if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == 0 and (nr, nc) not in dist:\n                dist[(nr, nc)] = dist[(r, c)] + 1\n                q.append((nr, nc))\n    return -1\n\ndef count_islands(grid):\n    seen, count = set(), 0\n    def dfs(r, c):\n        stack = [(r, c)]\n        while stack:\n            r, c = stack.pop()\n            if (r, c) in seen or not (0 <= r < len(grid) and 0 <= c < len(grid[0])) or grid[r][c] != \"1\":\n                continue\n            seen.add((r, c))\n            stack += [(r+1, c), (r-1, c), (r, c+1), (r, c-1)]\n    for r in range(len(grid)):\n        for c in range(len(grid[0])):\n            if grid[r][c] == \"1\" and (r, c) not in seen:\n                dfs(r, c); count += 1\n    return count\n```"
+    },
+    {
+     "id": "Q24",
+     "title": "Cycle detection in a directed graph",
+     "short_md": "DFS with three colours: white (unvisited), grey (on current path), black (done). Reaching a **grey** node = back edge = cycle. (Or Kahn's algorithm: if topological sort can't include all nodes, there's a cycle.)",
+     "body_md": "DFS with three colours: white (unvisited), grey (on current path), black (done). Reaching a **grey** node = back edge = cycle. (Or Kahn's algorithm: if topological sort can't include all nodes, there's a cycle.)\n\n```python\ndef has_cycle(graph: dict[str, list[str]]) -> bool:\n    WHITE, GREY, BLACK = 0, 1, 2\n    color = {n: WHITE for n in graph}\n    def visit(n):\n        color[n] = GREY\n        for m in graph.get(n, []):\n            if color.get(m, WHITE) == GREY: return True\n            if color.get(m, WHITE) == WHITE and visit(m): return True\n        color[n] = BLACK\n        return False\n    return any(color[n] == WHITE and visit(n) for n in graph)\n```"
+    },
+    {
+     "id": "Q25",
+     "title": "Topological sort (Kahn's algorithm)",
+     "short_md": "**When:** order tasks with dependencies (build steps, course prerequisites, workflow DAGs — like Terraform's graph or `needs:` in CI).",
+     "body_md": "**When:** order tasks with dependencies (build steps, course prerequisites, workflow DAGs — like Terraform's graph or `needs:` in CI).\n\n```python\nfrom collections import deque, defaultdict\ndef topo_order(n: int, edges: list[tuple[int, int]]) -> list[int]:\n    indeg, adj = [0] * n, defaultdict(list)\n    for a, b in edges:                    # a must come before b\n        adj[a].append(b); indeg[b] += 1\n    q = deque(i for i in range(n) if indeg[i] == 0)\n    order = []\n    while q:\n        u = q.popleft(); order.append(u)\n        for v in adj[u]:\n            indeg[v] -= 1\n            if indeg[v] == 0: q.append(v)\n    return order if len(order) == n else []   # [] → cycle exists\n```"
+    },
+    {
+     "id": "Q26",
+     "title": "Dijkstra's algorithm",
+     "short_md": "**When:** shortest path with **non-negative** weights. Min-heap of (distance, node). O((V + E) log V). Negative weights → Bellman-Ford.",
+     "body_md": "**When:** shortest path with **non-negative** weights. Min-heap of (distance, node). O((V + E) log V). Negative weights → Bellman-Ford.\n\n```python\nimport heapq\ndef dijkstra(graph: dict[str, list[tuple[str, int]]], src: str) -> dict[str, int]:\n    dist = {src: 0}\n    heap = [(0, src)]\n    while heap:\n        d, u = heapq.heappop(heap)\n        if d > dist.get(u, float(\"inf\")): continue         # stale entry\n        for v, w in graph.get(u, []):\n            nd = d + w\n            if nd < dist.get(v, float(\"inf\")):\n                dist[v] = nd\n                heapq.heappush(heap, (nd, v))\n    return dist\n```"
+    },
+    {
+     "id": "Q27",
+     "title": "Union-Find (Disjoint Set Union)",
+     "short_md": "**When:** grouping/connectivity queries, merging duplicates, Kruskal's MST. With path compression + union by rank, operations are ~O(1) (inverse Ackermann).",
+     "body_md": "**When:** grouping/connectivity queries, merging duplicates, Kruskal's MST. With path compression + union by rank, operations are ~O(1) (inverse Ackermann).\n\n```python\nclass DSU:\n    def __init__(self, n): self.parent, self.rank = list(range(n)), [0] * n\n    def find(self, x):\n        while self.parent[x] != x:\n            self.parent[x] = self.parent[self.parent[x]]   # path compression (halving)\n            x = self.parent[x]\n        return x\n    def union(self, a, b):\n        ra, rb = self.find(a), self.find(b)\n        if ra == rb: return False\n        if self.rank[ra] < self.rank[rb]: ra, rb = rb, ra\n        self.parent[rb] = ra\n        self.rank[ra] += self.rank[ra] == self.rank[rb]\n        return True\n```"
+    }
+   ]
+  },
+  {
+   "id": "recursion-backtracking-dynamic-programming",
+   "num": 9,
+   "title": "Recursion, backtracking, dynamic programming",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q28",
+     "title": "When is recursion appropriate?",
+     "short_md": "When the problem is naturally recursive (trees, divide-and-conquer, backtracking). Risks: recursion limit, repeated work (→ memoise), extra stack memory. Always define the base case first.",
+     "body_md": "When the problem is naturally recursive (trees, divide-and-conquer, backtracking). Risks: recursion limit, repeated work (→ memoise), extra stack memory. Always define the base case first."
+    },
+    {
+     "id": "Q29",
+     "title": "Backtracking",
+     "short_md": "**Template:** choose → explore → un-choose. Prune invalid branches early.",
+     "body_md": "**Template:** choose → explore → un-choose. Prune invalid branches early.\n\n```python\ndef subsets(nums):\n    res, path = [], []\n    def go(i):\n        if i == len(nums):\n            res.append(path[:]); return\n        path.append(nums[i]); go(i + 1)        # include\n        path.pop();           go(i + 1)        # exclude\n    go(0)\n    return res                                  # O(2ⁿ · n)\n\ndef permutations(nums):\n    res = []\n    def go(path, remaining):\n        if not remaining: res.append(path); return\n        for i in range(len(remaining)):\n            go(path + [remaining[i]], remaining[:i] + remaining[i+1:])\n    go([], nums)\n    return res\n```"
+    },
+    {
+     "id": "Q30",
+     "title": "Dynamic programming — how to think about it",
+     "short_md": "DP = recursion + **memoisation** of overlapping subproblems (or bottom-up table). Steps: (1) define the **state** (what does `dp[i]` mean?), (2) **transition** (how dp[i] depends on smaller states), (3) **base cases**, (4) order of computation, (5) answer location, (6) optimise space.",
+     "body_md": "**Short answer:** DP = recursion + **memoisation** of overlapping subproblems (or bottom-up table). Steps: (1) define the **state** (what does `dp[i]` mean?), (2) **transition** (how dp[i] depends on smaller states), (3) **base cases**, (4) order of computation, (5) answer location, (6) optimise space.\n\n```python\nfrom functools import cache\n\n@cache\ndef climb(n: int) -> int:                # ways to climb n stairs with 1 or 2 steps\n    return 1 if n <= 1 else climb(n - 1) + climb(n - 2)\n\ndef coin_change(coins: list[int], amount: int) -> int:   # min coins (bottom-up)\n    dp = [0] + [float(\"inf\")] * amount   # dp[a] = min coins to make a\n    for a in range(1, amount + 1):\n        for c in coins:\n            if c <= a: dp[a] = min(dp[a], dp[a - c] + 1)\n    return dp[amount] if dp[amount] != float(\"inf\") else -1   # O(amount · len(coins))\n\ndef lcs(a: str, b: str) -> int:          # longest common subsequence (2-D DP)\n    dp = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]\n    for i in range(1, len(a) + 1):\n        for j in range(1, len(b) + 1):\n            dp[i][j] = dp[i-1][j-1] + 1 if a[i-1] == b[j-1] else max(dp[i-1][j], dp[i][j-1])\n    return dp[-1][-1]\n```"
+    },
+    {
+     "id": "Q31",
+     "title": "Longest increasing subsequence in O(n log n)",
+     "short_md": "Keep `tails[k]` = smallest possible tail of an increasing subsequence of length k+1; binary-search where each number goes.",
+     "body_md": "Keep `tails[k]` = smallest possible tail of an increasing subsequence of length k+1; binary-search where each number goes.\n\n```python\nfrom bisect import bisect_left\ndef lis(nums: list[int]) -> int:\n    tails = []\n    for x in nums:\n        i = bisect_left(tails, x)\n        if i == len(tails): tails.append(x)\n        else: tails[i] = x\n    return len(tails)               # [10,9,2,5,3,7,101,18] -> 4\n```"
+    },
+    {
+     "id": "Q32",
+     "title": "Greedy vs DP",
+     "short_md": "Greedy picks the locally best choice (interval scheduling by earliest end, coin change with canonical coins) — must be provably correct. If a counterexample exists (coins [1,3,4], amount 6: greedy 4+1+1=3 coins, optimal 3+3=2), use DP.",
+     "body_md": "Greedy picks the locally best choice (interval scheduling by earliest end, coin change with canonical coins) — must be provably correct. If a counterexample exists (coins [1,3,4], amount 6: greedy 4+1+1=3 coins, optimal 3+3=2), use DP."
+    }
+   ]
+  },
+  {
+   "id": "design-scale-problems",
+   "num": 10,
+   "title": "Design & scale problems",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q33",
+     "title": "LRU cache — implementation and complexity",
+     "short_md": "**Requirement:** `get` and `put` in O(1), evict the least recently used. Hash map (key → node) + doubly linked list (recency order). In Python, `OrderedDict` provides both.",
+     "body_md": "**Requirement:** `get` and `put` in O(1), evict the least recently used. Hash map (key → node) + doubly linked list (recency order). In Python, `OrderedDict` provides both.\n\n```python\nfrom collections import OrderedDict\nclass LRUCache:\n    def __init__(self, capacity: int):\n        self.cap, self.data = capacity, OrderedDict()\n    def get(self, key):\n        if key not in self.data: return -1\n        self.data.move_to_end(key)              # mark as recently used\n        return self.data[key]\n    def put(self, key, value):\n        self.data[key] = value\n        self.data.move_to_end(key)\n        if len(self.data) > self.cap:\n            self.data.popitem(last=False)       # evict least recently used\n```\nFollow-ups: thread safety (lock), TTL expiry, `functools.lru_cache` for memoising functions, distributed cache (Redis `maxmemory-policy allkeys-lru`)."
+    },
+    {
+     "id": "Q34",
+     "title": "Find duplicates at massive scale with limited RAM",
+     "short_md": "Options: **external sort** (sort chunks to disk, merge, compare neighbours); **hash partitioning** (hash each record into N files so duplicates land in the same file, then dedupe each file in memory); **Bloom filter** for a probabilistic first pass; distributed (Spark/Athena `GROUP BY`). Normalise first (case, whitespace, Unicode NFKC).",
+     "body_md": "Options: **external sort** (sort chunks to disk, merge, compare neighbours); **hash partitioning** (hash each record into N files so duplicates land in the same file, then dedupe each file in memory); **Bloom filter** for a probabilistic first pass; distributed (Spark/Athena `GROUP BY`). Normalise first (case, whitespace, Unicode NFKC)."
+    },
+    {
+     "id": "Q35",
+     "title": "Bloom filter — trade-off",
+     "short_md": "Bit array + k hash functions. \"Not present\" is **certain**; \"maybe present\" can be a **false positive** (rate depends on bits per item and k). No deletes (counting Bloom filters allow them). Tiny memory for huge sets — used for \"have we seen this URL/ID?\" before an expensive lookup.",
+     "body_md": "Bit array + k hash functions. \"Not present\" is **certain**; \"maybe present\" can be a **false positive** (rate depends on bits per item and k). No deletes (counting Bloom filters allow them). Tiny memory for huge sets — used for \"have we seen this URL/ID?\" before an expensive lookup."
+    },
+    {
+     "id": "Q36",
+     "title": "Near-duplicate detection for 1M titles takes hours — what do you change?",
+     "short_md": "Pairwise comparison is O(n²) = 10¹² comparisons. Fix with **candidate generation**: normalise text → exact duplicates via hash set → near-duplicates via blocking (same first token / sorted tokens), **MinHash + LSH** (Jaccard similarity buckets) or **embeddings + ANN index** (FAISS/HNSW) to get top-k neighbours → then apply an expensive similarity (rapidfuzz, edit distance) only to candidates → union-find to group. Parallelise with multiprocessing; profile before tuning.",
+     "body_md": "Pairwise comparison is O(n²) = 10¹² comparisons. Fix with **candidate generation**: normalise text → exact duplicates via hash set → near-duplicates via blocking (same first token / sorted tokens), **MinHash + LSH** (Jaccard similarity buckets) or **embeddings + ANN index** (FAISS/HNSW) to get top-k neighbours → then apply an expensive similarity (rapidfuzz, edit distance) only to candidates → union-find to group. Parallelise with multiprocessing; profile before tuning."
+    },
+    {
+     "id": "Q37",
+     "title": "Numeric overflow, precision and floats",
+     "short_md": "Python ints are arbitrary precision (no overflow). Floats are IEEE-754: `0.1 + 0.2 != 0.3` → compare with `math.isclose(a, b, rel_tol=1e-9)`; money → `decimal.Decimal` or integer cents; `fractions.Fraction` for exact ratios. NumPy ints **can** overflow.",
+     "body_md": "Python ints are arbitrary precision (no overflow). Floats are IEEE-754: `0.1 + 0.2 != 0.3` → compare with `math.isclose(a, b, rel_tol=1e-9)`; money → `decimal.Decimal` or integer cents; `fractions.Fraction` for exact ratios. NumPy ints **can** overflow."
+    },
+    {
+     "id": "Q38",
+     "title": "Rate limiter (coding version)",
+     "short_md": "import time, threading class TokenBucket: def __init__(self, rate: float, capacity: int): self.rate, self.capacity = rate, capacity self.tokens, self.updated = capacity, time.monotonic() self.lock = threading.Lock() def allow(self) -> bool: with self.lock: now = time.monotonic() self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate) self.updated = now if self.tokens >= 1: self.tokens -= 1 return True return False",
+     "body_md": "```python\nimport time, threading\nclass TokenBucket:\n    def __init__(self, rate: float, capacity: int):\n        self.rate, self.capacity = rate, capacity\n        self.tokens, self.updated = capacity, time.monotonic()\n        self.lock = threading.Lock()\n    def allow(self) -> bool:\n        with self.lock:\n            now = time.monotonic()\n            self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate)\n            self.updated = now\n            if self.tokens >= 1:\n                self.tokens -= 1\n                return True\n            return False\n```"
+    }
+   ]
+  },
+  {
+   "id": "testing-concurrency",
+   "num": 11,
+   "title": "Testing & concurrency",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q39",
+     "title": "Designing tests for algorithmic solutions",
+     "short_md": "Cover: empty input, single element, duplicates, negatives, already sorted / reverse sorted, very large n (performance), boundary values. Compare against a **brute-force oracle** on random inputs (property-based testing with `hypothesis`).",
+     "body_md": "Cover: empty input, single element, duplicates, negatives, already sorted / reverse sorted, very large n (performance), boundary values. Compare against a **brute-force oracle** on random inputs (property-based testing with `hypothesis`).\n\n```python\nfrom hypothesis import given, strategies as st\n@given(st.lists(st.integers()))\ndef test_merge_matches_bruteforce(xs):\n    assert sorted(xs) == my_sort(xs)\n```"
+    },
+    {
+     "id": "Q40",
+     "title": "How would you find a race condition in concurrent Python code?",
+     "short_md": "Symptoms: wrong totals, intermittent failures. Look for shared mutable state accessed by multiple threads/coroutines with read-modify-write (`counter += 1`, check-then-act `if key not in d: d[key] = …`). Reproduce with stress tests (many threads, `sys.setswitchinterval` small), add logging with thread IDs; fix with locks, queues, atomic DB operations (conditional writes), or immutable data. In asyncio, races happen across `await` points (state changed while you awaited).",
+     "body_md": "Symptoms: wrong totals, intermittent failures. Look for shared mutable state accessed by multiple threads/coroutines with read-modify-write (`counter += 1`, check-then-act `if key not in d: d[key] = …`). Reproduce with stress tests (many threads, `sys.setswitchinterval` small), add logging with thread IDs; fix with locks, queues, atomic DB operations (conditional writes), or immutable data. In asyncio, races happen across `await` points (state changed while you awaited).\n\n```python\n# check-then-act race in asyncio\nif user_id not in cache:\n    cache[user_id] = await fetch(user_id)   # two coroutines can both fetch; fine if idempotent,\n                                            # otherwise use asyncio.Lock per key\n```"
+    },
+    {
+     "id": "Q41",
+     "title": "Classic quick problems to rehearse",
+     "short_md": "Valid anagram (Counter), product of array except self (prefix/suffix products), rotate array, kth largest (heap/quickselect), meeting rooms II (heap), course schedule (topo sort), word search (backtracking), number of islands (DFS/BFS), house robber (DP), coin change (DP), LRU cache, merge intervals, sliding window maximum (monotonic deque), serialize/deserialize tree, implement a trie.",
+     "body_md": "Valid anagram (Counter), product of array except self (prefix/suffix products), rotate array, kth largest (heap/quickselect), meeting rooms II (heap), course schedule (topo sort), word search (backtracking), number of islands (DFS/BFS), house robber (DP), coin change (DP), LRU cache, merge intervals, sliding window maximum (monotonic deque), serialize/deserialize tree, implement a trie."
+    }
+   ]
+  },
+  {
+   "id": "more-patterns-sorting-bits-grids-strings",
+   "num": 12,
+   "title": "More patterns: sorting, bits, grids, strings",
+   "intro_md": "",
+   "questions": [
+    {
+     "id": "Q42",
+     "title": "Sorting algorithms — which to know and why",
+     "short_md": "In real code use `sorted()` / `list.sort()` (Timsort-derived; since Python 3.11 the merge order uses **Powersort** — still **stable**, O(n log n), very fast on partly sorted data). In interviews, know how merge sort and quicksort work, their complexity, and stability.",
+     "body_md": "**Short answer:** In real code use `sorted()` / `list.sort()` (Timsort-derived; since Python 3.11 the merge order uses **Powersort** — still **stable**, O(n log n), very fast on partly sorted data). In interviews, know how merge sort and quicksort work, their complexity, and stability.\n\n| Algorithm | Average | Worst | Extra space | Stable | Key idea |\n|---|---|---|---|---|---|\n| Merge sort | n log n | n log n | O(n) | yes | split in half, sort each, merge |\n| Quicksort | n log n | n² (bad pivots) | O(log n) | no | partition around a pivot |\n| Heap sort | n log n | n log n | O(1) | no | repeatedly pop max from a heap |\n| Counting / bucket | n + k | n + k | O(k) | yes | small integer range |\n| Insertion sort | n² | n² | O(1) | yes | great for tiny/nearly-sorted arrays |\n\n```python\ndef merge_sort(a):\n    if len(a) <= 1:\n        return a\n    mid = len(a) // 2\n    left, right = merge_sort(a[:mid]), merge_sort(a[mid:])\n    out, i, j = [], 0, 0\n    while i < len(left) and j < len(right):\n        if left[i] <= right[j]:          # <= keeps it stable\n            out.append(left[i]); i += 1\n        else:\n            out.append(right[j]); j += 1\n    return out + left[i:] + right[j:]\n\ndef quicksort(a):\n    if len(a) <= 1:\n        return a\n    pivot = a[len(a) // 2]\n    return (quicksort([x for x in a if x < pivot])\n            + [x for x in a if x == pivot]\n            + quicksort([x for x in a if x > pivot]))\n```\n**Stability** matters when sorting by multiple keys: sort by date, then (stable) by priority → items with equal priority stay in date order. Python: `sorted(rows, key=lambda r: (r.priority, r.date))` does both at once."
+    },
+    {
+     "id": "Q43",
+     "title": "Bit manipulation basics",
+     "short_md": "from functools import reduce from operator import xor def single_number(nums):          # every number appears twice except one return reduce(xor, nums)      # O(n) time, O(1) space",
+     "body_md": "| Trick | Code | Use |\n|---|---|---|\n| Check bit k | `(n >> k) & 1` | flags, permissions |\n| Set / clear bit k | `n \\| (1 << k)` / `n & ~(1 << k)` | flags |\n| Is power of two | `n > 0 and n & (n - 1) == 0` | sizing |\n| Count set bits | `n.bit_count()` (3.10+) | Hamming weight |\n| XOR cancels pairs | `a ^ a = 0`, `a ^ 0 = a` | find the single non-duplicated number |\n\n```python\nfrom functools import reduce\nfrom operator import xor\ndef single_number(nums):          # every number appears twice except one\n    return reduce(xor, nums)      # O(n) time, O(1) space\n```\nSubsets via bitmask: for n items, numbers `0 .. 2**n - 1` enumerate every subset (bit i = item i included)."
+    },
+    {
+     "id": "Q44",
+     "title": "Grid / matrix problems (BFS & DFS on a 2D grid)",
+     "short_md": "Treat each cell as a graph node with up to 4 neighbours. Use **BFS** for shortest path in steps, **DFS/BFS** for counting connected regions. Track visited cells and check bounds.",
+     "body_md": "**Short answer:** Treat each cell as a graph node with up to 4 neighbours. Use **BFS** for shortest path in steps, **DFS/BFS** for counting connected regions. Track visited cells and check bounds.\n\n```python\nfrom collections import deque\ndef num_islands(grid: list[list[str]]) -> int:\n    rows, cols = len(grid), len(grid[0])\n    seen, count = set(), 0\n    for r in range(rows):\n        for c in range(cols):\n            if grid[r][c] == \"1\" and (r, c) not in seen:\n                count += 1\n                q = deque([(r, c)]); seen.add((r, c))\n                while q:\n                    x, y = q.popleft()\n                    for dx, dy in ((1,0), (-1,0), (0,1), (0,-1)):\n                        nx, ny = x + dx, y + dy\n                        if 0 <= nx < rows and 0 <= ny < cols and grid[nx][ny] == \"1\" and (nx, ny) not in seen:\n                            seen.add((nx, ny)); q.append((nx, ny))\n    return count          # O(rows × cols) time and space\n```\nVariants: shortest path in a maze (BFS with distance), \"rotting oranges\" (**multi-source BFS** — start with all sources in the queue), flood fill. Prefer BFS over recursive DFS on big grids to avoid Python's recursion limit."
+    },
+    {
+     "id": "Q45",
+     "title": "Common string patterns",
+     "short_md": "from collections import Counter def is_anagram(a, b):               # same letters, same counts return Counter(a) == Counter(b)            # O(n)",
+     "body_md": "```python\nfrom collections import Counter\ndef is_anagram(a, b):               # same letters, same counts\n    return Counter(a) == Counter(b)            # O(n)\n\ndef group_anagrams(words):\n    groups = defaultdict(list)\n    for w in words:\n        groups[\"\".join(sorted(w))].append(w)   # key = sorted letters\n    return list(groups.values())\n\ndef is_palindrome(s):               # ignore case and non-alphanumerics\n    t = [c.lower() for c in s if c.isalnum()]\n    return t == t[::-1]\n\ndef longest_unique_substring(s):    # sliding window (Q07)\n    last, start, best = {}, 0, 0\n    for i, ch in enumerate(s):\n        if ch in last and last[ch] >= start:\n            start = last[ch] + 1\n        last[ch] = i\n        best = max(best, i - start + 1)\n    return best\n```\n**Pitfall:** building strings with `+=` in a loop can be O(n²) — collect parts in a list and `\"\".join(parts)`."
+    }
+   ]
+  },
+  {
+   "id": "cheat-sheet",
+   "num": 13,
+   "title": "Cheat sheet",
+   "intro_md": "| Pattern | Template idea | Complexity |\n|---|---|---|\n| Sorting | Python = Timsort/Powersort, stable n log n; merge sort stable; quicksort n² worst |\n| Bits | `n & (n-1) == 0` power of two; XOR cancels pairs |\n| Grids | cells = graph nodes; BFS for shortest steps; multi-source BFS |\n| Hash map | seen/complement/counts | O(n) |\n| Two pointers | lo/hi move inward | O(n) |\n| Sliding window | expand right, shrink left | O(n) |\n| Prefix sum | `prefix[j+1]-prefix[i]`; sum-k with dict | O(n) |\n| Binary search | invariant `[lo, hi)`; search answer space | O(log n) |\n| Heap top-k | min-heap size k | O(n log k) |\n| Monotonic stack | pop while violates order | O(n) |\n| Intervals | sort by start, merge | O(n log n) |\n| BFS | queue; shortest unweighted | O(V+E) |\n| DFS | stack/recursion; components, cycles | O(V+E) |\n| Topo sort | Kahn in-degree queue | O(V+E) |\n| Dijkstra | min-heap of distances | O((V+E) log V) |\n| Union-Find | path compression + rank | ~O(1) |\n| Trie | dict of dicts | O(L) |\n| Backtracking | choose, explore, un-choose | exponential |\n| DP | state, transition, base, order | states × transition |\n| LRU | OrderedDict / map + DLL | O(1) |",
+   "questions": []
+  },
+  {
+   "id": "references",
+   "num": null,
+   "title": "References",
+   "intro_md": "- Python TimeComplexity wiki: https://wiki.python.org/moin/TimeComplexity\n- `collections`, `heapq`, `bisect`, `functools`: https://docs.python.org/3/library/\n- NeetCode roadmap (pattern-based practice): https://neetcode.io/roadmap",
+   "questions": []
+  }
+ ]
+}
