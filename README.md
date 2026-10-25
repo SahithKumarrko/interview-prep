@@ -10,7 +10,7 @@ Plain HTML, CSS and JavaScript. No framework and no build step for the site itse
 - Search across all courses (`Ctrl K` / `⌘ K` or `/`)
 - Progress tracking: mark questions reviewed, bookmark them, see progress per course
 - Flashcards per course, across all courses or from bookmarks, with "knew it / shaky / didn't know" ratings that bring missed cards back
-- Animated step-by-step diagrams for flows, pipelines and loops (97 across the courses)
+- Animated step-by-step diagrams on 887 of the 928 questions (908 in total): request flows, pipelines, loops and algorithm traces
 - Dark and light themes, mobile layout, deep links to every question (`#/c/<course>/<Q05>`)
 - Progress lives in your browser's localStorage; export and import it as a JSON file to move devices
 
@@ -75,6 +75,7 @@ LLM --> App: tool_use get_order(A12)
 - `sequence:` actors as columns; `A -> B: label` is a request and `A --> B: label` a reply (dashed). `A -> A: label` is a step inside A.
 - `pipeline:` one step per line as `Label > caption`; `stage: Name` starts a group.
 - `cycle:` steps around a ring as `Label > caption`; `exit > ...` says when the loop stops.
+- `trace:` one frame of state per line as `state > caption` (arrays, pointers, stacks); wrap a cell in `**…**` to highlight it. Avoid ` > ` inside a label: it separates label from caption.
 - A line starting with `>` adds a caption to the step above it.
 
 ## Publish on GitHub Pages

@@ -44,6 +44,15 @@ Rollout & evolve > Testing, canary, migration, what you'd do next.
 
 ### Q02. Gathering requirements — what to ask
 
+```flow
+pipeline: Requirement questions to ask first
+Users + use cases > Who, doing what, how often?
+Scale > Requests/s, data size, growth, peaks.
+Quality bars > Latency, availability, consistency, accuracy.
+Constraints > Compliance, data residency, budget, existing stack.
+Out of scope > What we're explicitly not building.
+```
+
 | Category | Questions |
 |---|---|
 | Users & usage | Who uses it? How many? Peak concurrency? Read vs write ratio? |
@@ -60,6 +69,14 @@ Write assumptions on the board when the interviewer doesn't answer.
 ---
 
 ### Q03. Back-of-the-envelope estimates
+
+```flow
+trace: Turning traffic into capacity
+300 docs/min ≈ **5 docs/s** > Divide by 60.
+× 10 pages ≈ **50 pages/s** OCR > Per-unit work.
+× 2.5k tokens/page ≈ **125k tokens/s** > Compare with model quotas: too high → batch, smaller model, or quota increase.
+× 2 MB × 432k docs/day ≈ **860 GB/day** > Storage + lifecycle rules.
+```
 
 ```
  300 documents/min ≈ 5/s; avg 10 pages → 50 pages/s OCR
@@ -78,9 +95,29 @@ Numbers reveal the real bottleneck (often **LLM quotas and cost**, not CPU).
 
 **Vertical** = bigger machine (simple, limited, often downtime). **Horizontal** = more instances behind a load balancer (needs **stateless** services, shared state in DB/cache). Stateless app tier + horizontally scaled; stateful tier scaled by replication/sharding/managed services.
 
+```flow
+pipeline: Scaling up vs out
+Vertical (bigger machine) > Simple, no code change; has a ceiling and a single point of failure.
+Horizontal (more machines) > Near-unlimited, resilient; needs stateless services and a load balancer.
+State is the hard part > Databases scale with replicas, partitioning, caching.
+Usual path > Stateless app tier out; data tier up first, then out.
+```
+
 ---
 
 ### Q05. Caching
+
+```flow
+sequence: Cache-aside read and write
+actors: Service, Redis, Database
+Service -> Redis: GET user:42
+Redis --> Service: miss
+Service -> Database: SELECT user 42
+Service -> Redis: SET user:42 (TTL 5 min)
+Service -> Database: on update: write DB
+Service -> Redis: DEL user:42 (invalidate)
+> Next read repopulates. Add jittered TTLs and single-flight locks to avoid stampedes.
+```
 
 | Layer | Example | Watch out |
 |---|---|---|
@@ -95,6 +132,15 @@ Numbers reveal the real bottleneck (often **LLM quotas and cost**, not CPU).
 
 ### Q06. Databases: SQL vs NoSQL, replication, sharding
 
+```flow
+pipeline: Scaling a database step by step
+Indexes + query tuning > Usually the biggest win.
+Caching > Hot reads from Redis.
+Read replicas > Scale reads; mind replication lag.
+Partitioning > Split big tables (by time).
+Sharding / distributed DB > Scale writes; last resort due to complexity.
+```
+
 - **SQL (Aurora Postgres)** — relations, transactions, flexible queries; scale reads with replicas, writes by partitioning.
 - **DynamoDB** — key-value/document at any scale; design around **access patterns**, partition key for even distribution, conditional writes for concurrency, single-digit ms.
 - **Replication** — primary/replica (read scaling, failover); synchronous (no data loss, slower) vs asynchronous (lag).
@@ -105,6 +151,17 @@ Numbers reveal the real bottleneck (often **LLM quotas and cost**, not CPU).
 ### Q07. CAP and consistency models
 
 **CAP:** during a **network partition**, a distributed store must choose **consistency** (refuse/serve errors) or **availability** (serve possibly stale data). Without partitions you trade latency vs consistency (PACELC). Practical forms: strong consistency (DynamoDB strongly consistent reads, single-primary SQL), eventual consistency (replicas, global tables), read-your-writes (route user reads to primary after a write).
+
+```flow
+sequence: A network partition forces a choice (CAP)
+actors: Client, Node A, Node B
+Client -> Node A: write x = 2
+Node A -> Node B: replicate… link down (partition)
+Client -> Node B: read x
+Node B --> Client: CP choice: refuse / error (stay consistent)
+Node B --> Client: AP choice: return old x = 1 (stay available)
+> During a partition you pick consistency or availability. Without a partition the trade-off is latency vs consistency (PACELC).
+```
 
 **Where it matters for you:** job status (strong), dashboards/search indexes (eventual is fine), approvals/payments (strong + idempotent).
 
@@ -131,15 +188,44 @@ Use async for anything slow (OCR, LLM batch jobs), bursty, or that can retry; re
 
 SQS (work queue, at-least-once, DLQ), SNS (fan-out), EventBridge (routing rules, replay), Kinesis/MSK (ordered streams, replay, analytics). Consumers must be **idempotent**.
 
+```flow
+pipeline: Queue vs pub/sub vs stream
+Queue (SQS) > Each message to ONE worker; work distribution, buffering.
+Pub/sub (SNS / EventBridge) > Each message to ALL subscribers; fan-out.
+Stream (Kinesis / Kafka) > Ordered log per partition, replayable, many independent readers.
+Pick by > Who consumes, ordering, replay needs.
+```
+
 ---
 
 ### Q10. Idempotency and exactly-once *effects*
 
 Networks and retries mean duplicates are normal. Achieve "exactly-once effect" with **idempotency keys** + conditional writes / unique constraints, deduplicated workflow starts (Step Functions execution name), and **outbox pattern** (write DB change + event in one transaction, publish event from the outbox) to avoid "DB updated but event lost".
 
+```flow
+sequence: Exactly-once effect from at-least-once delivery
+actors: Producer, Consumer, Dedupe store, Side effect
+Producer -> Consumer: message (operation_id = op-9)
+Consumer -> Dedupe store: insert op-9 if absent
+Dedupe store --> Consumer: inserted → do the work
+Consumer -> Side effect: charge card (idempotency key op-9)
+Producer -> Consumer: same message redelivered
+Consumer -> Dedupe store: insert op-9 if absent
+Dedupe store --> Consumer: exists → skip
+> Delivery can repeat; the EFFECT happens once.
+```
+
 ---
 
 ### Q11. Rate limiting algorithms
+
+```flow
+trace: Rate-limiting algorithms side by side (limit 5/min)
+fixed window: 5 at 0:59 + 5 at 1:00 = **10 in 2 seconds** > Simple counter per window; bursts at the boundary.
+sliding window: counts the last 60 s at every request > Smoother, a bit more state.
+token bucket: capacity 5, refill 5/min > Allows short bursts, then a steady rate. Most common for APIs.
+leaky bucket: requests drain at a fixed rate > Smooths output; queues or drops the excess.
+```
 
 | Algorithm | Idea |
 |---|---|
@@ -156,9 +242,25 @@ Implement at API Gateway (usage plans), WAF rate rules, or Redis (`INCR` + TTL /
 
 ALB (L7 routing, health checks), NLB (L4, static IPs), Service Connect/Cloud Map for internal services; health checks + connection draining; consistent hashing for sticky data partitions.
 
+```flow
+pipeline: Load balancing and discovery
+Client resolves DNS > To the load balancer.
+LB picks a healthy target > Round robin / least outstanding requests.
+Health checks > Remove failing targets.
+Service discovery inside > Cloud Map / Service Connect names → current healthy endpoints.
+```
+
 ---
 
 ### Q13. SLI, SLO, SLA and error budgets
+
+```flow
+trace: Error budget from an SLO
+SLO 99.9% successful requests / 30 days > The target.
+error budget = 0.1% ≈ **43 min** of full outage (or equivalent errors) > What you're allowed to "spend".
+incident used 30 min  →  **13 min** left > Track burn rate.
+budget exhausted  →  freeze risky releases, fix reliability > The SLA (contract) should be looser than the SLO.
+```
 
 - **SLI** — a measurement: % of requests < 2 s, % successful.
 - **SLO** — target for the SLI: 99.9% of chat requests start streaming within 2 s over 28 days.
@@ -172,6 +274,14 @@ AI-specific SLIs: time to first token, task success rate (eval), cost per task, 
 ### Q14. Timeouts: request timeout vs task lifecycle timeout
 
 **Request timeout** — how long a client waits for one HTTP call (ALB idle 60 s, API Gateway ~29 s). **Task lifecycle timeout** — how long the *job* may run (Step Functions up to 1 year, AgentCore session 8 h, Lambda 15 min). Long tasks must not depend on a single open request: return 202, process async, stream/poll status. Set **timeout budgets** down the call chain (each hop shorter than its caller).
+
+```flow
+trace: Timeout budgets down a call chain
+client timeout **10 s** > The outer limit.
+API → agent: budget 9 s > Each hop gets less than its caller.
+agent → tool: 3 s × max 2 retries > Retries must fit in the remaining budget.
+tool → DB: 1 s > Inner timeouts shorter than outer ones, so callers don't keep waiting for work nobody needs.
+```
 
 ---
 
@@ -235,6 +345,15 @@ AgentCore Runtime --> React SPA: SSE stream: tokens, tool status, approval_neede
 ---
 
 ### Q16. Trust boundaries in that design (threat model view)
+
+```flow
+pipeline: Trust boundaries in the AI platform
+Browser → API > Untrusted input; verify JWT, authorise everything.
+API → agent runtime > Pass verified identity only.
+Agent → model > Model output untrusted; prompt injection possible.
+Agent → tools (Gateway) > Policy + least privilege on every call.
+Tools → data / SaaS > Per-user credentials; audit.
+```
 
 ```
  [Browser] ─TB1─ [API] ─TB2─ [Agent runtime] ─TB3─ [Gateway/Policy] ─TB4─ [Tools/SaaS]
@@ -310,6 +429,15 @@ Design points: stable event schema (UI not coupled to graph internals), heartbea
 
 Tenant ID comes **only from the verified token** (or a server-side membership lookup), never from the request body. Enforce at every layer: API (resource ownership checks), data (partition key / row-level security / tenant-prefixed S3 keys + IAM conditions), retrieval (metadata filters), memory (namespaces), tools (Cedar policies with tenant attributes), caches (tenant in cache key). Test with cross-tenant negative tests in CI.
 
+```flow
+pipeline: Multi-tenant authorisation, layer by layer
+Token > tenant_id + roles from the verified JWT.
+API > Every query scoped: WHERE tenant_id = :tenant; ownership checks.
+Data stores > Row-level security, key prefixes, per-tenant encryption keys where needed.
+Retrieval + memory > Filters and namespaces by tenant.
+Tests > Automated cross-tenant access tests.
+```
+
 | Isolation model | Pros | Cons |
 |---|---|---|
 | Silo (account/stack per tenant) | strongest isolation | cost, ops overhead |
@@ -321,6 +449,16 @@ Tenant ID comes **only from the verified token** (or a server-side membership lo
 ### Q21. Consistency between job DB, S3 and Step Functions
 
 No distributed transaction across them. Approach: **job record is the source of truth** with a state machine of statuses; every writer uses conditional updates (`status = RUNNING` only from `PENDING`); S3 object keys are deterministic (re-writes are idempotent); workflow start is deduped by execution name; a **reconciler** job periodically finds stuck/inconsistent jobs (e.g., RUNNING > 1 h with no execution) and repairs or alerts; outbox for events.
+
+```flow
+sequence: Keeping job DB, S3 and workflow consistent
+actors: API, Database, Outbox relay, Step Functions
+API -> Database: BEGIN: insert job + outbox row "job.created"; COMMIT
+Outbox relay -> Database: poll new outbox rows
+Outbox relay -> Step Functions: StartExecution(name = job_id)
+Step Functions --> Database: update status as steps finish
+> No dual write: if the start fails, the relay retries; the deterministic name prevents duplicates. A reconciliation job catches stragglers.
+```
 
 ---
 
@@ -347,11 +485,29 @@ Trade-off: index freshness vs API load; permission changes must propagate quickl
 
 Per-tenant token budgets and rate limits; model routing (small model for classification/extraction, large for reasoning); prompt caching (static system + tools first); limit retrieved chunks and history (summarise); cap agent iterations/tool calls; batch inference for offline jobs; cache deterministic results; dashboards for cost per request/tenant/feature; alerts on anomalies; evaluate cheaper models against the eval set before switching.
 
+```flow
+pipeline: Controlling GenAI cost
+Measure per request/tenant > Tokens, model, tool calls.
+Budgets + quotas > Per user and tenant; alerts.
+Route models > Small model by default.
+Cut tokens > Caching, trimmed context, summaries.
+Cap agent loops > Max steps and spend per task.
+```
+
 ---
 
 ### Q24. Resilient agents under provider rate limits
 
 Client-side token-bucket per model, retries with exponential backoff + jitter honoring `Retry-After`, queue non-interactive work, cross-region inference profiles / provisioned throughput for critical paths, fallback models (approved, capability-tested), circuit breaker when the provider is degraded, graceful messages to users, prioritise interactive traffic over batch.
+
+```flow
+pipeline: Staying up under provider rate limits
+Client-side limiter > Stay below the quota (token bucket per model).
+Queue requests > Smooth bursts; prioritise interactive over batch.
+Retry 429s with backoff + jitter > Respect Retry-After.
+Fallback model / region > Cross-region inference or a secondary model.
+Shed load gracefully > Clear "busy, try again" instead of timeouts.
+```
 
 ---
 
@@ -359,11 +515,29 @@ Client-side token-bucket per model, retries with exponential backoff + jitter ho
 
 Tiered fallbacks: alternate model/region → cached answers for common questions → retrieval-only mode ("here are the relevant documents") → queue the request and notify later → clear status message. Never fall back to an unapproved provider for sensitive data. Feature flags to switch modes quickly.
 
+```flow
+pipeline: Degrading gracefully when the LLM fails
+Detect > Errors / latency over threshold → circuit breaker opens.
+Fallback model > Smaller or other-provider model.
+Reduced features > Search results without generated summaries.
+Queue for later > Async jobs continue when the provider recovers.
+Tell the user > Honest status message.
+```
+
 ---
 
 ### Q26. Secrets across React, API, agents and workers
 
 React: **no secrets** (public bundle). API/workers: Secrets Manager (cached, rotated) via task roles. Agents: no raw secrets in prompts/state; tools obtain credentials via AgentCore Identity token vault or scoped roles. CI: OIDC to AWS, no static keys. Logs/traces redacted.
+
+```flow
+pipeline: Secrets across the stack
+React > No secrets at all; only public config.
+API > Fetches DB creds/client secrets from Secrets Manager at runtime.
+Agents > OAuth tokens via AgentCore Identity vault; never in prompts.
+Workers / CI > IAM roles and OIDC; no static keys.
+Rotate + audit > Everywhere.
+```
 
 ---
 
@@ -385,6 +559,15 @@ Measure success: latency, error rate, deploy frequency, cost.
 
 ### Q28. Test strategy for an AI + AWS stack
 
+```flow
+pipeline: Test pyramid for AI + AWS
+Unit tests > Pure logic, fake LLM.
+Contract tests > API schemas, tool schemas.
+Integration tests > Real AWS in a sandbox account.
+LLM evals > Golden sets for quality, safety, cost.
+E2E + load > Critical user journeys, scaling limits.
+```
+
 | Layer | Tests |
 |---|---|
 | Unit | pure functions, Pydantic schemas, routing logic, reducers |
@@ -402,11 +585,31 @@ Measure success: latency, error rate, deploy frequency, cost.
 
 One **trace ID** from browser → API → agent → gateway → tools → AWS services (W3C `traceparent` propagated; MCP `_meta` supports trace context). Spans with attributes: tenant (pseudonymised), model, tokens, tool name, policy decision. Dashboards per SLO; logs correlated by trace ID; sampling (keep all errors); redact payloads.
 
+```flow
+sequence: One trace through the platform
+actors: React, API, Agent runtime, Gateway, Tool
+React -> API: request (traceparent header)
+API -> Agent runtime: span: invoke agent (same trace id)
+Agent runtime -> Gateway: span: tool call
+Gateway -> Tool: span: Lambda
+Tool --> React: response
+> One trace id end to end: open it and see which hop was slow or failed, with tokens and cost on LLM spans.
+```
+
 ---
 
 ### Q30. Threat modelling AI infrastructure (STRIDE + AI threats)
 
 Walk the data-flow diagram (Q16) per trust boundary: **S**poofing (token validation), **T**ampering (signed artifacts, immutable images), **R**epudiation (audit logs of approvals/tool calls), **I**nformation disclosure (tenant isolation, PII in traces), **D**oS (rate limits, token budgets), **E**levation of privilege (confused deputy, over-privileged roles). Plus AI-specific: prompt injection (direct/indirect), excessive agency, data poisoning (RAG/memory), model output handling (XSS), supply chain (MCP servers, models). Output: prioritised mitigations with owners.
+
+```flow
+pipeline: STRIDE plus AI threats
+Spoofing / tampering > Strong auth, signed artifacts, integrity checks.
+Repudiation / info disclosure > Audit logs, encryption, least privilege.
+DoS / elevation of privilege > Rate limits, quotas, sandboxing.
+AI-specific > Prompt injection, data poisoning, model output misuse, excessive agency.
+Mitigate + test > Policy gates, approvals, red teaming.
+```
 
 ---
 
@@ -414,11 +617,29 @@ Walk the data-flow diagram (Q16) per trust boundary: **S**poofing (token validat
 
 Multi-AZ everything (ECS, Aurora, ElastiCache, NAT per AZ); DR region with pilot light/warm standby (Aurora Global Database, S3 CRR, DynamoDB global tables, IaC to redeploy, AgentCore/Bedrock available in DR region?), Route 53 failover; define RTO/RPO per component; game days.
 
+```flow
+pipeline: HA and DR for the platform
+Multi-AZ everything > Tasks, DB, caches.
+Backups + PITR > Aurora, DynamoDB, S3 versioning.
+Cross-region copies > Data replicated; IaC can rebuild infrastructure.
+DR strategy by RTO/RPO > Pilot light / warm standby.
+Game days > Actually test failover.
+```
+
 ---
 
 ### Q32. Data protection & compliance
 
 Classify data; encrypt at rest (KMS CMKs) and in transit (TLS 1.2+); minimise PII sent to LLMs (redact/pseudonymise); retention & deletion (user deletion propagates to memory, indexes, logs); data residency (region choice, cross-region inference settings); audit trails; access reviews.
+
+```flow
+pipeline: Data protection and compliance
+Classify data > PII, confidential, public.
+Minimise > Collect and keep only what's needed; redact before LLM calls where possible.
+Encrypt + control access > KMS, IAM, tenant isolation.
+Retention + deletion > Policies, user deletion requests.
+Audit > Who accessed what; data residency respected.
+```
 
 ---
 
@@ -426,17 +647,44 @@ Classify data; encrypt at rest (KMS CMKs) and in transit (TLS 1.2+); minimise PI
 
 When downstream is saturated: queue and slow intake, reject early with 429/503 + `Retry-After`, prioritise interactive over batch, bounded concurrency (semaphores, Map MaxConcurrency, SQS ESM max concurrency), circuit breakers. Better to fail fast for some than slow for all.
 
+```flow
+pipeline: Backpressure and load shedding
+Bounded queues > Know when you're full.
+Concurrency limits > Per dependency (bulkheads).
+Reject early (429 / 503 + Retry-After) > Cheap, before doing work.
+Prioritise > Paid/interactive traffic over batch.
+Autoscale behind it > Shedding buys time while capacity grows.
+```
+
 ---
 
 ### Q34. Architecture trade-off reviews — how to be objective
 
 Write an **ADR** (Architecture Decision Record): context, options, criteria (security, reliability, cost, latency, operability, team skills, time-to-market), evidence (benchmarks, PoC, cost model), decision, consequences, review date. Involve stakeholders; revisit when assumptions change.
 
+```flow
+pipeline: An objective trade-off review
+State the decision + criteria > Weighted by what matters for this system.
+List real options > Including "do nothing".
+Score with evidence > Benchmarks, costs, team skills.
+Write it down (ADR) > Decision, context, consequences.
+Revisit trigger > What would make us change it.
+```
+
 ---
 
 ## 6. Delivery, operations & leadership
 
 ### Q35. Release strategy for frontend, backend and agent configuration
+
+```flow
+pipeline: Releasing three kinds of change
+Frontend > Atomic upload, keep old assets, invalidate index.html.
+Backend > Blue/green or canary with alarms.
+Agent config (prompts, tools, models) > Versioned, eval-gated, rolled out by flag/endpoint.
+Backward compatibility > Old frontend with new API, and vice versa.
+Rollback ready for each > Independently.
+```
 
 - **Frontend:** immutable hashed assets, `index.html` no-cache, keep old chunks, feature flags.
 - **Backend:** ECS blue/green or canary with alarm rollback; backward-compatible APIs (additive changes, versioning).
@@ -450,17 +698,43 @@ Write an **ADR** (Architecture Decision Record): context, options, criteria (sec
 
 Timeline (detection → mitigation → resolution), impact (users, duration, data), root cause(s) with "5 whys"/contributing factors, what went well/poorly, action items with owners and dates (prevent, detect faster, mitigate faster), shared widely. Focus on systems, not people.
 
+```flow
+pipeline: Blameless postmortem
+Timeline > What happened, when, from evidence.
+Impact > Users, duration, data.
+Root causes + contributing factors > Systems and processes, not people.
+Action items > Owners and dates; prevent and detect faster.
+Share + follow up > Learning across teams.
+```
+
 ---
 
 ### Q37. A teammate pushes an unsafe Terraform/CI change
 
 Block via process (protected branches, code owners, required approvals, policy checks in CI) rather than heroics; review privately and constructively with the specific risk ("this trust policy lets any project assume the prod role"), propose a fix, pair if helpful, and turn it into a guardrail (OPA policy/check) so it can't recur. If already applied, treat as an incident.
 
+```flow
+pipeline: Handling an unsafe change from a teammate
+Block safely > Review comment / required approval; explain the concrete risk.
+Show evidence > Plan output, policy violation, blast radius.
+Offer a safe alternative > Pair on it.
+Fix the system > Policy checks in CI so it can't recur.
+```
+
 ---
 
 ### Q38. What technical leadership achievements should you present?
 
 Use **STAR** (Situation, Task, Action, Result) with metrics: designed X reducing latency/cost by Y%; introduced eval gates/observability that caught regressions; led a migration with zero downtime; mentored N engineers; set security standards (OIDC, least privilege); handled a major incident and the follow-up improvements; influenced roadmap with ADRs/PoCs.
+
+```flow
+pipeline: Presenting a leadership achievement (STAR)
+Situation > Context and why it mattered.
+Task > Your responsibility.
+Action > What YOU did: decisions, trade-offs, influence.
+Result > Measurable outcome (latency, cost, incidents, team growth).
+Learning > What you'd do differently.
+```
 
 ---
 
@@ -481,11 +755,29 @@ Operations & next steps (30 s) > SLOs, evals, and what you'd improve next.
 
 Translate technical trade-offs into business terms (risk, cost, time, user impact); give options with recommendation; be explicit about uncertainty and how you'll reduce it (PoC, benchmark); regular status with metrics.
 
+```flow
+pipeline: Explaining to stakeholders
+Start with the outcome > What it means for them.
+Options + trade-offs > In business terms (cost, risk, time).
+Recommendation > And why.
+Risks + mitigations > Honest.
+Next steps > Who decides what, by when.
+```
+
 ---
 
 ## 7. Incident & debugging scenarios
 
 ### Q41. A prompt injection triggered an unauthorised tool attempt
+
+```flow
+pipeline: Responding to a prompt-injection tool attempt
+Contain > Verify the policy gate blocked it; if not, disable the tool.
+Investigate > Trace: which content carried the injection, what was attempted.
+Assess impact > Data accessed? Actions executed?
+Fix > Tighter tool scopes, approvals, content handling.
+Add to evals > Regression test for this attack.
+```
 
 1. **Contain:** verify the policy gate blocked it (Cedar deny logged); if not, disable the tool/feature flag immediately.
 2. **Investigate:** trace the session — source of injected text (document/web page), which tool/args, which identity.
@@ -499,11 +791,27 @@ Translate technical trade-offs into business terms (risk, cost, time, user impac
 
 Tail latency = a subset of requests is slow: cold starts / new tasks warming (JIT, caches), one bad AZ/instance, GC pauses or memory pressure, connection pool exhaustion under bursts, retries hitting a slow dependency, a new code path for specific inputs (bigger prompts, more tool calls), lock contention. Compare traces of slow vs fast requests, slice metrics by AZ/task/version/tenant, roll back if SLO burning.
 
+```flow
+pipeline: p99 doubled, p50 flat after deploy
+Compare versions > Canary vs baseline traces.
+Find the tail > Which requests/dependencies are slow? GC pauses? Cold starts?
+Look for new serial calls > N+1, extra retries, lock contention.
+Roll back if needed > Then fix and redeploy.
+```
+
 ---
 
 ### Q43. Customer reports a duplicate action despite one approval
 
 Find where duplication happened: client double-submit, API retry, agent node replay after `interrupt()` (side effect before interrupt), Step Functions/queue redelivery, tool retry. Fix: idempotency key = approval/action ID enforced **in the tool/backend** with a conditional write; approval record status `EXECUTED` checked before execution; move side effects after the interrupt; add regression test; notify customer and compensate.
+
+```flow
+pipeline: Duplicate action despite one approval
+Find both executions > Trace ids, timestamps.
+Where did the retry come from? > Client retry, graph replay, queue redelivery.
+Missing idempotency key? > Side effect not bound to action_id.
+Fix > Idempotency at the tool; approval bound to args hash; execute-once check.
+```
 
 ---
 
@@ -511,11 +819,29 @@ Find where duplication happened: client double-submit, API retry, agent node rep
 
 Sev-1: contain (disable cache/feature), then check caches keyed without user/tenant, shared mutable globals in reused Lambda/ECS processes, session/thread ID collisions or client-supplied IDs, CDN caching personalised responses (`Cache-Control: private`), connection reuse bugs. Fix, test, assess exposure, follow breach-notification process.
 
+```flow
+pipeline: Intermittent cross-user data
+Contain > Severity 1; disable the path.
+Caches > Keys missing user/tenant? CDN caching private responses?
+Shared state > Globals/singletons holding request data; thread/async context leaks.
+Session mapping > Thread/session ids reused or guessable.
+Fix + test > Add cross-tenant tests; notify per policy.
+```
+
 ---
 
 ### Q45. Cost spiked 3× overnight
 
 Cost Explorer by service/usage type + tags → e.g., Bedrock tokens (agent loop bug, a tenant scripting the API, prompt caching broken by a dynamic prefix), NAT data processing (new traffic not using endpoints), CloudWatch logs (debug logging left on). Mitigate (limits, rollback), then add budgets/anomaly detection alerts per tenant/feature.
+
+```flow
+pipeline: Cost spiked 3× overnight
+Cost Explorer by service/tag > What grew?
+Usage metrics > Tokens, invocations, NAT data, logs.
+Recent changes > Deploys, config, traffic, a loop or retry storm.
+Stop the bleed > Caps, kill switch, scale down.
+Prevent > Budgets, anomaly detection, per-tenant limits.
+```
 
 ---
 

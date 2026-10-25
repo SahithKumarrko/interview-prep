@@ -40,6 +40,14 @@
 
 ### Q01. The four pillars of OOP
 
+```flow
+pipeline: The four OOP pillars on one Account class
+Encapsulation > `_balance` is changed only through deposit().
+Abstraction > Callers use `deposit(100)` without knowing how it's stored.
+Inheritance > `SavingsAccount(Account)` reuses and extends it.
+Polymorphism > `for acc in accounts: acc.monthly_fee()` — each type answers its own way.
+```
+
 | Pillar | Meaning | Python example |
 |---|---|---|
 | **Encapsulation** | keep data + behaviour together, hide internals | `_balance` attribute changed only via `deposit()` |
@@ -66,6 +74,14 @@ class Account:
 
 **Short answer:** Prefer building objects **from** other objects ("has-a") over deep class hierarchies ("is-a"). Inheritance couples the child to the parent's internals; composition lets you swap parts.
 
+```flow
+trace: Composition: wrapping behaviours around a client
+BedrockClient() > The core client.
+CachingClient(BedrockClient()) > Adds caching without touching the original.
+RetryingClient(CachingClient(BedrockClient())) > Adds retries on top.
+call invoke() → retry layer → cache layer → Bedrock > Swap or reorder layers freely; inheritance would need a class for every combination.
+```
+
 ```python
 # ❌ inheritance explosion: RetryingBedrockClient, CachingBedrockClient, CachingRetryingBedrockClient...
 # ✅ composition: wrap behaviours around any client
@@ -88,6 +104,14 @@ Use inheritance for true "is-a" with a stable base (e.g. exception hierarchies, 
 
 ### Q03. DRY, KISS, YAGNI
 
+```flow
+pipeline: When to abstract duplicated code
+First time > Just write it.
+Second time > Duplicate it, notice the similarity.
+Third time > The shape is clear: extract a shared function.
+Check > Are they really the same KNOWLEDGE, or just similar-looking code that will diverge?
+```
+
 - **DRY** (Don't Repeat Yourself): one source of truth for each piece of *knowledge* (not every similar-looking line). Duplicating code twice is fine; abstract on the third time when the shape is clear.
 - **KISS** (Keep It Simple): the simplest design that meets requirements.
 - **YAGNI** (You Aren't Gonna Need It): don't build for imagined future needs.
@@ -100,6 +124,14 @@ Use inheritance for true "is-a" with a stable base (e.g. exception hierarchies, 
 
 Python has no `interface` keyword. **ABC** = nominal (classes must inherit and implement abstract methods; error at instantiation). **Protocol** = structural (any class with matching methods fits; checked by mypy/pyright). Use Protocols for ports like `LLMClient` so third-party classes fit without inheriting. Details in 01 Q20.
 
+```flow
+pipeline: ABC vs Protocol
+ABC > Class must inherit and implement abstract methods; error at instantiation if missing.
+Protocol > Any class with matching methods fits; checked by mypy/pyright.
+Use Protocol for ports > Third-party classes fit without inheriting.
+Use ABC > When you want shared base behaviour + enforced subclassing.
+```
+
 ---
 
 ## 3. SOLID
@@ -109,6 +141,14 @@ Python has no `interface` keyword. **ABC** = nominal (classes must inherit and i
 ### Q05. S — Single Responsibility Principle
 
 **Short answer:** A class should have **one reason to change** — one owner/stakeholder.
+
+```flow
+pipeline: SRP: one change, one class
+Parsing rules change > Only InvoiceParser changes.
+Storage moves S3 → DB > Only InvoiceRepository changes.
+Email template changes > Only FinanceNotifier changes.
+ProcessInvoice wires them > A small coordinator; each class has one reason to change.
+```
 
 ```python
 # ❌ one class changes when the parsing rules, the storage, OR the email template changes
@@ -133,6 +173,15 @@ class ProcessInvoice:                      # use case / service
 ### Q06. O — Open/Closed Principle
 
 **Short answer:** Open for **extension**, closed for **modification** — add new behaviour by adding code, not by editing a growing `if/elif` chain.
+
+```flow
+sequence: Open/closed with a registry
+actors: New code, Registry, extract()
+New code -> Registry: @register("xlsx") class XlsxExtractor
+extract() -> Registry: EXTRACTORS[doc.type]
+Registry --> extract(): XlsxExtractor
+> Adding a type means adding a class, not editing the dispatch function, so existing types can't break.
+```
 
 ```python
 # ❌ every new file type edits this function
@@ -161,6 +210,14 @@ def extract(doc):
 
 **Short answer:** A subclass must be usable anywhere its parent is expected **without surprising the caller** — same contract: accepts at least the same inputs, returns the same kind of output, doesn't throw new unexpected errors.
 
+```flow
+trace: A Liskov violation
+def archive(store: Storage): store.save(key, data) > Code written against the Storage contract.
+archive(S3Storage())  →  ✓ saved > Fine.
+archive(ReadOnlyStorage())  →  **NotImplementedError** > The subclass broke the contract callers rely on.
+fix: split Reader / Writer interfaces > ReadOnlyStorage simply isn't a Writer.
+```
+
 ```python
 class Storage:
     def save(self, key: str, data: bytes) -> None: ...
@@ -176,6 +233,14 @@ Fix: split interfaces (`Reader`, `Writer`) so read-only storage simply doesn't c
 ### Q08. I — Interface Segregation Principle
 
 **Short answer:** Clients shouldn't depend on methods they don't use. Prefer several small interfaces over one fat one.
+
+```flow
+pipeline: Interface segregation
+Fat interface > DocStore with get, put, delete, list, admin_reset…
+Client only reads > But depends on all of it; fakes must implement everything.
+Split > DocReader(get), DocWriter(put).
+Depend on the small one > summarise(reader: DocReader). Same for agent tools: narrow tools, least privilege.
+```
 
 ```python
 from typing import Protocol
@@ -193,6 +258,16 @@ The same idea applies to agent tools: give an agent a narrow `read_ticket` tool,
 ### Q09. D — Dependency Inversion Principle
 
 **Short answer:** High-level business logic should depend on **abstractions**, not on concrete infrastructure. Infrastructure implements the abstraction. Combined with **dependency injection** (pass dependencies in, don't create them inside), this makes code testable and swappable.
+
+```flow
+sequence: Dependency inversion with injection
+actors: Composition root, TicketTriage, LLMClient (Protocol), BedrockLLM / FakeLLM
+Composition root -> BedrockLLM / FakeLLM: create the concrete client
+Composition root -> TicketTriage: TicketTriage(llm=client)
+TicketTriage -> LLMClient (Protocol): llm.complete(prompt)
+LLMClient (Protocol) -> BedrockLLM / FakeLLM: whichever was injected
+> Business logic knows only the interface; production injects Bedrock, tests inject a fake.
+```
 
 ```python
 class LLMClient(Protocol):
@@ -223,6 +298,14 @@ FastAPI's `Depends` (20 Q10) is DI at the framework level; "ports and adapters" 
 
 **Short answer:** Ensures one instance (e.g. one config, one connection pool). In Python a **module is already a singleton** (imported once), so a module-level object or `functools.cache` on a factory is the idiomatic version.
 
+```flow
+trace: Singleton the Python way
+get_settings() first call  →  Settings() **created** > @functools.cache on a factory.
+get_settings() again  →  **same object** returned > Cached.
+module-level object > Modules are imported once, so they're natural singletons.
+prefer injecting it > Globals are hard to test and unsafe to mutate across threads.
+```
+
 ```python
 # settings.py
 from functools import cache
@@ -237,6 +320,14 @@ def get_settings() -> Settings:
 ### Q11. Factory (and Abstract Factory)
 
 **Short answer:** A function/class that decides **which concrete class to create**, so callers don't hard-code it.
+
+```flow
+pipeline: Factory choosing the implementation
+Config says provider = "bedrock" > From settings.
+make_llm("bedrock") > match/case on the name.
+Returns BedrockLLM > Callers only see LLMClient.
+Unknown name > Clear error. Abstract factory = a family (storage + queue + secrets) for AWS vs local.
+```
 
 ```python
 def make_llm(provider: str, **kw) -> LLMClient:
@@ -256,6 +347,14 @@ LangChain's `init_chat_model("provider:model")` is a factory. **Abstract factory
 
 **Short answer:** Constructs a complex object step by step, often with a fluent API, separating construction from the final object. Python's keyword arguments and dataclasses remove most needs for it; it's still useful for complex, validated, multi-step construction.
 
+```flow
+pipeline: Builder: StateGraph as an example
+StateGraph(State) > Start the builder.
+add_node / add_edge > Configure step by step.
+compile(checkpointer) > build() → validated, immutable runnable.
+Why > Complex objects with many optional parts and validation at the end.
+```
+
 ```python
 graph = StateGraph(State)                 # LangGraph's StateGraph is a builder:
 graph.add_node("plan", plan)
@@ -268,6 +367,14 @@ app = graph.compile(checkpointer=saver)  # build() → immutable runnable object
 ### Q13. Strategy
 
 **Short answer:** Define a family of interchangeable algorithms and choose one at runtime. In Python, a strategy is often just a function passed in.
+
+```flow
+pipeline: Strategy: swapping algorithms at runtime
+index_document(text, strategy="headings") > Caller picks a strategy by name.
+CHUNKERS lookup > fixed / headings / semantic functions.
+Run the chosen function > Same interface for all.
+Add a strategy > Add a function; nothing else changes.
+```
 
 ```python
 def fixed_chunks(text, size=1000): ...
@@ -288,6 +395,17 @@ Other examples: retry/backoff policies, pricing rules, model routing (cheap vs s
 
 **Short answer:** Subjects notify subscribers when something happens, without knowing who they are. In-process it's callbacks/event hooks; across services it becomes pub/sub (SNS, EventBridge).
 
+```flow
+sequence: Observer / event bus
+actors: Job service, EventBus, Email, Dashboard
+Email -> EventBus: subscribe("job.completed")
+Dashboard -> EventBus: subscribe("job.completed")
+Job service -> EventBus: publish("job.completed", {job_id})
+EventBus -> Email: send_email(payload)
+EventBus -> Dashboard: update_dashboard(payload)
+> The publisher doesn't know who listens. Across services this becomes SNS/EventBridge.
+```
+
 ```python
 class EventBus:
     def __init__(self): self._subs: dict[str, list] = defaultdict(list)
@@ -305,6 +423,18 @@ LangChain callbacks and React state subscriptions are observers.
 
 ### Q15. Adapter and Facade
 
+```flow
+sequence: Facade over a document pipeline
+actors: Caller, DocumentService (facade), S3, Textract, Chunker, Vector store
+Caller -> DocumentService (facade): ingest(file)
+DocumentService (facade) -> S3: upload
+DocumentService (facade) -> Textract: extract text
+DocumentService (facade) -> Chunker: chunk
+DocumentService (facade) -> Vector store: embed + index
+DocumentService (facade) --> Caller: doc_id
+> One simple call hides five subsystems. An adapter, by contrast, converts one interface into another.
+```
+
 - **Adapter:** converts one interface into the one your code expects. E.g. wrap a vendor SDK so it matches your `LLMClient` Protocol; MCP servers are adapters that turn APIs into a standard tool interface.
 - **Facade:** a simple front over a complicated subsystem. E.g. `DocumentService.ingest(file)` hides upload → Textract → chunk → embed → index.
 
@@ -313,6 +443,14 @@ LangChain callbacks and React state subscriptions are observers.
 ### Q16. Decorator pattern (vs Python `@decorator`)
 
 **Short answer:** The pattern wraps an object to add behaviour while keeping the same interface (the `RetryingClient` in Q02). Python's `@decorator` syntax applies the same idea to **functions** — logging, retries, caching, auth checks.
+
+```flow
+trace: A Python decorator wrapping a function
+@timed def fetch(): … > At definition: fetch = timed(fetch).
+fetch() → wrapper starts timer > The wrapper runs first.
+→ original fetch() runs > Captured in the closure.
+→ wrapper logs "fetch took 120 ms" in finally > Same idea as the decorator pattern, applied to functions.
+```
 
 ```python
 def timed(fn):
@@ -329,6 +467,18 @@ def timed(fn):
 ### Q17. Repository and Unit of Work
 
 **Short answer:** **Repository** = a collection-like interface for loading/saving domain objects, hiding the database. **Unit of Work** = groups changes into one transaction and commits/rolls back together.
+
+```flow
+sequence: Repository + Unit of Work in a use case
+actors: Use case, UnitOfWork, DocumentRepo, Database
+Use case -> UnitOfWork: async with uow
+Use case -> DocumentRepo: get(doc_id)
+DocumentRepo -> Database: SELECT
+Use case -> Use case: doc.mark_processed()
+Use case -> UnitOfWork: commit()
+UnitOfWork -> Database: one transaction (or rollback on error)
+> Tests swap in an in-memory repository; business logic never sees SQL.
+```
 
 ```python
 class DocumentRepo(Protocol):
@@ -351,6 +501,15 @@ Business logic gets tested with an in-memory repo; SQLAlchemy's `Session` is its
 
 ### Q18. Command and Chain of Responsibility
 
+```flow
+pipeline: Chain of responsibility (middleware)
+Request > Enters the chain.
+Auth handler > Reject if not authenticated, else pass on.
+Rate-limit handler > Reject if over quota, else pass on.
+Logging handler > Record, pass on.
+Endpoint > Handles it. A tool call as a Command object can be queued, approved, logged or retried.
+```
+
 - **Command:** turn a request into an object (`{"action": "refund", "order": "A12", "amount": 50}`) that can be queued, logged, retried, approved or undone. Agent **tool calls** are commands — which is why you can validate and require approval before executing them.
 - **Chain of Responsibility:** pass a request along a chain of handlers, each may handle/modify/stop it. **Middleware** in FastAPI and LangChain v1 agents is this pattern (auth → rate limit → logging → handler).
 
@@ -359,6 +518,14 @@ Business logic gets tested with an in-memory repo; SQLAlchemy's `Session` is its
 ### Q19. Template Method
 
 **Short answer:** A base class defines the fixed steps of an algorithm; subclasses fill in specific steps.
+
+```flow
+pipeline: Template method
+Ingestor.run(src) > Fixed skeleton in the base class.
+fetch > Shared step.
+extract (abstract) > Each subclass fills in: PDF, HTML, DOCX.
+chunk → index > Shared steps. In Python, passing the varying step as a function is often simpler.
+```
 
 ```python
 class Ingestor(ABC):
@@ -377,6 +544,14 @@ Python alternative: pass the varying step as a function (strategy) — often sim
 
 ### Q20. Monolith vs modular monolith vs microservices
 
+```flow
+pipeline: Monolith → modular monolith → microservices
+Monolith > One deployable; simple until it tangles.
+Modular monolith > One deployable, strict module boundaries and owned data.
+Extract a service when there's a reason > Different scaling, release cadence, team, or security boundary.
+Microservices > Independent deploys, at the cost of network failures, distributed data and ops overhead.
+```
+
 | | Monolith | Modular monolith | Microservices |
 |---|---|---|---|
 | Deploy | one unit | one unit, strong internal module boundaries | many independent units |
@@ -391,9 +566,28 @@ Python alternative: pass the varying step as a function (strategy) — often sim
 
 **Short answer:** Split a system by **business capability**, where each area (bounded context) has its own model and language. "Document" means a file in *Ingestion*, a set of chunks in *Search*, and a billable unit in *Billing*. Service boundaries usually follow bounded contexts; each owns its data (**database per service** — other services use its API/events, not its tables).
 
+```flow
+pipeline: "Document" in three bounded contexts
+Ingestion > A file: bytes, type, upload status.
+Search > A set of chunks with embeddings.
+Billing > A billable unit: pages, tenant, price.
+Separate models + data > Each context owns its database; others use its API/events.
+```
+
 ---
 
 ### Q22. API Gateway and Backend-for-Frontend (BFF)
+
+```flow
+sequence: A BFF aggregating calls for the UI
+actors: React, BFF (FastAPI), Profile svc, Jobs svc, Agent
+React -> BFF (FastAPI): GET /dashboard
+BFF (FastAPI) -> Profile svc: get user
+BFF (FastAPI) -> Jobs svc: recent jobs
+BFF (FastAPI) -> Agent: conversation summaries
+BFF (FastAPI) --> React: one response shaped for this screen
+> One round trip for the browser; auth and shaping in one place. An API gateway handles routing, auth and limits at the edge.
+```
 
 - **API Gateway:** single entry point → routing, auth (JWT validation), rate limits, TLS, request validation. (AWS API Gateway, ALB + middleware.)
 - **BFF:** a backend tailored to one frontend (web vs mobile) that aggregates downstream calls and shapes responses, so the UI doesn't make 6 calls. A FastAPI layer between React and AgentCore is effectively a BFF.
@@ -467,6 +661,17 @@ Compensations must be idempotent and may not perfectly undo (an email can't be u
 
 **Short answer:** Solves "I updated my DB and need to publish an event, but either could fail" (dual-write problem). Write the event into an **outbox table in the same DB transaction** as the business change; a separate relay publishes outbox rows to the queue and marks them sent.
 
+```flow
+sequence: Transactional outbox
+actors: Service, Database, Relay, EventBridge, Consumer
+Service -> Database: BEGIN; UPDATE order PAID; INSERT outbox(order.paid); COMMIT
+Relay -> Database: poll / CDC: new outbox rows
+Relay -> EventBridge: publish order.paid
+Relay -> Database: mark sent
+EventBridge -> Consumer: deliver (at least once)
+Consumer -> Consumer: dedupe by event id → process
+```
+
 ```
 BEGIN;
   UPDATE orders SET status='PAID' WHERE id=12;
@@ -500,11 +705,28 @@ Use when reads and writes have very different shapes/scale (dashboards, search).
 
 **Short answer:** Store the **sequence of events** (`DocumentUploaded`, `ExtractionCompleted`, `ApprovedBy(u42)`) as the source of truth, and derive current state by replaying them. Gives a full audit trail and time travel.
 
+```flow
+trace: Event sourcing: state from events
+DocumentUploaded(doc1) > Events are the source of truth, appended only.
+ExtractionCompleted(doc1, 12 pages) > Never updated in place.
+ApprovedBy(doc1, u42) > Full audit trail.
+replay → state {status: approved, pages: 12, approver: u42} > Current state is derived; snapshots speed up replay. Read models (CQRS) answer queries.
+```
+
 Costs: event schema versioning, replay time (use snapshots), harder queries (usually paired with CQRS read models). LangGraph checkpoints are similar in spirit — a history of state snapshots you can replay or fork (07 Q14).
 
 ---
 
 ### Q28. Strangler fig, sidecar, anti-corruption layer
+
+```flow
+pipeline: Strangler fig, step by step
+Router in front of legacy > All traffic still goes to the old system.
+Build one capability anew > Behind the same router.
+Route that path to the new service > Gradually, with metrics.
+Repeat > Capability by capability.
+Remove legacy > When nothing routes to it. An anti-corruption layer translates between old and new models meanwhile.
+```
 
 - **Strangler fig:** migrate a legacy system piece by piece behind a router until the old one can be removed (18 Q27).
 - **Sidecar:** a helper container next to the app in the same task/pod (log router, proxy, OTel collector) — ECS sidecars (13 Q07).
@@ -516,17 +738,45 @@ Costs: event schema versioning, replay time (use snapshots), harder queries (usu
 
 Synchronous (HTTP/gRPC) is simple but couples availability — if B is down, A fails. Asynchronous (queues/events) decouples and buffers spikes but adds eventual consistency and at-least-once delivery → every consumer must be **idempotent** (dedupe by message/operation ID). See 18 Q08–Q10.
 
+```flow
+sequence: Sync coupling vs async decoupling
+actors: Orders, Payments, Queue, Email
+Orders -> Payments: SYNC: charge (Orders waits; fails if Payments is down)
+Payments --> Orders: ok
+Orders -> Queue: ASYNC: publish order.placed
+Queue -> Email: deliver when Email is up
+> Async isolates failures and absorbs spikes, but consumers must be idempotent and the system is eventually consistent.
+```
+
 ---
 
 ### Q30. The Twelve-Factor App (headline list)
 
 Codebase in VCS · explicit dependencies · **config in environment** · backing services as attached resources · build/release/run separated · **stateless processes** · port binding · scale by processes · **disposability** (fast start, graceful SIGTERM) · dev/prod parity · logs as event streams · admin tasks as one-off processes. Containers on ECS follow these naturally (10 Q22).
 
+```flow
+pipeline: Twelve-factor highlights in an ECS service
+Config in environment > Same image everywhere.
+Stateless processes > State in S3/DB/Redis.
+Disposability > Fast start, graceful SIGTERM.
+Logs as streams > stdout → CloudWatch.
+Dev/prod parity > Same image, real dependencies in tests.
+```
+
 ---
 
 ## 6. Scenario & design-review questions
 
 ### Q31. Refactor a 2,000-line `agent_service.py` that does everything
+
+```flow
+pipeline: Refactoring a 2,000-line service safely
+Characterisation tests > Lock in current behaviour.
+Map responsibilities > HTTP, auth, prompts, LLM, tools, persistence, notifications.
+Extract behind interfaces > LLMClient, ToolRegistry, JobRepository, Notifier.
+Registry instead of if/elif > For tools.
+One extraction per PR > Behaviour unchanged each time.
+```
 
 1. Add characterisation tests around current behaviour first.
 2. Identify responsibilities: HTTP handling, auth, prompt building, LLM calls, tool execution, persistence, notifications.
@@ -541,11 +791,28 @@ Codebase in VCS · explicit dependencies · **config in environment** · backing
 
 Ask what problem it solves: Are parts scaling differently (CPU-heavy extraction vs I/O-heavy API)? Different teams blocked on one release train? Different security boundaries? If not, keep a modular monolith and fix module boundaries first. If yes, split the **one** part with the clearest boundary (e.g. document-extraction workers behind a queue), with its own data and contract tests.
 
+```flow
+pipeline: Deciding whether to split into microservices
+What's the pain? > Scaling, release coupling, team conflicts, security boundary?
+Can module boundaries fix it? > Usually yes: do that first.
+Split one service > The clearest boundary (e.g. extraction workers behind a queue).
+Own data + contract tests > Then measure whether it helped.
+```
+
 ---
 
 ### Q33. Add a new LLM provider without touching business logic
 
 Define an `LLMClient` Protocol (DIP), implement an adapter per provider (Adapter), choose via a factory from config (Factory), wrap with retry + circuit breaker + fallback (Decorator/composition), and run the eval suite against the new provider before switching traffic.
+
+```flow
+pipeline: Adding an LLM provider without touching logic
+LLMClient Protocol > Business code depends on this.
+New adapter > Implements it for the new provider.
+Factory from config > Picks the adapter.
+Decorators > Retry + circuit breaker + fallback around any client.
+Eval before switching > Golden set on the new provider.
+```
 
 ---
 
@@ -553,11 +820,27 @@ Define an `LLMClient` Protocol (DIP), implement an adapter per provider (Adapter
 
 Dual-write risk → transactional outbox (Q25); consumers idempotent by event ID; monitoring on outbox lag; a reconciliation job for drift.
 
+```flow
+pipeline: Keeping job status and notifications consistent
+Outbox in the same transaction > Status change + event row.
+Relay publishes > With retries.
+Idempotent consumers > Dedupe by event id.
+Monitor + reconcile > Alert on outbox lag; nightly reconciliation.
+```
+
 ---
 
 ### Q35. How do you avoid over-engineering in a design review?
 
 Tie every abstraction to a current requirement or a likely, cheap-to-support change; count the moving parts; prefer boring managed services; ask "what's the simplest version we could ship and measure?" Patterns are justified by the change they make easy — name that change.
+
+```flow
+pipeline: Checking a design for over-engineering
+Which requirement needs this abstraction? > Name it.
+Is the change it enables likely and cheap to support? > If not, drop it.
+Count moving parts > Fewer is better.
+Simplest shippable version? > Ship, measure, then extend.
+```
 
 ---
 

@@ -47,6 +47,15 @@ Exception handlers + background tasks > Errors become HTTP responses; background
 
 ### Q01. HTTP methods and their semantics
 
+```flow
+pipeline: HTTP methods by safety and idempotency
+GET > Safe + idempotent: read only, cacheable.
+PUT > Idempotent: replace the resource; repeating gives the same state.
+DELETE > Idempotent: deleting twice leaves it deleted.
+PATCH > Partial update; not necessarily idempotent.
+POST > Neither: creates/actions; make it idempotent with an Idempotency-Key.
+```
+
 | Method | Purpose | Safe | Idempotent |
 |---|---|---|---|
 | GET | read | ✅ | ✅ |
@@ -60,6 +69,14 @@ Exception handlers + background tasks > Errors become HTTP responses; background
 ---
 
 ### Q02. Status codes you must know
+
+```flow
+pipeline: Picking a status code
+2xx success > 200 OK, 201 Created (+ Location), 202 Accepted (async), 204 No Content.
+4xx client problem > 400 bad input, 401 not authenticated, 403 not allowed, 404 not found, 409 conflict, 422 validation, 429 rate limited.
+5xx server problem > 500 bug, 502/503/504 dependency or overload.
+Rule > The code tells clients whether retrying could help.
+```
 
 | Code | Meaning | Typical use |
 |---|---|---|
@@ -84,6 +101,15 @@ Exception handlers + background tasks > Errors become HTTP responses; background
 
 Nouns not verbs (`/documents/{id}`), plural collections, nested only for ownership (`/conversations/{id}/messages`), actions that don't fit CRUD as sub-resources (`POST /jobs/{id}:cancel` or `POST /jobs/{id}/cancel`), consistent error format (RFC 9457 Problem Details), versioning strategy (`/v1/` path or header), use HTTP semantics (status codes, caching headers).
 
+```flow
+pipeline: Designing REST resources
+Nouns, plural > /documents, /documents/{id}.
+Nesting for ownership > /conversations/{id}/messages.
+Methods for verbs > POST create, GET read, PATCH update, DELETE.
+Actions that aren't CRUD > POST /jobs/{id}/cancel.
+Consistent errors + pagination > Same shape everywhere.
+```
+
 ```json
 { "type": "https://api.example.com/errors/insufficient-quota", "title": "Quota exceeded",
   "status": 429, "detail": "Tenant t-42 used 100% of daily tokens", "instance": "/v1/chat" }
@@ -94,6 +120,18 @@ Nouns not verbs (`/documents/{id}`), plural collections, nested only for ownersh
 ### Q04. Idempotency keys
 
 **Short answer:** For non-idempotent operations (POST create, charge, start job), the client sends a unique `Idempotency-Key` header; the server stores key → result (with request hash) and returns the **same result** for retries instead of executing again.
+
+```flow
+sequence: Idempotency-Key on a flaky network
+actors: Client, API, Key store
+Client -> API: POST /payments (Idempotency-Key: k1)
+API -> Key store: k1 new → lock, process, store response
+API --> Client: response lost (timeout)
+Client -> API: retry POST (Idempotency-Key: k1)
+API -> Key store: k1 done → stored response
+API --> Client: same 201 response, no second payment
+> Same key with a different body → 422; keys expire after ~24 h.
+```
 
 ```python
 @app.post("/v1/jobs", status_code=202)
@@ -114,6 +152,14 @@ Race-safe with a unique constraint/conditional write on `(tenant, key)`.
 
 ### Q05. Pagination and filtering
 
+```flow
+trace: Cursor pagination
+GET /docs?limit=20 > First page.
+→ items 1–20 + next_cursor = "eyJpZCI6MjB9" (encodes last id=20) > Opaque to clients.
+GET /docs?limit=20&cursor=eyJ… > Server queries WHERE id < 20 (keyset).
+→ items 21–40 > Fast at any depth and stable while data changes; OFFSET gets slow and skips/duplicates rows.
+```
+
 | Style | How | Pros/cons |
 |---|---|---|
 | Offset | `?limit=50&offset=100` | simple; slow on big offsets; items shift when data changes |
@@ -127,11 +173,31 @@ Always cap `limit`, whitelist sortable/filterable fields, return `next_cursor`, 
 
 Return `ETag: "v7"` with a resource; client updates with `If-Match: "v7"`; server updates only if version matches (`UPDATE … WHERE id=? AND version=7`), else **412** (or 409). Prevents lost updates when two users edit simultaneously.
 
+```flow
+sequence: ETags prevent lost updates
+actors: Client A, API, Client B
+Client A -> API: GET /docs/1
+API --> Client A: 200 + ETag "v5"
+Client B -> API: PUT /docs/1 (If-Match "v5")
+API --> Client B: 200, now ETag "v6"
+Client A -> API: PUT /docs/1 (If-Match "v5")
+API --> Client A: 412 Precondition Failed: reload and merge
+```
+
 ---
 
 ### Q07. API versioning & backward compatibility
 
 Additive changes are safe (new optional fields, new endpoints). Breaking changes (remove/rename field, change type/meaning) need a new version or a deprecation period. Old frontend bundles (cached SPAs) may call your API for days → keep backward compatibility, use tolerant readers (ignore unknown fields), deprecate with `Deprecation`/`Sunset` headers and monitoring of old version usage.
+
+```flow
+pipeline: Evolving an API without breaking clients
+Additive changes only > New optional fields, new endpoints.
+Tolerant readers > Clients ignore unknown fields.
+Breaking change? > New version (/v2 or header) alongside v1.
+Deprecate > Announce, Sunset header, monitor usage.
+Remove v1 > When traffic reaches zero.
+```
 
 ---
 
@@ -141,9 +207,27 @@ Additive changes are safe (new optional fields, new endpoints). Breaking changes
 
 **Short answer:** **WSGI** (Flask, Django classic) is synchronous: one request per worker thread at a time. **ASGI** supports async — one worker can handle many concurrent I/O-bound requests, plus WebSockets and streaming. FastAPI is ASGI; run with Uvicorn (or Gunicorn managing Uvicorn workers, or `fastapi run`).
 
+```flow
+sequence: ASGI handles many requests on one worker
+actors: Request A, Event loop, Request B, Database
+Request A -> Event loop: async handler starts
+Event loop -> Database: A awaits query (non-blocking)
+Request B -> Event loop: handler runs while A waits
+Database --> Event loop: A's result → A resumes
+> WSGI ties up a thread per request; ASGI also supports WebSockets and streaming.
+```
+
 ---
 
 ### Q09. Pydantic request validation and response models
+
+```flow
+pipeline: Pydantic at both edges
+Raw request > JSON body, query, path, headers.
+Parse + validate (request model) > Types, constraints → 422 with details on failure.
+Your code > Works with typed objects.
+Response model > Filters + validates output; no internal fields leak.
+```
 
 ```python
 from typing import Annotated, Literal
@@ -182,6 +266,15 @@ Invalid input → automatic **422** with field-level errors. `response_model` fi
 
 **Short answer:** Declare what an endpoint needs; FastAPI builds it per request, caches it within the request, supports nesting, and runs cleanup for `yield` dependencies. Great for DB sessions, auth, authorisation, pagination params, and **test overrides**.
 
+```flow
+trace: Resolving a dependency tree for one request
+endpoint needs current_user + db > Declared with Depends.
+current_user needs token → verify JWT  →  **User(u1)** > Sub-dependencies resolved first.
+db: yield session  →  **Session** > Shared/cached within the request if used twice.
+endpoint runs > With both injected.
+after response: db cleanup (code after yield) > Close / rollback. Override dependencies in tests.
+```
+
 ```python
 async def get_db() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
@@ -211,6 +304,14 @@ app.dependency_overrides[get_current_user] = lambda: User(id="u1", tenant_id="t1
 
 ### Q11. Lifespan: startup and shutdown
 
+```flow
+pipeline: Lifespan: startup and shutdown
+Startup (before yield) > Create DB engine, HTTP client, load model/config.
+App serves requests > Shared resources on app.state.
+Shutdown (after yield) > Close clients, dispose engine, flush telemetry.
+Graceful stop > Triggered by SIGTERM from ECS.
+```
+
 ```python
 from contextlib import asynccontextmanager
 
@@ -230,6 +331,15 @@ app = FastAPI(lifespan=lifespan)
 
 ### Q12. Routers and project structure
 
+```flow
+pipeline: Organising a FastAPI project
+main.py > Creates the app, lifespan, includes routers.
+routers/ > One APIRouter per resource with prefix + tags.
+schemas/ > Pydantic request/response models.
+services/ > Business logic, framework-free.
+repositories / adapters > DB, S3, LLM clients.
+```
+
 ```
 app/
 ├── main.py            # create app, middleware, include routers, lifespan
@@ -248,6 +358,14 @@ app/
 
 Raise `HTTPException(status_code, detail)` for expected errors; register custom exception handlers to map domain exceptions → HTTP (and a Problem Details format); a catch-all handler logs the stack trace with request ID and returns a generic 500 (never leak internals).
 
+```flow
+pipeline: From exception to response
+Code raises > HTTPException or a domain error (DocumentNotFound).
+Exception handler > Maps domain errors to status codes.
+Consistent error body > RFC 9457 problem details: type, title, detail, trace id.
+Unexpected errors > 500 with a generic message; full details only in logs.
+```
+
 ```python
 @app.exception_handler(QuotaExceeded)
 async def quota_handler(request: Request, exc: QuotaExceeded):
@@ -260,6 +378,14 @@ async def quota_handler(request: Request, exc: QuotaExceeded):
 ### Q14. Middleware — where to use it
 
 Cross-cutting concerns for **every** request: request ID / trace context, access logging & timing, CORS, GZip, security headers, (coarse) auth context. Keep business authorisation in dependencies (endpoint-specific). Pure ASGI middleware is faster than `BaseHTTPMiddleware` and safer for streaming.
+
+```flow
+trace: Middleware is an onion
+request  →  CORS  →  request-id  →  timing  →  **endpoint** > Outer middleware runs first on the way in.
+response  ←  CORS  ←  request-id  ←  timing  ←  endpoint > And last on the way out.
+use for cross-cutting concerns > Logging, ids, compression, CORS.
+not for per-route auth logic > Use dependencies for that (they know the route and its parameters).
+```
 
 ```python
 @app.middleware("http")
@@ -277,9 +403,25 @@ async def request_id(request: Request, call_next):
 
 FastAPI generates an OpenAPI 3 schema from your types → Swagger UI (`/docs`), ReDoc (`/redoc`). Benefits: contract for frontend, client SDK generation (TypeScript types), contract testing, API gateway import. In production you may disable or protect `/docs`. Document error responses with `responses={404: {...}}`.
 
+```flow
+pipeline: OpenAPI from code
+Routes + Pydantic models > Your code.
+FastAPI generates openapi.json > Paths, schemas, auth.
+/docs and /redoc > Interactive documentation.
+Generate clients > TypeScript types for React, contract tests in CI.
+```
+
 ---
 
 ### Q16. Settings and configuration
+
+```flow
+pipeline: Settings loading
+pydantic-settings BaseSettings > Typed fields with defaults.
+Environment variables / .env > Override defaults.
+Secrets fetched at startup > From Secrets Manager, not env files in images.
+Validated once > App fails fast on bad config; injected with Depends.
+```
 
 ```python
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -300,6 +442,14 @@ settings = Settings()        # validated at startup → fail fast on missing con
 
 **Short answer:** In `async def`, a blocking call (boto3, `requests`, `time.sleep`, sync DB driver, heavy CPU) **freezes the event loop** → every request on that worker stalls. Options: use async libraries (httpx, asyncpg, aioboto3), run blocking code in a thread (`await asyncio.to_thread(...)` / `run_in_threadpool`), make the endpoint `def` (FastAPI uses a threadpool, default ~40 threads), or offload CPU work to a process/worker queue.
 
+```flow
+trace: One blocking call freezes everyone
+async def handler: requests.get(slow_api)  — 2 s > A blocking call inside async code.
+event loop **blocked** for 2 s > It can't run anything else meanwhile.
+all other requests on this worker **wait** > p99 explodes under load.
+fix: httpx.AsyncClient / await asyncio.to_thread(...) / plain def endpoint > Plain `def` endpoints run in a threadpool.
+```
+
 ```python
 @app.get("/v1/documents/{doc_id}/text")
 async def get_text(doc_id: str):
@@ -312,6 +462,18 @@ async def get_text(doc_id: str):
 ### Q18. Server-Sent Events (SSE) for LLM streaming
 
 **Short answer:** SSE = one-way server→client stream over plain HTTP (`text/event-stream`), auto-reconnect in browsers with `Last-Event-ID`. Ideal for token streaming. FastAPI has native SSE support (`fastapi.sse.EventSourceResponse` + `ServerSentEvent`); `StreamingResponse` also works.
+
+```flow
+sequence: Streaming LLM tokens over SSE
+actors: Browser, FastAPI, LLM
+Browser -> FastAPI: GET /chat/stream (EventSource)
+FastAPI -> LLM: stream=True
+LLM --> FastAPI: token
+FastAPI --> Browser: event: token / data: "Hel" (id: 1)
+LLM --> FastAPI: more tokens
+FastAPI --> Browser: event: done
+> Send keep-alive comments every ~15 s so proxies don't close idle streams; resume with Last-Event-ID.
+```
 
 ```python
 from collections.abc import AsyncIterable
@@ -333,6 +495,14 @@ Production details: heartbeat comments every ~15 s (keep proxies/ALB from idling
 
 ### Q19. WebSockets vs SSE
 
+```flow
+pipeline: SSE or WebSockets?
+Server → client only (tokens, progress) > SSE: plain HTTP, auto-reconnect, easy through proxies.
+Two-way realtime (chat typing, collaboration) > WebSockets.
+Infrastructure > ALB supports both; tune idle timeouts.
+Scaling > WebSockets need connection state/registries; SSE is simpler.
+```
+
 | | SSE | WebSocket |
 |---|---|---|
 | Direction | server → client | bidirectional |
@@ -345,6 +515,15 @@ Production details: heartbeat comments every ~15 s (keep proxies/ALB from idling
 ### Q20. `BackgroundTasks` — and its limits
 
 `BackgroundTasks` runs a function **after the response is sent, in the same process**. Fine for small fire-and-forget work (send an email, write an audit log). **Not** for important or long work: lost if the container restarts/scales in, no retries, no visibility, consumes the web worker. Use a durable queue (SQS + worker), Step Functions, or Celery/RQ for real jobs.
+
+```flow
+sequence: BackgroundTasks and its limit
+actors: Client, FastAPI worker
+Client -> FastAPI worker: POST /signup
+FastAPI worker --> Client: 201 sent immediately
+FastAPI worker -> FastAPI worker: background task: send welcome email
+> Runs in the same process after the response. If the task dies or is redeployed, the work is lost and there are no retries. Use a queue (SQS) for anything that matters.
+```
 
 ---
 
@@ -379,6 +558,16 @@ Server is the source of truth; clients can refresh/reconnect any time.
 
 Return a **presigned S3 URL** (POST policy with `content-length-range`, content-type, server-chosen key under the tenant prefix, short expiry); browser uploads directly to S3; S3 event triggers validation/scanning; API marks it ready. Avoids tying up API workers and request size limits. If you must accept uploads in FastAPI, stream (`UploadFile` spools to disk), enforce size limits, validate magic bytes.
 
+```flow
+sequence: Upload without proxying bytes
+actors: Browser, API, S3
+Browser -> API: POST /uploads (name, size, type)
+API --> Browser: presigned PUT URL (short expiry, size/type conditions)
+Browser -> S3: PUT file directly
+S3 -> API: event → verify + scan → READY
+> The API never holds the file in memory, so large uploads don't tie up workers.
+```
+
 ---
 
 ## 5. Security
@@ -386,6 +575,15 @@ Return a **presigned S3 URL** (POST policy with `content-length-range`, content-
 ### Q23. Authentication vs authorisation in an API
 
 **Authentication** (who are you): validate the **JWT** from Okta/Cognito — signature against IdP JWKS (cache keys, handle rotation via `kid`), `iss`, `aud`, `exp`/`nbf`, allowed algorithms (never `none`), scopes. **Authorisation** (may you do this): role/scope checks + **resource-level** ownership/tenant checks in dependencies or service layer, on every request.
+
+```flow
+pipeline: Verifying a bearer token
+Extract token > Authorization: Bearer … → else 401.
+Verify signature > With the IdP's JWKS (cached by kid).
+Check claims > iss, aud, exp, nbf; token type (access, not ID token).
+Build user context > sub, tenant, roles.
+Authorise per resource > Ownership/role check → 403 if not allowed.
+```
 
 ```python
 jwks_client = jwt.PyJWKClient(f"{settings.okta_issuer}/v1/keys", cache_keys=True)
@@ -406,9 +604,27 @@ def verify_jwt(token: str) -> User:
 
 **Insecure Direct Object Reference:** changing `/documents/123` → `/documents/124` returns someone else's data. Defend: always load resources **scoped by tenant/owner from the token** (`WHERE id = ? AND tenant_id = ?`), return 404 for not-owned, unguessable IDs (UUIDs) as defence-in-depth (not a substitute), central authorisation helpers, automated cross-tenant negative tests, apply the same to document IDs passed into RAG/agent tools.
 
+```flow
+sequence: IDOR blocked by an ownership check
+actors: User (tenant T1), API, Database
+User (tenant T1) -> API: GET /documents/doc-of-T2
+API -> Database: SELECT … WHERE id = :id AND tenant_id = :T1
+Database --> API: no row
+API --> User (tenant T1): 404 Not Found
+> Never trust an id from the client alone; scope every query by the caller's tenant/owner. 404 avoids confirming the document exists.
+```
+
 ---
 
 ### Q25. CORS — secure configuration
+
+```flow
+pipeline: Secure CORS setup
+Explicit allowlist of origins > Never "*" with credentials.
+Only needed methods + headers > Minimal.
+allow_credentials only if cookies are used > And never with wildcard origins.
+Remember > CORS protects users' browsers, not your API: still authenticate every request.
+```
 
 ```python
 app.add_middleware(CORSMiddleware,
@@ -427,11 +643,29 @@ CORS protects browsers' users, not your API — attackers using curl ignore it. 
 **SSRF:** endpoints/tools that fetch user-supplied URLs (web fetch tool, webhook, "import from URL") can be abused to reach internal services or the metadata endpoint. Defend: allowlist domains/schemes, resolve DNS and block private/link-local IP ranges (re-check after redirects), no redirects or limited, egress through a proxy, IMDSv2, timeouts and size limits.
 **Uploads:** size limits, type validation by content (not extension), malware scan, store outside web root (S3), random keys, never execute/parse with unsafe libraries, sanitise filenames when displaying.
 
+```flow
+pipeline: SSRF-safe URL fetching
+User supplies a URL > E.g. "import from link".
+Allowlist scheme + domain > https only; approved hosts.
+Resolve and block private IPs > 169.254.169.254, 10.x, localhost; re-check after redirects.
+Fetch with timeouts + size limits > From an isolated egress path.
+Scan + validate content > Magic bytes, malware scan for uploads.
+```
+
 ---
 
 ### Q27. Rate limiting and quotas
 
 Per user/tenant/IP limits (token bucket in Redis, or API Gateway usage plans/WAF rate rules), separate limits for expensive endpoints (LLM chat) and **token budgets** per tenant, return 429 + `Retry-After`, limit concurrent streams, protect login endpoints against brute force.
+
+```flow
+pipeline: Rate limiting and quotas
+Identify the caller > API key / user / tenant (not just IP).
+Check the bucket > Token bucket in Redis (atomic Lua).
+Allowed > Proceed; add RateLimit headers.
+Exceeded > 429 + Retry-After.
+Quotas > Longer-term limits (tokens/day) per plan.
+```
 
 ---
 
@@ -439,11 +673,29 @@ Per user/tenant/IP limits (token bucket in Redis, or API Gateway usage plans/WAF
 
 HTTPS only (HSTS), security headers, input size limits (body, list lengths), output encoding, no secrets in logs/errors, dependency scanning, least-privilege IAM for the service, audit logs for sensitive actions, OWASP API Security Top 10 (BOLA/IDOR, broken auth, excessive data exposure, lack of rate limiting, BFLA, mass assignment — use explicit Pydantic input models, SSRF, misconfiguration, inventory, unsafe consumption of third-party APIs).
 
+```flow
+pipeline: API security essentials
+TLS everywhere > HSTS at the edge.
+Validate all input > Pydantic, size limits.
+Authenticate + authorise every request > Per resource.
+Limit > Rate limits, request body size, timeouts.
+Don't leak > Generic errors, no stack traces, security headers, audit logs.
+```
+
 ---
 
 ## 6. Production readiness
 
 ### Q29. Making FastAPI production-ready on ECS
+
+```flow
+pipeline: FastAPI production setup on ECS
+Container > Non-root, Uvicorn (or Gunicorn + Uvicorn workers) sized to vCPUs.
+Health endpoints > Liveness + readiness.
+Graceful shutdown > Handle SIGTERM; drain.
+Observability > JSON logs, OTel traces, metrics.
+Behind ALB > TLS, timeouts tuned, autoscaling.
+```
 
 - Run: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers N` (or `fastapi run`), or Gunicorn + Uvicorn workers; workers ≈ CPU cores; container exec-form entrypoint.
 - Graceful shutdown on SIGTERM (Uvicorn drains in-flight; lifespan closes pools); `stopTimeout` and ALB deregistration delay aligned.
@@ -457,6 +709,14 @@ HTTPS only (HSTS), security headers, input size limits (body, list lengths), out
 
 ### Q30. Health, liveness and readiness
 
+```flow
+pipeline: Liveness vs readiness
+Liveness (/health/live) > Process is alive. Cheap; no dependency checks. Failing → restart.
+Readiness (/health/ready) > Can serve traffic now: config loaded, DB pool ok. Failing → no traffic.
+Startup > Slow boot covered by grace period / startup probe.
+Pitfall > A DB outage in liveness restarts every task at once.
+```
+
 - **Liveness** (`/health/live`): process is alive and event loop responsive — no dependency calls. Failing → restart.
 - **Readiness** (`/health/ready`): can serve traffic (DB reachable, config loaded, warm-up done). Failing → stop routing traffic, don't restart.
 - **Startup**: allow slow initialisation (ECS `startPeriod`, ALB grace period).
@@ -469,9 +729,26 @@ ALB target health should usually use a cheap readiness check; avoid deep checks 
 
 Auto-instrument FastAPI, httpx, SQLAlchemy, boto3/botocore (ADOT/OTel SDK); propagate W3C `traceparent` to downstream (AgentCore, Lambda tools); add span attributes (tenant pseudonymised, model ID, token counts, tool names); export via OTel collector sidecar to X-Ray/CloudWatch or other backends; correlate log lines with trace ID; sample (always keep errors).
 
+```flow
+pipeline: OpenTelemetry in FastAPI
+Instrument app > FastAPI, httpx, SQLAlchemy, boto3 instrumentors.
+Propagate context > traceparent header in and out.
+Export > OTLP to a collector (sidecar) → X-Ray / CloudWatch / vendor.
+Correlate logs > trace_id in every log line.
+```
+
 ---
 
 ### Q32. Testing FastAPI
+
+```flow
+pipeline: Testing FastAPI
+Unit-test services > Plain functions.
+TestClient / httpx AsyncClient > Call endpoints in-process.
+dependency_overrides > Swap DB, auth and LLM clients with fakes.
+Contract tests > OpenAPI schema checks.
+Integration > Real Postgres in a container.
+```
 
 ```python
 from fastapi.testclient import TestClient     # or httpx.AsyncClient with ASGITransport for async tests
@@ -490,11 +767,28 @@ Unit tests for services, API tests with dependency overrides, contract tests aga
 
 Additive fields only; keep old fields until usage drops (monitor); new required input fields get defaults; expand-migrate-contract for DB; version endpoints for breaking changes; generate TypeScript types from OpenAPI so the frontend sees changes in CI.
 
+```flow
+pipeline: Changing a schema without breaking old frontends
+Add, don't rename > New optional field alongside the old one.
+Serve both > For a transition period.
+Update clients > Frontend moves to the new field.
+Remove old field > After usage drops to zero (track it).
+```
+
 ---
 
 ### Q34. Performance tuning
 
 Profile first; async I/O end to end; connection pooling and keep-alive (shared `httpx.AsyncClient`); avoid N+1 DB queries; cache hot reads; `orjson` responses; GZip for big JSON; offload CPU work; right number of workers; avoid huge Pydantic models in hot loops (or use `model_construct` for trusted data).
+
+```flow
+pipeline: Tuning FastAPI performance
+Profile first > Where does time go?
+Async I/O end to end > Shared httpx.AsyncClient, async DB driver.
+Avoid N+1 + cache hot reads > Fewer round trips.
+Faster serialisation > orjson; avoid huge models in hot loops.
+Right worker count > Match CPU; offload CPU-heavy work.
+```
 
 ---
 
@@ -504,11 +798,27 @@ Profile first; async I/O end to end; connection pooling and keep-alive (shared `
 
 ALB **idle timeout** (default 60 s) closes connections with no bytes flowing — e.g., while the agent is thinking or waiting for a tool. Fix: send heartbeat comments every 15–30 s and/or raise ALB idle timeout; check CloudFront origin read/keep-alive timeouts; disable proxy buffering; ensure deploys don't cut streams (deregistration delay + client reconnect with `Last-Event-ID`).
 
+```flow
+trace: SSE dies after ~60 s through the ALB
+stream open, LLM thinking, **no bytes for 60 s** > ALB idle timeout defaults to 60 s.
+ALB closes the idle connection > Works locally because no proxy sits in between.
+fix: send ": keep-alive" comment every 15 s > Bytes keep the connection active.
+and raise ALB idle timeout; disable proxy buffering (CloudFront/nginx) > Plus client reconnect with Last-Event-ID.
+```
+
 ---
 
 ### Q36. The API returns 401 on every request after an Okta change
 
 Check what changed: **issuer** URL (custom authorization server vs org), **audience**, signing keys rotated and JWKS cache stale or JWKS URL wrong, algorithm, clock skew, token now missing a claim you require (`groups`, custom `tenant`), access token vs ID token sent by the SPA. Decode a token (safely, locally) and compare claims with your config; log the validation error reason (not the token).
+
+```flow
+pipeline: 401 on every request after an Okta change
+Decode a token > Check iss, aud, kid, token type.
+Issuer / audience changed? > New authorization server or app.
+JWKS cache stale? > Keys rotated; refetch on unknown kid.
+Clock skew / ID vs access token > Frontend sending the wrong token.
+```
 
 ---
 
@@ -516,11 +826,27 @@ Check what changed: **issuer** URL (custom authorization server vs org), **audie
 
 Event-loop blocking by occasional sync calls/CPU work, GC pauses, DB pool exhaustion under bursts, cold paths (first call to a model, cache misses), slow downstream for some tenants (bigger prompts), retries. Check traces of slow requests, event-loop lag metrics, pool wait time.
 
+```flow
+pipeline: p99 spikes, p50 normal
+Look at slow traces only > What do the tail requests share?
+Event-loop blocking? > Sync calls in async code.
+Pool waits > DB / HTTP connection pools exhausted.
+GC, cold starts, noisy neighbours > Or a slow dependency for some inputs.
+```
+
 ---
 
 ### Q38. Clients get duplicate jobs when the network flakes
 
 Clients retry POST on timeout → duplicate jobs. Require `Idempotency-Key`, enforce with a unique constraint, return the original 202 response on retry.
+
+```flow
+pipeline: Duplicate jobs on flaky networks
+Client retries POST /jobs > After a timeout.
+No idempotency key → two jobs > The first one actually succeeded.
+Add Idempotency-Key > Client generates once per user action.
+Server dedupes > Stores key → job_id; returns the same job.
+```
 
 ---
 
@@ -528,9 +854,29 @@ Clients retry POST on timeout → duplicate jobs. Require `Idempotency-Key`, enf
 
 Unbounded in-process caches, accumulating background tasks, large responses held in memory instead of streamed, per-request clients not closed (create shared clients in lifespan), Pydantic models of huge payloads. Use `tracemalloc`/memray, fix, add memory alarms; recycle workers (`--limit-max-requests`) as a stopgap.
 
+```flow
+pipeline: Memory grows in API containers
+Confirm leak vs load > Growth over time without traffic growth?
+Snapshot diff > tracemalloc / memray between two points.
+Usual suspects > Unbounded caches, global lists, per-request clients never closed, background tasks piling up.
+Fix + limit > Bounded caches, shared clients, max-requests worker recycling as a safety net.
+```
+
 ---
 
 ### Q40. Design the chat API for an agentic app (endpoints)
+
+```flow
+sequence: The chat API in use
+actors: React, API, Agent
+React -> API: POST /conversations → {id}
+React -> API: POST /conversations/{id}/messages (Idempotency-Key)
+API -> Agent: run turn
+React -> API: GET /conversations/{id}/stream (SSE)
+Agent --> React: tokens, tool status, approval_needed
+React -> API: POST /approvals/{action_id} {approve}
+API -> Agent: resume
+```
 
 ```
 POST   /v1/conversations                         create (server-generated id, owner = token sub)
@@ -549,6 +895,16 @@ Cross-cutting: JWT auth, tenant scoping, rate limits/token budgets, Problem Deta
 ## 8. API styles & databases in FastAPI
 
 ### Q41. REST vs GraphQL vs gRPC vs WebSockets/SSE
+
+```flow
+sequence: Same data, four API styles
+actors: Client, Server
+Client -> Server: REST: GET /users/42, then GET /users/42/orders
+Client -> Server: GraphQL: POST /graphql {user(id:42){name orders{id}}}
+Server --> Client: exactly the requested fields in one round trip
+Client -> Server: gRPC: GetUser(42) over HTTP/2, binary Protobuf
+Server --> Client: SSE/WebSocket: server pushes updates as they happen
+```
 
 | | REST | GraphQL | gRPC | WebSockets / SSE |
 |---|---|---|---|---|
@@ -569,6 +925,17 @@ gRPC:    rpc GetUser(GetUserRequest) returns (User);
 ### Q42. Using a relational database from FastAPI (SQLAlchemy 2.0 async + Alembic)
 
 **Short answer:** Create **one async engine** (connection pool) at startup, give each request its **own session** through a dependency, keep transactions short, and manage schema changes with **Alembic** migrations.
+
+```flow
+sequence: A request using SQLAlchemy async
+actors: Request, get_session, Engine pool, Postgres
+Request -> get_session: Depends(get_session)
+get_session -> Engine pool: borrow connection (AsyncSession)
+Request -> Postgres: async with session.begin(): insert job
+Postgres --> Request: commit
+get_session -> Engine pool: after response: session closed, connection returned
+> One engine per process (pool), one session per request. Migrations run separately with Alembic.
+```
 
 ```python
 # db.py

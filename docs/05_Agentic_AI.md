@@ -79,6 +79,14 @@ exit > Final answer, max steps, budget used up, or an error.
 - **Workflow** — code decides the steps in a fixed order (LLM may be one step).
 - **Agent** — the LLM **decides which actions/tools to use and when to stop**, within constraints you set.
 
+```flow
+pipeline: Chatbot → workflow → agent
+Chatbot > Answers messages. No actions.
+Workflow > Your code fixes the steps; the LLM may fill in one step (classify, extract).
+Agent > The LLM chooses which tools to call and when to stop, in a loop.
+Rule > Use the least autonomy that solves the problem: more autonomy means more flexibility, but less predictability and higher cost.
+```
+
 **Example:** A support chatbot explains a ticket policy. A workflow always does *classify → fetch ticket → summarise*. An agent might search the KB, find nothing, look up the ticket history, ask a clarifying question, then draft a resolution.
 
 **Interview tip:** Autonomy is a cost, not a goal. Say: "I'd start with a workflow and add agentic decision-making only where the path can't be known in advance."
@@ -86,6 +94,16 @@ exit > Final answer, max steps, budget used up, or an error.
 ---
 
 ### Q02. Core components of an agent
+
+```flow
+pipeline: The parts of an agent working together
+Instructions > Goal, rules and output format.
+Model > Reasons and chooses the next action.
+Tools > Functions it can call (search, APIs, DB).
+Memory / state > What it knows so far: messages, plan, results.
+Orchestration loop > Runs model → tools → observe until done.
+Guardrails > Limits, approvals and policy outside the model.
+```
 
 | Component | Role |
 |---|---|
@@ -103,6 +121,15 @@ exit > Final answer, max steps, budget used up, or an error.
 ### Q03. The ReAct pattern
 
 **Short answer:** **Re**ason + **Act**: the model alternates thinking about what to do, calling a tool, and reading the observation — rather than answering in one shot. This lets it gather evidence and correct course.
+
+```flow
+cycle: ReAct on "Is the VPN down for Pune?"
+Reason > "I should check open incidents for VPN in Pune."
+Act > search_incidents(service="vpn", site="pune")
+Observe > "INC-221: VPN gateway degraded, Pune, ETA 30 min."
+Reason > "That answers it; no more tools needed."
+exit > Final answer with the incident ID. Each loop costs a model call, so limit the steps.
+```
 
 ```
 Thought: I need the runbook for error E42.
@@ -126,6 +153,15 @@ Modern APIs implement this natively via **tool calling** (structured tool reques
 4. **Orchestrator-workers** — LLM breaks task into subtasks dynamically and delegates.
 5. **Evaluator-optimizer** — one LLM generates, another critiques, loop until good.
 
+```flow
+pipeline: The five workflow patterns before full agents
+Prompt chaining > Step 1's output feeds step 2 (outline → draft → polish).
+Routing > Classify, then send to a specialised prompt or model.
+Parallelisation > Run independent sub-tasks at once, or vote over several answers.
+Orchestrator–workers > A lead LLM splits the task and delegates sub-tasks dynamically.
+Evaluator–optimiser > One LLM generates, another critiques, loop until good enough. Full agents come only when the steps can't be known in advance.
+```
+
 **Agents** = model-directed loops with tools for open-ended problems. Many production systems are workflows with a small agentic part.
 
 ---
@@ -133,6 +169,18 @@ Modern APIs implement this natively via **tool calling** (structured tool reques
 ### Q05. Orchestration vs choreography
 
 **Short answer:** **Orchestration** — a central coordinator (LangGraph graph, Step Functions) decides who does what next; easy to see and control. **Choreography** — services react to events independently (EventBridge, SQS); loosely coupled but the overall flow is harder to see.
+
+```flow
+sequence: Orchestration vs choreography
+actors: Orchestrator, Service A, Event bus, Service B
+Orchestrator -> Service A: ORCHESTRATION: do step 1
+Service A --> Orchestrator: done
+Orchestrator -> Service B: do step 2
+> One place decides the order: easy to see, retry and control.
+Service A -> Event bus: CHOREOGRAPHY: publish "step1.done"
+Event bus -> Service B: B reacts on its own
+> No central brain: loosely coupled, but the overall flow is harder to see and debug.
+```
 
 **Typical mix:** LangGraph orchestrates the agent's reasoning and approvals; EventBridge announces "job completed" to other systems.
 
@@ -179,6 +227,18 @@ When the steps are known, accuracy must be exact, actions are high-risk or regul
 
 **Short answer:** You send the model a list of tools (name, description, JSON-schema parameters). The model replies with a structured **tool-use request**. Your code validates and executes it, then sends back a **tool result**. The model continues.
 
+```flow
+sequence: Tool calling, step by step
+actors: App, LLM, Tool
+App -> LLM: messages + tool schemas
+LLM --> App: tool_use {name, arguments}
+App -> App: validate schema + authorise this user + risk check
+App -> Tool: execute
+Tool --> App: result (trimmed, errors made readable)
+App -> LLM: tool_result
+LLM --> App: next tool call or final answer
+```
+
 ```python
 tools = [{
   "name": "get_ticket",
@@ -208,6 +268,15 @@ while True:
 
 ### Q10. How to design good tools (the "agent-computer interface")
 
+```flow
+pipeline: A well-designed tool call
+Clear name + description > Says when to use it and what it returns. The description is a prompt.
+Strict schema > Enums and formats instead of free text where possible.
+High-level action > `get_customer_summary`, not five low-level calls.
+Concise result > Only the fields needed, with IDs for follow-ups.
+Helpful errors > "No order A12 for this customer; try search_orders" so the model can recover.
+```
+
 - **Clear names and descriptions** — say *when* to use it and *what it returns*. The description is a prompt.
 - **Few, high-level tools** beat many tiny ones (`schedule_meeting` > `list_users` + `list_events` + `create_event`).
 - **Strict schemas** — enums, patterns, required fields.
@@ -219,6 +288,14 @@ while True:
 ---
 
 ### Q11. Classify tools by risk
+
+```flow
+pipeline: Controls grow with tool risk
+Read-only, low sensitivity > Logging.
+Read sensitive data > Per-user authorisation + audit.
+Reversible writes > Validation, idempotency, rate limits.
+Irreversible / external / money > Human approval bound to the exact action, plus strict policy.
+```
 
 | Risk tier | Examples | Controls |
 |---|---|---|
@@ -255,6 +332,18 @@ The approval must survive restarts (durable storage / LangGraph `interrupt` with
 
 **Short answer:** Retries and crash recovery can execute a tool twice. Give every write an **operation ID**; the tool (or a wrapper) records it and returns the previous result on duplicates (conditional write / unique constraint).
 
+```flow
+sequence: An idempotent write tool survives a retry
+actors: Agent, Tool wrapper, Ledger, Jira
+Agent -> Tool wrapper: create_ticket(op_id=op-77, …)
+Tool wrapper -> Ledger: op-77 seen? no → record
+Tool wrapper -> Jira: create ticket
+Jira --> Tool wrapper: OPS-501
+Agent -> Tool wrapper: retry after a timeout: create_ticket(op_id=op-77)
+Tool wrapper -> Ledger: op-77 seen? yes
+Tool wrapper --> Agent: return OPS-501 again (no duplicate)
+```
+
 ```python
 def post_comment(op_id: str, ticket: str, text: str):
     if store.exists(op_id):                    # already done → return stored result
@@ -267,6 +356,14 @@ def post_comment(op_id: str, ticket: str, text: str):
 ---
 
 ### Q14. Retrieval vs API vs SQL tools — which for what?
+
+```flow
+pipeline: Which tool for which question
+"What does the policy say?" > Retrieval (RAG) over documents.
+"What's the status of order A12?" > API call: live and authoritative. Never from embeddings, which are a stale snapshot.
+"How many orders failed last week?" > SQL / analytics tool with read-only, parameterised queries.
+Combine > E.g. retrieve the policy, then call the API to apply it to this customer.
+```
 
 | Question type | Tool |
 |---|---|
@@ -283,6 +380,15 @@ Never answer live status from embeddings — they're a stale snapshot.
 ### Q15. Single agent vs multi-agent
 
 **Short answer:** Start with **one agent + good tools**. Split into multiple agents when domains have different **permissions, prompts, owners or evaluation**, or when the tool set is too big for one context. Multi-agent adds latency, token cost and coordination bugs.
+
+```flow
+pipeline: When to split into multiple agents
+Start with one agent > Plus good tools.
+Different permissions? > E.g. HR data vs finance data. Split.
+Different prompts / owners / evals? > Separate teams and quality bars. Split.
+Context overload? > Too many tools or instructions for one context. Split.
+Otherwise stay single > Multi-agent adds latency, cost and failure points.
+```
 
 ---
 
@@ -309,11 +415,29 @@ Never answer live status from embeddings — they're a stale snapshot.
 
 A handoff transfers control **and** a minimal, authorised context: the task, relevant IDs, verified user identity/permissions (not raw secrets), and provenance. Bound recursion depth to prevent agents bouncing tasks forever.
 
+```flow
+sequence: A safe handoff between agents
+actors: Triage agent, Handoff, Billing agent
+Triage agent -> Handoff: task + relevant IDs + verified user identity
+> Pass identity as verified claims, never raw secrets, and only the context needed.
+Handoff -> Billing agent: authorised context only
+Billing agent -> Billing agent: checks its own permissions for this user
+Billing agent --> Triage agent: result or hand back
+```
+
 ---
 
 ### Q18. Sequential vs parallel vs hierarchical
 
 Follow the **dependency graph**: dependent steps → sequential; independent lookups (Jira + Confluence + logs) → parallel with timeouts and a join; many specialties → hierarchical. Every parallel branch needs timeout, cancellation and a merge rule.
+
+```flow
+pipeline: Shape follows the dependency graph
+Dependent steps > Sequential: B needs A's output.
+Independent lookups > Parallel with timeouts: Jira + Confluence + logs at once, then join.
+Many sub-tasks to coordinate > Hierarchical: a supervisor delegates and merges.
+Join > Merge results; handle partial failures.
+```
 
 ---
 
@@ -327,11 +451,29 @@ Hard limits enforced **in code**:
 - recursion limit for sub-agents
 - a graceful exit: "I couldn't find X; here's what I tried" or escalate to a human.
 
+```flow
+pipeline: Limits that stop runaway agents (enforced in code)
+Max steps / tool calls > Per run and per tool.
+Token + cost budget > Stop when the budget for this task is used.
+Wall-clock timeout > Hard deadline.
+Repetition detection > Same tool + similar args again → stop or change strategy.
+Graceful exit > Return what's known, explain what's missing, offer to escalate.
+```
+
 ---
 
 ### Q20. Reflection / self-critique
 
 The agent (or a second model) reviews its output against criteria and revises. Works best with **objective feedback** — running tests, validating a schema, checking a citation — rather than "is this good?" self-assessment.
+
+```flow
+cycle: Reflection with objective feedback
+Generate > Write the code / answer.
+Check objectively > Run tests, validate the schema, check citations.
+Critique > Read the failures and decide what to change.
+Revise > Produce a new version.
+exit > Checks pass, or the round limit is hit. Self-critique without objective checks often just agrees with itself.
+```
 
 ---
 
@@ -339,11 +481,30 @@ The agent (or a second model) reviews its output against criteria and revises. W
 
 **ReAct** decides one step at a time (adaptive, more LLM calls). **Plan-and-execute** writes a full plan first, then executes steps (cheaper models can execute; re-plan on failure). Plan-and-execute suits long multi-step tasks with predictable structure; ReAct suits exploratory tasks.
 
+```flow
+pipeline: Plan-and-execute
+Plan > A strong model writes the whole plan up front.
+Execute steps > Cheaper models or plain code run each step.
+Check progress > After each step, compare results with the plan.
+Re-plan if needed > Only when a step fails or reveals something new. ReAct, by contrast, decides one step at a time: more adaptive, more model calls.
+```
+
 ---
 
 ## 5. Memory & context
 
 ### Q22. Short-term vs long-term memory
+
+```flow
+sequence: Short-term vs long-term memory in one session
+actors: Agent, Thread state, Long-term store
+Agent -> Thread state: load messages + plan for thread_id
+Agent -> Long-term store: search memories for user u1: "preferences"
+Long-term store --> Agent: "prefers CSV exports"
+Agent -> Agent: answer using both
+Agent -> Thread state: checkpoint new messages
+Agent -> Long-term store: save a new durable fact (namespaced to u1)
+```
 
 ```
  ┌───────────────── Short-term (per session/thread) ─────────────────┐
@@ -371,17 +532,43 @@ What the model sees each step decides success. Techniques:
 - **Externalise** — keep big artifacts (files, full logs) in storage; pass a reference/ID.
 - **Preserve critical facts** in structured state (IDs, approvals, amounts) — never only inside a summary.
 
+```flow
+pipeline: Context engineering techniques
+Select > Only relevant tools, documents and memories for this step.
+Compress > Summarise history; trim tool outputs.
+Isolate > Sub-agents with their own context for big side tasks.
+Externalise > Keep large data in files/state and pass references, not contents.
+```
+
 ---
 
 ### Q24. Context compaction — how?
 
 When history approaches the limit: replace old tool outputs with short summaries, summarise older dialogue, keep the latest N turns verbatim, keep structured facts, and store full logs for audit/retrieval. Re-fetch details on demand ("just-in-time" retrieval).
 
+```flow
+trace: Compaction near the context limit
+[system][turns 1–40][tool outputs 60K][question]  ≈ **190K** > Close to the window: slow, costly and less accurate.
+old tool outputs → one-line summaries with IDs > Biggest win first.
+turns 1–34 → a short summary; keep the last 6 **verbatim** > Recent detail matters most.
+key facts kept as structured state (approvals, IDs) > Never trust a summary to keep exact values.
+result ≈ **25K** tokens > Same task, much cheaper and more focused.
+```
+
 ---
 
 ### Q25. Memory safety across users/tenants
 
 Namespace every memory by verified tenant/user, check ACLs on every read/write, set retention/TTL, allow users to view/delete memories, and treat retrieved memories as **data, not instructions** (an attacker can plant a "memory" via injection).
+
+```flow
+pipeline: Memory safety across tenants
+Namespace by verified identity > tenant/user from the token, never from model output.
+Check ACLs on read and write > Every time.
+Retention / TTL > Old memories expire.
+User control > Users can view and delete what's stored.
+Treat retrieved memory as untrusted > It could contain injected text.
+```
 
 ---
 
@@ -449,11 +636,30 @@ MCP client --> Host app: tool result → back to the LLM
 - **Deprecated:** Roots, Sampling, Logging; HTTP+SSE transport; Dynamic Client Registration (in favour of Client ID Metadata Documents).
 - Authorization hardening (issuer validation, credentials bound to issuer).
 
+```flow
+sequence: MCP after the 2026-07-28 revision (stateless)
+actors: Client, MCP server
+Client -> MCP server: tools/call (complete request, no session handshake)
+> Each request carries what it needs, so any server instance behind a load balancer can handle it.
+MCP server --> Client: result
+Client -> MCP server: next request to a different instance
+MCP server --> Client: result (no sticky session needed)
+```
+
 **Interview framing:** "Earlier versions were stateful sessions; the 2026 spec made MCP stateless so remote servers fit load balancers and serverless. I'd check which protocol version our SDK and gateway support."
 
 ---
 
 ### Q28. MCP security concerns
+
+```flow
+pipeline: Risks along an MCP tool chain
+Install server > Tool poisoning: hidden instructions in tool descriptions → install only trusted, pinned servers.
+Tool descriptions loaded > Review changes ("rug pull" when a server updates).
+Tool results > Prompt injection in returned data → treat as untrusted.
+Credentials > Token passthrough / over-broad scopes → per-server, least-privilege, audience-bound tokens.
+Execution > Confused deputy → authorise per user, approvals for risky actions.
+```
 
 - **Tool poisoning:** malicious tool descriptions with hidden instructions → only install trusted servers, review/pin versions.
 - **Prompt injection via tool results** → treat results as untrusted data.
@@ -484,6 +690,14 @@ Travel agent --> Your orchestrator: artifacts (booking confirmation)
 
 ### Q30. MCP vs A2A vs plain HTTP APIs
 
+```flow
+pipeline: MCP vs A2A vs HTTP in one system
+Your agent > The thing doing the work.
+MCP > Agent ↔ tools and data: the agent calls functions it understands.
+A2A > Agent ↔ another agent: delegate a whole task to an opaque agent you don't control.
+Plain HTTP API > Service ↔ service, no agent involved. Both MCP and A2A run over HTTP underneath.
+```
+
 | | MCP | A2A | HTTP/REST |
 |---|---|---|---|
 | Connects | agent ↔ **tools/data** | agent ↔ **agent** | any client ↔ service |
@@ -497,6 +711,17 @@ They complement each other: an agent uses MCP for its tools and A2A to delegate 
 ### Q31. What are Agent Skills?
 
 **Short answer:** A packaging format (introduced by Anthropic, published as an open standard) for giving agents reusable know-how: a folder with a `SKILL.md` (name, description, instructions) plus optional scripts and resources. The agent loads only the short description at first and reads the full skill **only when relevant** ("progressive disclosure") — saving context. Skills teach *how* to do a task; MCP gives *access* to systems.
+
+```flow
+sequence: How an Agent Skill is loaded on demand
+actors: Agent, Skill index, Skill folder
+Agent -> Skill index: startup: read each skill's name + description only
+> Cheap: many skills cost only a few tokens each.
+Agent -> Agent: task needs "create a PDF report"
+Agent -> Skill folder: load SKILL.md instructions
+Agent -> Skill folder: read scripts / references only if needed
+> Progressive disclosure keeps the context small.
+```
 
 ---
 
@@ -541,6 +766,15 @@ Threats: direct/indirect prompt injection, data exfiltration (via tool calls, UR
 
 Deterministic policy layer (code, OPA/Cedar policies, or **AgentCore Policy**) intercepts every tool call: is this tool allowed for this user, with these arguments, in this context? Prompts saying "never do X" are guidance; the gate is enforcement.
 
+```flow
+pipeline: Policy enforcement on every tool call
+Model proposes call > Tool + arguments.
+Policy engine evaluates > Code, OPA or Cedar rules: who, what, which resource, which arguments.
+Allow / deny / require approval > A deterministic decision, not the model's opinion.
+Execute or refuse > Refusals are returned to the agent as a readable error.
+Audit log > Every decision recorded.
+```
+
 ```cedar
 // Example Cedar-style policy: only managers may approve refunds above 1000
 permit(principal in Role::"manager", action == Action::"approve_refund", resource)
@@ -553,9 +787,27 @@ when { resource.amount > 1000 };
 
 Checkpoint state at each step so a crash/redeploy resumes from the last checkpoint instead of restarting. Durable state ≠ exactly-once side effects: a step may re-run after a crash, so writes need idempotency keys. Tools: LangGraph checkpointers, Step Functions, Temporal, Lambda durable functions.
 
+```flow
+pipeline: Durable execution after a crash
+Step 1 done → checkpoint > State saved.
+Step 2 done → checkpoint > State saved.
+Crash during step 3 > Pod restarted or redeployed.
+Resume from step 2's checkpoint > Steps 1–2 are not redone.
+Step 3 re-runs > So it must be idempotent (operation IDs) to avoid duplicate side effects.
+```
+
 ---
 
 ### Q36. Evaluating agents
+
+```flow
+pipeline: Evaluating an agent at every level
+Tool level > Right tool? Valid arguments?
+Trajectory > Sensible sequence of steps? No loops?
+Outcome > Task actually done? Check the final state (DB, ticket) deterministically.
+Safety > No forbidden actions, no data leaks.
+Cost + latency > Within budget.
+```
 
 | Level | What to check |
 |---|---|
@@ -579,6 +831,15 @@ Per run: correlation/trace ID, user/tenant (pseudonymised), model + prompt versi
 
 Budgets per run, model routing (small model for routing/extraction, large for reasoning), prompt caching for static system prompt + tools, limit tool output size, compaction, cap iterations, cache deterministic tool results.
 
+```flow
+pipeline: Cost controls for agents
+Budget per run > Tokens and money, enforced in code.
+Model routing > Small model for routing/extraction, large for reasoning.
+Prompt caching > Static system prompt and tool definitions cached.
+Trim context > Summaries, trimmed tool outputs.
+Cap loops > Max steps; stop repeated calls.
+```
+
 ---
 
 ### Q39. One general agent vs specialised agents — decision criteria
@@ -591,6 +852,18 @@ Specialise when: different permission domains (Deposits vs Investments), differe
 
 If tasks take minutes: return `202 Accepted` + job ID, run the agent asynchronously (queue/worker, AgentCore async/long sessions, Step Functions), stream progress events, persist state, allow cancel, notify on completion.
 
+```flow
+sequence: Long-running agent task with async UX
+actors: User, API, Queue, Agent worker
+User -> API: POST /tasks
+API --> User: 202 Accepted + task_id
+API -> Queue: enqueue task
+Agent worker -> Queue: pick up, run the agent
+Agent worker --> User: progress events (SSE / WebSocket / polling)
+Agent worker --> User: needs approval → paused (state saved)
+Agent worker --> User: done → result link
+```
+
 ---
 
 ## 8. Scenario & debugging questions
@@ -599,11 +872,28 @@ If tasks take minutes: return `202 Accepted` + job ID, run the agent asynchronou
 
 Put the gate **outside the model**: the tool executor rejects any call to a sensitive tool unless a stored approval record exists for that exact `action_id` + args hash, approved by an authorised identity. Log the attempt, add an eval case, and review why the model tried (prompt/tool description).
 
+```flow
+pipeline: Making unapproved sensitive calls impossible
+Classify tools by risk > Sensitive tools are marked as requiring approval.
+Executor checks approval record > A valid, unexpired approval bound to this action_id and args_hash.
+No record → reject > The model's request alone can never execute it.
+Least-privilege credentials > The agent's role can't call the API directly anyway.
+Alert + audit > Every blocked attempt is logged and alerted.
+```
+
 ---
 
 ### Q42. The agent keeps searching with slightly different queries
 
 Detect repeated similar calls; cap per-tool attempts; improve tool feedback ("0 results; try filter X"); give an explicit exit ("if 2 searches return nothing, ask the user or say not found"); add a trajectory test.
+
+```flow
+pipeline: Breaking a search loop
+Detect > Same tool, similar queries, repeated N times.
+Better tool feedback > "0 results for X; try a broader term or ask the user."
+Cap attempts > Per tool, per run.
+Change strategy > Ask the user to clarify, or return partial results.
+```
 
 ---
 
@@ -628,17 +918,43 @@ Never keep the HTTP request open for minutes; bound concurrency to downstream qu
 
 Load the last checkpoint → for each step after it, check external state using operation IDs (did the Jira comment get posted?) → skip completed side effects → re-validate permissions → continue, or ask for fresh approval if the context changed.
 
+```flow
+pipeline: Recovering a multi-step action after a crash
+Load last checkpoint > Which steps were confirmed done?
+For each later step: check external state > Did the ticket / payment already happen? Look it up by operation ID.
+Skip what's done > No duplicates.
+Resume the rest > With the same idempotency keys.
+Escalate if unclear > A human decides when the external state is ambiguous.
+```
+
 ---
 
 ### Q45. A web page the agent browsed told it to email internal documents. What protections should have stopped it?
 
 Email tool limited to internal domains + approval for external sends; agent session had no access to unrelated documents (least privilege); output filter blocked unexpected outbound URLs; untrusted web content was labelled as data; the attempt was logged and alerted. Add this as a red-team regression test.
 
+```flow
+pipeline: Defences that should have stopped the exfiltration
+Untrusted content marked > Web text is data, never instructions.
+Least-privilege email tool > Internal domains only.
+Approval for external sends > With the exact recipient and content shown.
+Egress / DLP checks > Block sensitive data leaving.
+Alert + audit > The attempt is visible to security.
+```
+
 ---
 
 ### Q46. How do you explain to stakeholders why the agent shouldn't be fully autonomous?
 
 Quantify: error rate on eval set, impact of a wrong action, reversibility. Propose graduated autonomy: read-only → draft for human → auto-execute low-risk actions with audit → expand based on measured accuracy.
+
+```flow
+pipeline: Graduated autonomy
+Read-only > The agent looks things up and answers.
+Draft for a human > It prepares actions; a person executes them.
+Auto-execute low-risk > With audit and easy undo.
+Expand by evidence > Grant more autonomy only as measured accuracy and safety allow.
+```
 
 ---
 
@@ -688,6 +1004,15 @@ Multi-agent options: **agents as tools** (an orchestrator agent calls specialist
 ### Q49. How do you choose a framework in a design discussion?
 
 Ask: (1) Do we need explicit, auditable control flow and durable HITL? → LangGraph. (2) Mostly "LLM + tools" with minimal code on AWS? → Strands or `create_agent`. (3) Is the team/stack already on one ecosystem? (4) Model portability needs? (5) Observability (OpenTelemetry support) and test tooling? (6) Maturity and breaking-change rate. **Keep business logic and tools framework-independent** (plain functions/MCP servers), so switching frameworks is a contained change.
+
+```flow
+pipeline: Picking an agent framework
+Need explicit control + durable HITL? > LangGraph.
+Mostly "LLM + tools" on AWS, little code? > Strands Agents or LangChain `create_agent`.
+Existing ecosystem? > Microsoft stack → Microsoft Agent Framework; Google → ADK; OpenAI → Agents SDK.
+Check operations > OpenTelemetry support, testing, maturity, breaking-change rate.
+Keep tools framework-independent > Plain functions / MCP servers, so switching later is cheap.
+```
 
 ---
 

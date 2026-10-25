@@ -23,8 +23,8 @@ const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)"
 function parse(src) {
   const lines = src.split("\n").map((l) => l.replace(/\s+$/, "")).filter((l) => l.trim());
   const head = lines.shift() || "";
-  const m = head.match(/^(sequence|pipeline|cycle)\s*:\s*(.*)$/i);
-  if (!m) throw new Error(`flow block must start with "sequence:", "pipeline:" or "cycle:" (got "${head}")`);
+  const m = head.match(/^(sequence|pipeline|cycle|trace)\s*:\s*(.*)$/i);
+  if (!m) throw new Error(`flow block must start with "sequence:", "pipeline:", "cycle:" or "trace:" (got "${head}")`);
   const kind = m[1].toLowerCase();
   const flow = { kind, title: m[2].trim(), actors: [], steps: [], exit: "" };
   let stage = "";
@@ -132,6 +132,15 @@ function renderCycle(f) {
   </div>`;
 }
 
+// trace: frames of state (array, pointers, stack…) shown one at a time; **x** highlights a cell
+function renderTrace(f) {
+  return `<div class="trace">${f.steps.map((s, i) => `
+    <div class="trace-frame" data-step="${i}">
+      <span class="trace-num">${i + 1}</span>
+      <span class="trace-state">${inline(s.label)}</span>
+    </div>`).join("")}</div>`;
+}
+
 export function renderFlow(src) {
   let f;
   try {
@@ -139,10 +148,10 @@ export function renderFlow(src) {
   } catch (err) {
     return `<figure class="plate"><pre class="diagram">${esc(src)}</pre></figure><p class="flow-error">Diagram error: ${esc(err.message)}</p>`;
   }
-  const body = f.kind === "sequence" ? renderSequence(f) : f.kind === "pipeline" ? renderPipeline(f) : renderCycle(f);
+  const body = f.kind === "sequence" ? renderSequence(f) : f.kind === "pipeline" ? renderPipeline(f) : f.kind === "trace" ? renderTrace(f) : renderCycle(f);
   const data = esc(JSON.stringify(f.steps.map((s) => s.caption || (s.from ? `${s.from} → ${s.to}: ${s.label}` : s.label))));
   return `<figure class="flow flow-${f.kind}" data-kind="${f.kind}" data-n="${f.steps.length}" data-captions="${data}" data-cycle="${f.steps.length}">
-    ${f.title ? `<figcaption class="flow-title"><span class="flow-kind">${f.kind === "sequence" ? "Step-by-step" : f.kind === "pipeline" ? "Pipeline" : "Loop"}</span>${inline(f.title)}</figcaption>` : ""}
+    ${f.title ? `<figcaption class="flow-title"><span class="flow-kind">${f.kind === "sequence" ? "Step-by-step" : f.kind === "pipeline" ? "Pipeline" : f.kind === "trace" ? "Trace" : "Loop"}</span>${inline(f.title)}</figcaption>` : ""}
     <div class="flow-body">${body}</div>
     ${controls(f.steps.length)}
   </figure>`;

@@ -73,11 +73,28 @@ Succeed > Any error along the way is caught → MarkFailed + notify → Fail.
 
 **Short answer:** A serverless orchestration service for coordinating multiple steps/services into workflows with built-in state, error handling and visual monitoring. Use for multi-step business processes, long-running jobs, human approvals, ETL/document pipelines, microservice orchestration (sagas), and fan-out processing.
 
+```flow
+pipeline: What Step Functions takes off your hands
+You define states > JSON/YAML (ASL) or the visual designer.
+It runs them in order > Branches, loops, parallel work.
+It remembers progress > Every step's input/output saved.
+It retries and catches errors > Declaratively, per state.
+It waits for free > Hours or days for callbacks, without running compute.
+```
+
 **When not:** a single short function, very high-frequency trivial event processing (cost), or logic that's simpler as code (consider Lambda durable functions).
 
 ---
 
 ### Q02. Standard vs Express workflows
+
+```flow
+pipeline: Standard or Express?
+Long-running, needs exact-once steps and audit history? > Standard: up to 1 year, priced per state transition.
+High-volume, short (≤5 min), event processing? > Express: priced by requests + duration; at-least-once (async).
+Synchronous API need? > Express synchronous.
+Mix > Express child workflows inside a Standard parent.
+```
 
 | | **Standard** | **Express** |
 |---|---|---|
@@ -95,6 +112,15 @@ Succeed > Any error along the way is caught → MarkFailed + notify → Fail.
 
 ### Q03. State types
 
+```flow
+pipeline: The state types
+Task > Do work: call a service or Lambda.
+Choice > Branch on data.
+Parallel / Map > Fixed branches at once / same steps per item.
+Wait > Pause for a time or until a timestamp.
+Pass / Succeed / Fail > Shape data, end successfully, end with an error.
+```
+
 | State | Purpose |
 |---|---|
 | **Task** | do work: call a service (Lambda, DynamoDB, ECS, Bedrock, HTTP endpoint, any AWS SDK API) |
@@ -108,6 +134,14 @@ Succeed > Any error along the way is caught → MarkFailed + notify → Fail.
 ---
 
 ### Q04. A minimal state machine (JSONata)
+
+```flow
+pipeline: The minimal JSONata state machine, running
+StartExecution({docId}) > Input available as `$states.input`.
+Task: call the service > Arguments built with JSONata from the input.
+Assign / Output > Save values as variables; shape the output from `$states.result`.
+Next state or End > Execution succeeds with the final output.
+```
 
 ```json
 {
@@ -143,11 +177,30 @@ Succeed > Any error along the way is caught → MarkFailed + notify → Fail.
 
 API Gateway (direct integration `StartExecution` / `StartSyncExecution` for Express), EventBridge rules (S3 upload event, schedules via EventBridge Scheduler), SDK calls from apps, other state machines (nested), SQS via EventBridge Pipes, Step Functions `InvokeHarness`-style integrations for agents.
 
+```flow
+pipeline: Ways to start an execution
+API / SDK > StartExecution from your app.
+EventBridge rule or Pipe > On an event (file uploaded, message queued).
+API Gateway > HTTP request → execution (Express sync for request/response).
+Scheduler > Cron-style schedule.
+Parent workflow > Nested execution.
+```
+
 ---
 
 ### Q06. Idempotent workflow starts
 
 **Short answer:** Standard executions use a unique **execution `name`** per state machine (reusing the same name for a running/recent execution is rejected/returns the existing one). Use a business key (`doc-<hash>`) as the name so duplicate events don't start duplicate workflows. Express doesn't dedupe — make steps idempotent.
+
+```flow
+sequence: Idempotent start by execution name
+actors: Event source, Step Functions
+Event source -> Step Functions: StartExecution(name = doc-hash-ab12)
+Step Functions --> Event source: started
+Event source -> Step Functions: duplicate event: same name
+Step Functions --> Event source: same input → returns the existing execution (no second run)
+> Standard workflows: names are unique for 90 days; the same name with DIFFERENT input fails with ExecutionAlreadyExists. Express workflows don't deduplicate this way.
+```
 
 ```python
 sfn.start_execution(stateMachineArn=ARN, name=f"doc-{doc_hash}", input=json.dumps({"docId": doc_id}))
@@ -159,6 +212,14 @@ sfn.start_execution(stateMachineArn=ARN, name=f"doc-{doc_hash}", input=json.dump
 ### Q07. Timeouts
 
 `TimeoutSeconds` on Task states (and the whole machine), **`HeartbeatSeconds`** for callback/activity tasks (worker must send heartbeats, otherwise `States.HeartbeatTimeout`). Always set timeouts on callback tasks — otherwise a lost token waits up to a year.
+
+```flow
+pipeline: Timeouts at every level
+State TimeoutSeconds > A task that hangs fails instead of waiting forever.
+HeartbeatSeconds > Callback tasks must check in regularly.
+Execution timeout > Whole workflow limit.
+Catch States.Timeout > Route to cleanup / alert.
+```
 
 ---
 
@@ -191,6 +252,14 @@ Set `"QueryLanguage": "JSONata"` at top level or per state.
 
 **Short answer:** States can store values in **variables** with `Assign`, and later states can read them (`$docId`) — no need to thread everything through each state's output.
 
+```flow
+trace: Variables with Assign
+state A: Assign {jobId: $states.result.id} > Save a value once.
+state B, C … > They don't need to pass jobId along in their outputs.
+state D: uses $jobId > Read it directly later in the workflow.
+less payload juggling > Than the old ResultPath/OutputPath plumbing.
+```
+
 ```json
 "RegisterJob": {
   "Type": "Task",
@@ -209,11 +278,27 @@ Scope: variables are visible in later states; Map/Parallel inner states can read
 
 Max **256 KB** payload per state input/output (and execution history event). Large data → store in **S3** (or DynamoDB) and pass a **reference** (bucket/key). Distributed Map can read items directly from S3 and write results to S3 (`ResultWriter`).
 
+```flow
+pipeline: Handling big data within the payload limit
+Payload limit 256 KB > Per state input/output.
+Store large data in S3 > Documents, extracted JSON.
+Pass references > Bucket + key in the state.
+Distributed Map reads from S3 directly > For large item sets.
+```
+
 ---
 
 ### Q11. Context object
 
 `$states.context` (JSONata) / `$$` (JSONPath): execution ID/name, start time, state name, retry count, task token (`$states.context.Task.Token`), Map item index/value. Use execution name/ID as an idempotency key for downstream calls.
+
+```flow
+pipeline: Useful context object fields
+Execution id / name > For idempotency keys and logs.
+State name + entered time > Tracing.
+Task token > `$states.context.Task.Token` for callbacks.
+Map item index / value > Inside Map iterations.
+```
 
 ---
 
@@ -222,6 +307,14 @@ Max **256 KB** payload per state input/output (and execution history event). Lar
 ### Q12. `Retry` and `Catch`
 
 **Short answer:** `Retry` re-attempts a failed state for matching errors with backoff; `Catch` routes to a fallback state when retries are exhausted or for non-retryable errors, optionally keeping error info.
+
+```flow
+trace: Retry then Catch
+Task fails: ThrottlingException > Matches a Retry rule.
+retry 1 after 2 s, retry 2 after 4 s, retry 3 after 8 s (+ jitter) > IntervalSeconds, BackoffRate, MaxAttempts.
+still failing → **Catch** States.ALL > Retries exhausted.
+→ MarkFailed state (error info saved via Assign/Output) > Compensate, alert, or continue on a fallback path.
+```
 
 ```json
 "Retry": [
@@ -273,11 +366,29 @@ Implement with `Catch` on each step routing to compensation states. Compensation
 
 Failed Standard executions can be **redriven** from the failed state (not from scratch) after fixing the cause — keeps completed steps' results. Distributed Map supports redrive of failed child executions.
 
+```flow
+pipeline: Redrive after a fix
+Execution fails at step 6 of 10 > Steps 1–5 succeeded.
+Fix the cause > Code, permissions, quota.
+Redrive > Restarts from the failed step with the same input.
+Steps 1–5 not repeated > No duplicate side effects from earlier steps (Standard, within the redrive window).
+```
+
 ---
 
 ## 5. Integration patterns
 
 ### Q15. Three service integration patterns
+
+```flow
+sequence: The three integration patterns
+actors: Step Functions, Service
+Step Functions -> Service: REQUEST-RESPONSE: start it, move on immediately
+Step Functions -> Service: RUN A JOB (.sync): start, wait until it finishes
+Service --> Step Functions: job complete (Step Functions polls/listens for you)
+Step Functions -> Service: CALLBACK (.waitForTaskToken): send a token, pause
+Service --> Step Functions: SendTaskSuccess(token) whenever ready (hours later)
+```
 
 | Pattern | Resource suffix | Behaviour |
 |---|---|---|
@@ -331,17 +442,44 @@ Alternative: polling loop with `Wait` + `GetDocumentAnalysis` + `Choice` (simple
 
 Optimised integration `arn:aws:states:::bedrock:invokeModel` (and Converse via SDK integration) — good for **deterministic, bounded** LLM steps (classify, extract, summarise) with Retry on throttling. Store large prompts/outputs in S3.
 
+```flow
+sequence: Bedrock call from a workflow
+actors: Step Functions, Bedrock
+Step Functions -> Bedrock: bedrock:invokeModel (optimised integration)
+Bedrock --> Step Functions: ThrottlingException
+Step Functions -> Step Functions: Retry with backoff + jitter
+Step Functions -> Bedrock: retry
+Bedrock --> Step Functions: completion → validate JSON in next state
+> Keep large prompts/results in S3; set Map concurrency to fit the model quota.
+```
+
 ---
 
 ### Q19. Should an LLM agent loop live in Step Functions?
 
 **Short answer:** Usually **not the inner reasoning loop** — agent loops are dynamic, chatty (many transitions = cost, payload limits), and better handled by LangGraph/Strands/AgentCore. **Do** use Step Functions to orchestrate the **business process around the agent**: start job, call agent (AgentCore/Lambda), human approval with task tokens, compensation, notifications. Express workflows can work for short bounded loops.
 
+```flow
+pipeline: Where an agent loop belongs
+Fixed, auditable business process > Step Functions orchestrates.
+Open-ended reasoning loop > LangGraph/agent runtime handles it.
+Combine > Step Functions calls the agent as one task (or the agent starts workflows as tools).
+Why > State machines suit known steps; agents suit unknown steps.
+```
+
 ---
 
 ## 6. Parallelism: Parallel, Map, Distributed Map
 
 ### Q20. Parallel vs Map
+
+```flow
+pipeline: Parallel vs Map
+Parallel > A FIXED set of different branches at once (OCR + virus scan + metadata).
+Map > The SAME steps for each item in a list (every page).
+Join > Both wait for all branches/items; one failure fails the state unless caught.
+Map concurrency > Limit to protect downstream quotas.
+```
 
 - **Parallel** — a **fixed** set of different branches (e.g., OCR + virus scan + metadata extraction at once); waits for all; output = array of branch outputs; if one branch fails (uncaught), the state fails.
 - **Map** — same sub-workflow for **each item** of an array (dynamic count).
@@ -352,11 +490,27 @@ Optimised integration `arn:aws:states:::bedrock:invokeModel` (and Converse via S
 
 `MaxConcurrency` (inline Map default 0 = as many as possible, practically limited ~40) caps parallel iterations → protect rate-limited downstreams (Bedrock, Textract). Combine with Retry + jitter. `ToleratedFailurePercentage/Count` lets a Map succeed when some items fail.
 
+```flow
+pipeline: Controlling Map concurrency
+MaxConcurrency > How many items run at once (0 = as many as possible).
+Size to the bottleneck > Bedrock TPM, Textract TPS, DB connections.
+Tolerated failure % > Distributed Map can continue despite some failures.
+Batch items > ItemBatcher to reduce transitions.
+```
+
 ---
 
 ### Q22. Distributed Map
 
 **Short answer:** Map mode for **massive scale**: each item (or batch) runs as a **child workflow execution** (Express or Standard), up to **10,000 parallel** child executions, reading items directly from **S3** (objects list, CSV/JSON/JSONL, manifest) and writing results to S3. Use for processing millions of documents/records.
+
+```flow
+pipeline: Distributed Map over millions of items
+ItemReader > Reads an S3 inventory/CSV/JSON list directly.
+Child executions > Batches run as separate child workflows, massively parallel.
+Concurrency + failure tolerance > Controlled limits.
+ResultWriter > Results written back to S3, not into the payload.
+```
 
 ```json
 "ProcessAllDocs": {
@@ -382,6 +536,14 @@ Optimised integration `arn:aws:states:::bedrock:invokeModel` (and Converse via S
 
 Child state machines (`states:startExecution.sync:2`) improve modularity and reuse, but: more executions to trace, limits on history size, permissions for the parent to start children, harder debugging across executions, and cost multiplication. Use clear naming and pass correlation IDs.
 
+```flow
+pipeline: Nested workflow pitfalls
+Parent starts child (.sync) > Waits for it.
+Child failure > Must be caught and handled in the parent.
+Duplicate starts > Use deterministic child names.
+Costs + quotas > Transitions add up; Express children for high-volume inner loops.
+```
+
 ---
 
 ## 7. Operations: versions, testing, security, cost
@@ -390,11 +552,27 @@ Child state machines (`states:startExecution.sync:2`) improve modularity and reu
 
 Publish immutable **versions** of a state machine; **aliases** point to versions and can split traffic (e.g., 90/10) for safe rollout. In-flight executions keep running on the version they started with.
 
+```flow
+pipeline: Versions and aliases for safe releases
+Publish version > Immutable definition.
+Alias "prod" → v3 > Callers use the alias.
+Weighted routing > 90% v3 / 10% v4 canary.
+Shift or roll back > Running executions keep their version.
+```
+
 ---
 
 ### Q25. Testing state machines
 
 **TestState API** — test a single state (with mocked input/permissions) without deploying; Step Functions Local / mocked service integrations for local tests; unit-test Lambda code separately; integration tests in a sandbox account; validate ASL with `aws stepfunctions validate-state-machine-definition`.
+
+```flow
+pipeline: Testing state machines
+TestState API > Test one state with mock input (and mocked service results).
+Local / mock testing > Paths through Choice states.
+Integration test in a sandbox account > Real services.
+Validate definitions in CI > Lint ASL; check IAM.
+```
 
 ---
 
@@ -402,11 +580,27 @@ Publish immutable **versions** of a state machine; **aliases** point to versions
 
 The state machine's **execution role** must allow each integration (`lambda:InvokeFunction` on specific ARNs, `dynamodb:PutItem`, `ecs:RunTask` + `iam:PassRole` for task roles, `events:PutRule` etc. for `.sync`). Callers need `states:StartExecution`. Callback workers need `states:SendTaskSuccess/Failure/Heartbeat`. Least privilege per state machine.
 
+```flow
+pipeline: IAM for a workflow
+Execution role > What the state machine can call (specific Lambdas, tables, models).
+Who can start it > states:StartExecution on that state machine.
+Callback senders > states:SendTaskSuccess for the approval API.
+Least privilege > Resource ARNs, no wildcards.
+```
+
 ---
 
 ### Q27. Preventing secrets leakage in execution history
 
 Execution history stores **inputs/outputs of every state** (visible to anyone with `states:GetExecutionHistory`). Don't pass secrets or raw PII through state data — pass references; fetch secrets inside tasks (Lambda/HTTP Task with EventBridge connections storing credentials in Secrets Manager); encrypt with customer-managed KMS keys; restrict console/API access; for Express, control logging level (`includeExecutionData`).
+
+```flow
+pipeline: Keeping secrets out of execution history
+History records inputs/outputs > Visible in console and logs.
+Never pass secrets as data > Tasks fetch secrets themselves.
+Pass references > Secret ARNs, S3 keys.
+Restrict history access > IAM + log level settings.
+```
 
 ---
 
@@ -414,11 +608,27 @@ Execution history stores **inputs/outputs of every state** (visible to anyone wi
 
 Standard: **per state transition** — chatty loops (polling every 5 s for an hour) and big Maps get expensive → use callbacks instead of polling, batch items, use Express children for high-volume steps. Express: per request + duration × memory — cheap for short, high-volume. Waiting in Standard is free of compute; waiting in Lambda isn't.
 
+```flow
+trace: Standard vs Express cost for 1M orders
+Standard: 1M × 10 transitions = 10M × $0.025/1k ≈ **$250** > Per state transition.
+Express: 1M × 2 s × 64 MB-ish ≈ **tens of dollars** > Per request + duration.
+long waits cost nothing on Standard > But are impossible on Express (5 min max).
+(illustrative prices) > Pick by duration and volume.
+```
+
 ---
 
 ### Q29. Observability
 
 Console execution graph + event history (Standard), CloudWatch metrics (`ExecutionsFailed`, `ExecutionsTimedOut`, `ExecutionThrottled`), CloudWatch Logs (Express and optional for Standard), X-Ray tracing, EventBridge events on execution status changes → alerts.
+
+```flow
+pipeline: Observing workflows
+Execution history / graph > Exactly which state failed and why.
+CloudWatch metrics > Failed, timed-out, throttled executions.
+X-Ray tracing > Across Lambda and services.
+Logs (level ERROR/ALL) > Express needs CloudWatch Logs for history.
+```
 
 ---
 
@@ -428,11 +638,27 @@ Console execution graph + event history (Standard), CloudWatch metrics (`Executi
 
 Open the execution → find the failed state → read **error + cause** → check the input to that state → check the downstream service logs (Lambda logs via request ID) → common causes: `States.Permissions` (execution role), payload > 256 KB (`States.DataLimitExceeded`), JSONata/JSONPath expression error, timeout, throttling without retry. Fix → **redrive** from failure.
 
+```flow
+pipeline: Troubleshooting a failed execution
+Open the execution graph > Find the red state.
+Read the error + cause > Service error, timeout, IAM denial, bad input.
+Check that state's input > Data shape wrong?
+Fix + redrive > Or re-run with corrected input.
+```
+
 ---
 
 ### Q31. A Standard execution is stuck "Running" for days in a callback state
 
 The task token was never returned: worker crashed, SNS/SQS message lost or went to DLQ, token not stored correctly, approver never acted. Fix: set `TimeoutSeconds` + `HeartbeatSeconds`, alert on long-running executions, DLQ monitoring for the callback queue, admin path to `SendTaskFailure`.
+
+```flow
+pipeline: Execution stuck in a callback state
+Token delivered? > Did the message/email with the token get sent?
+Token stored correctly? > Lookup by job id works?
+Callback sent? > Approver API called SendTaskSuccess/Failure?
+Prevent > TimeoutSeconds + HeartbeatSeconds so it fails instead of hanging.
+```
 
 ---
 
@@ -459,15 +685,42 @@ Talk about quotas (Textract TPS, Bedrock tokens/min), concurrency caps, idempote
 
 Express workflow with `StartSyncExecution` via API Gateway direct integration; steps with short timeouts; return result directly. If it may exceed API Gateway timeout, switch to async (202 + polling/websocket).
 
+```flow
+sequence: Synchronous API with an Express workflow
+actors: Client, API Gateway, Express workflow, Services
+Client -> API Gateway: POST /quote
+API Gateway -> Express workflow: StartSyncExecution
+Express workflow -> Services: validate → price → save (each with timeouts)
+Express workflow --> API Gateway: output in ~2 s
+API Gateway --> Client: 200 + result
+> Keep total under API Gateway's integration timeout; anything longer → async with a job id.
+```
+
 ---
 
 ### Q34. A Map over 50,000 items is slow/expensive
 
 Use **Distributed Map** with item batching, Express child workflows, S3 item reader/result writer, sensible `MaxConcurrency`, tolerate a small failure percentage, and redrive failures.
 
+```flow
+pipeline: Slow, costly Map over 50,000 items
+Use Distributed Map > Child executions, high parallelism.
+Batch items > Fewer transitions.
+Express child workflows > Cheaper for short per-item work.
+Right concurrency > Max speed the downstream allows.
+```
+
 ---
 
 ### Q35. Step Functions vs Lambda durable functions vs LangGraph vs SQS workers — how do you choose?
+
+```flow
+pipeline: Choosing an orchestrator
+Fixed AWS service workflow, audit, waits > Step Functions.
+Code-first durable steps inside Lambda > Lambda durable functions.
+Agent reasoning, HITL, LLM state > LangGraph.
+Simple background jobs > SQS + workers.
+```
 
 | Need | Choose |
 |---|---|

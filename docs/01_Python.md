@@ -75,6 +75,14 @@ Three ideas explain most "tricky" Python questions:
 
 **Short answer:** List = ordered, mutable sequence. Tuple = ordered, immutable sequence. Set = unordered collection of unique hashable items. Dict = mapping of unique hashable keys to values (keeps insertion order since 3.7).
 
+```flow
+pipeline: Picking the right built-in collection
+Need order + duplicates + changes? > list.
+Fixed record, hashable, can be a dict key? > tuple.
+Fast membership test, unique items? > set: O(1) `in` instead of O(n) for a list.
+Look up values by key? > dict: O(1) average get/set, keeps insertion order.
+```
+
 **Explanation:** Sets and dicts are **hash tables**: Python computes `hash(key)` to jump directly to a slot, so lookup is O(1) on average. A list must scan item by item, O(n).
 
 | Type | Ordered | Mutable | Duplicates | Lookup `x in c` | Typical use |
@@ -102,6 +110,15 @@ if "job-1" in status:                 # O(1) – no scan
 
 **Short answer:** Mutable objects (list, dict, set, custom objects) can change in place; immutable ones (int, float, str, tuple, frozenset) cannot — "changing" them creates a new object. Two names pointing to the same mutable object are **aliases**; a change via one is visible via the other.
 
+```flow
+trace: Aliasing: two names, one object
+a = [1]          →  a ──► **[1]** > One list object on the heap; `a` is a label pointing at it.
+b = a            →  a, b ──► **[1]** > Assignment copies the reference, not the list. Both names point at the same object.
+b.append(2)      →  a, b ──► **[1, 2]** > Mutating through `b` changes the one shared object, so `a` sees it too.
+x = "a"; y = x   →  x, y ──► **"a"** > Same idea with a string: two names, one object.
+y += "b"         →  x ──► "a",  y ──► **"ab"** > Strings are immutable, so `+=` builds a NEW object and rebinds `y`. `x` is untouched.
+```
+
 **Explanation:**
 ```
 a = [1]          b = a            b.append(2)
@@ -128,6 +145,14 @@ per_request["retries"] = 0      # oops: global config now has retries=0
 
 **Short answer:** Default values are evaluated **once, when the function is defined**, not on every call. A list default is the same list object shared by every call.
 
+```flow
+trace: The shared mutable default
+def add(x, items=[]) > At definition time Python evaluates `[]` once and stores that single list on the function (`add.__defaults__`).
+add(1)  →  items is the default list  →  **[1]** > First call appends to the shared default list.
+add(2)  →  same default list  →  **[1, 2]** > Second call gets the SAME list, which still holds 1. The surprise bug.
+Fix: items=None; if items is None: items = [] > A fresh list is created inside the function on every call.
+```
+
 **Example:**
 ```python
 def add_tag(tag, tags=[]):       # ❌ one list shared forever
@@ -151,6 +176,15 @@ def add_tag(tag, tags=None):     # ✅ sentinel pattern
 ### Q04. `is` vs `==`, shallow copy vs deep copy
 
 **Short answer:** `==` compares **values** (calls `__eq__`); `is` compares **identity** (same object in memory). A shallow copy creates a new outer container but shares inner objects; a deep copy recursively copies everything.
+
+```flow
+trace: Shallow vs deep copy
+orig = [[1, 2], [3]] > A list containing two inner lists.
+s = copy.copy(orig)   →  new outer list, **same inner lists** > Shallow copy: only the outer container is new.
+s[0].append(9)        →  orig == **[[1, 2, 9], [3]]** > Changing an inner list through the copy also changes the original.
+d = copy.deepcopy(orig)  →  new outer **and new inner lists** > Deep copy recursively copies everything it contains.
+d[0].append(7)        →  orig unchanged > Fully independent. Slower and uses more memory.
+```
 
 **Example:**
 ```python
@@ -177,6 +211,13 @@ x is None  # ✅ correct way to test for None (None is a singleton)
 
 **Short answer:** "Pass by object reference" (also called pass-by-assignment). The function receives a reference to the same object. Mutating it affects the caller; **rebinding** the parameter name does not.
 
+```flow
+trace: Pass by object reference
+nums = [1]; f(nums) > The parameter `x` inside `f` becomes a second label for the same list object.
+x.append(2)   →  caller sees **[1, 2]** > Mutating the object is visible to the caller, because it's the same object.
+x = [99]      →  caller still sees [1, 2] > Rebinding only moves the local label to a new object. The caller's name is unaffected.
+```
+
 **Example:**
 ```python
 def mutate(items):  items.append(3)      # caller sees [1, 2, 3]
@@ -192,6 +233,14 @@ print(nums)   # [1, 2, 3]
 ### Q06. How does hashing work and what makes an object hashable?
 
 **Short answer:** An object is hashable if it has a `__hash__` that never changes during its lifetime and an `__eq__` consistent with it (equal objects → equal hashes). Dicts/sets use the hash to pick a bucket, then `__eq__` to confirm.
+
+```flow
+pipeline: How a dict / set finds a key
+hash(key) > `__hash__` turns the key into an integer.
+Pick a bucket > The hash (modulo table size) chooses a slot in the internal table. This is why lookup is O(1) on average.
+Compare with __eq__ > Several keys can share a slot (a collision), so Python compares with `==` to find the exact key.
+Found / not found > Mutable objects like lists can't be keys: if their contents (and hash) changed after insertion, they'd sit in the wrong bucket.
+```
 
 **Example:**
 ```python
@@ -213,6 +262,15 @@ cache = {DocKey("t1", "d9"): "summary..."}
 
 **Short answer:** List/set/dict comprehensions build the whole collection **eagerly** in memory. A generator expression `( ... )` produces items **lazily**, one at a time, using constant memory.
 
+```flow
+trace: Eager list vs lazy generator
+[x*x for x in range(5)]  →  **[0, 1, 4, 9, 16]** built now > A list comprehension computes everything up front and holds it all in memory.
+g = (x*x for x in range(5))  →  nothing computed yet > A generator expression only stores how to produce the next value.
+next(g)  →  **0** > Values are produced one at a time, on demand.
+next(g)  →  **1** > Memory stays constant however long the sequence is.
+… after the last value  →  **StopIteration** > A generator can be consumed only once.
+```
+
 **Example:**
 ```python
 squares = [x * x for x in range(5)]            # [0, 1, 4, 9, 16]
@@ -229,6 +287,15 @@ total = sum(x * x for x in range(10_000_000))  # generator: no 10M-item list
 ### Q08. How does Python manage memory (refcounting and GC)?
 
 **Short answer:** CPython frees an object as soon as its **reference count** drops to zero. A separate **cyclic garbage collector** periodically finds groups of objects that reference each other but are unreachable (cycles) and frees them.
+
+```flow
+trace: Reference counting, and the cycle it can't free
+a = Obj()           refcount(Obj) = **1** > One name refers to the object.
+b = a               refcount = **2** > Every new reference increases the count.
+del a; del b        refcount = **0**  →  freed immediately > CPython frees the object the moment the count hits zero.
+x.peer = y; y.peer = x; del x, y   →  counts stay **1** > A reference cycle: each object keeps the other alive, so refcounting alone never frees them.
+Cyclic GC runs  →  finds unreachable cycle  →  **freed** > The generational garbage collector periodically detects groups that nothing outside refers to.
+```
 
 **Explanation:**
 ```
@@ -257,6 +324,15 @@ class Point:
 
 **Short answer:** `*args` collects extra positional arguments into a tuple; `**kwargs` collects extra keyword arguments into a dict. Parameters after `*` are keyword-only; parameters before `/` are positional-only.
 
+```flow
+trace: How arguments bind to parameters
+def f(a, /, b, *args, c, **kwargs) > a positional-only, b either, c keyword-only.
+f(1, 2, 3, 4, c=5, d=6) > The call.
+a=**1**, b=**2** > Positional slots filled first.
+args=**(3, 4)** > Extra positionals collected into a tuple.
+c=**5**, kwargs=**{"d": 6}** > c must be passed by name; unknown keywords go to the dict.
+```
+
 **Example:**
 ```python
 def call_tool(name, /, *args, timeout=10, **kwargs):
@@ -279,6 +355,14 @@ f(*[1, 2]); f(**{"a": 1, "b": 2})   # unpacking at call site
 
 **Short answer:** Name lookup order is **L**ocal → **E**nclosing function → **G**lobal (module) → **B**uiltins. Assigning to a name makes it local unless declared `global` (module level) or `nonlocal` (enclosing function).
 
+```flow
+pipeline: LEGB: where Python looks up a name
+Local > Names assigned inside the current function.
+Enclosing > Names in any outer function (closures). Rebinding one needs `nonlocal`.
+Global > Module-level names. Rebinding one inside a function needs `global`.
+Built-ins > `len`, `print`, `Exception`… Not found anywhere → `NameError`.
+```
+
 **Example:**
 ```python
 count = 0                     # Global
@@ -298,6 +382,14 @@ def outer():
 ### Q11. What is a closure? What is the late-binding trap?
 
 **Short answer:** A closure is an inner function that **remembers variables from its enclosing scope** even after the outer function has returned. Python closures capture the *variable*, not its value at creation time, so loops can surprise you.
+
+```flow
+trace: The late-binding closure trap
+fns = [lambda: i for i in range(3)] > Three closures are created. Each captures the VARIABLE `i`, not its value at that moment.
+loop ends  →  i == **2** > By the time anyone calls the lambdas, the loop has finished.
+[f() for f in fns]  →  **[2, 2, 2]** > Every closure reads the same `i`, which is now 2.
+lambda i=i: i  →  **[0, 1, 2]** > Fix: a default argument is evaluated immediately, freezing the current value.
+```
 
 **Example:**
 ```python
@@ -369,6 +461,14 @@ def call_llm(prompt): ...
 
 **Short answer:** `lambda` is an anonymous single-expression function. `map`/`filter` return lazy iterators. `sorted(iterable, key=fn)` sorts by a computed key and is **stable**. `functools` provides `lru_cache`/`cache`, `partial`, `reduce`, `wraps`, `cached_property`.
 
+```flow
+trace: sorted with a key, and lazy map/filter
+sorted(users, key=lambda u: u.age) > key is computed once per item, then items are compared by it.
+ages [31, 25, 31] → order **25, 31, 31** (ties keep original order) > Python's sort is stable.
+map(str.upper, names) → lazy iterator > Nothing computed until you iterate.
+list(...) → **["ASHA", "RAVI"]** > Comprehensions are usually clearer than map/filter with lambdas.
+```
+
 **Example:**
 ```python
 from functools import lru_cache, partial
@@ -410,6 +510,15 @@ match event:                          # structural pattern matching (3.10+)
 
 **Short answer:** A module is a `.py` file; a package is a directory of modules (usually with `__init__.py`). A module's top-level code runs **once** on first import and is cached in `sys.modules`. `__name__ == "__main__"` is true only when the file is run directly.
 
+```flow
+pipeline: What `import mymod` does
+Check sys.modules > Already imported? Reuse the cached module object. This is why top-level code runs only once.
+Find it on sys.path > Search the script's folder, installed packages and so on, for a module or package.
+Create module object > A fresh namespace for the module.
+Run its top-level code > Definitions, constants and any side effects run now, with `__name__` set to "mymod".
+Bind the name > `mymod` is now available in the importing file. When run directly, a file gets `__name__ == "__main__"`, which is why the main guard works.
+```
+
 **Example:**
 ```python
 # app/main.py
@@ -427,6 +536,14 @@ if __name__ == "__main__":   # runs for `python -m app.main`, not for `import ap
 ### Q16. Class vs instance attributes; `self`
 
 **Short answer:** Class attributes are shared by all instances; instance attributes live in each object's `__dict__`. `self` is just the instance passed automatically as the first argument.
+
+```flow
+trace: Attribute lookup: instance first, then class
+class Job: retries = 3 > Class attribute, shared.
+j = Job();  j.retries  →  **3** (found on the class) > The instance has no own value yet.
+j.retries = 5  →  j.__dict__ = {retries: 5} > Assignment creates an INSTANCE attribute that shadows the class one.
+Job.retries still **3**;  other instances still 3 > Pitfall: a mutable class attribute (a list) is shared by every instance.
+```
 
 **Example:**
 ```python
@@ -449,6 +566,14 @@ class Agent:
 - **`@classmethod`** — gets `cls`; used for alternative constructors and respects subclasses.
 - **`@staticmethod`** — gets nothing; a plain function grouped in the class namespace.
 - **`@property`** — exposes a method as an attribute, enabling validation or computed values without changing the public API.
+
+```flow
+pipeline: What each method kind receives
+Instance method > `self`: works on one object's data.
+@classmethod > `cls`: alternative constructors (`from_json`), respects subclasses.
+@staticmethod > Nothing implicit: a plain function namespaced in the class.
+@property > Called like an attribute: computed or validated access.
+```
 
 **Example:**
 ```python
@@ -479,6 +604,14 @@ class Money:
 
 **Short answer:** Special `__name__` methods let your objects plug into Python syntax and built-ins.
 
+```flow
+trace: Operators call dunder methods
+a + b  →  a.__add__(b) > If it returns NotImplemented, Python tries b.__radd__(a).
+len(x)  →  x.__len__() > Built-ins delegate to dunders.
+x == y  →  x.__eq__(y);  hash(x) → x.__hash__() > Keep __eq__ and __hash__ consistent.
+for i in x  →  iter(x) → x.__iter__() > Your objects plug into Python syntax this way.
+```
+
 | Want this to work | Implement |
 |---|---|
 | `print(obj)`, logs | `__str__` (friendly), `__repr__` (unambiguous, for devs) |
@@ -504,6 +637,15 @@ class Batch:
 ### Q19. Inheritance, `super()` and MRO
 
 **Short answer:** A subclass inherits behaviour and can override it. `super()` calls the **next class in the Method Resolution Order (MRO)**, not necessarily the direct parent. Python computes MRO with the C3 linearization algorithm; inspect it with `Cls.__mro__`.
+
+```flow
+pipeline: super() follows the MRO, not the parent
+class D(B, C) > B and C both inherit from A (a "diamond").
+D.__mro__ = D → B → C → A → object > C3 linearisation: each class appears once, children before parents, in base-class order.
+D().send() calls super() > In D, `super()` means "the next class in D's MRO": B.
+B.send() calls super() > The next class after B in D's MRO is **C**, not A, even though B's parent is A.
+C → A > Each class runs once, which is why cooperative `super()` chains work.
+```
 
 **Explanation (diamond):**
 ```
@@ -560,6 +702,14 @@ def summarize(store: DocumentStore, key: str): ...   # mypy checks shape
 
 **Short answer:** `@dataclass` auto-generates `__init__`, `__repr__`, `__eq__` (and optionally ordering, hashing, immutability) from annotated fields. Options: `frozen=True` (immutable), `slots=True` (memory), `kw_only=True`, `field(default_factory=list)` for mutable defaults.
 
+```flow
+pipeline: What @dataclass generates
+Read annotated fields > id: str, total: float = 0.0.
+__init__ > Assigns each field, with defaults.
+__repr__ + __eq__ > Readable printing, field-by-field equality.
+Options > frozen=True (immutable + hashable), order=True, slots=True, kw_only=True.
+```
+
 **Example:**
 ```python
 from dataclasses import dataclass, field
@@ -579,6 +729,14 @@ class Job:
 - A **descriptor** is an object with `__get__`/`__set__` that controls attribute access on another class. `property`, `classmethod`, `staticmethod` and ORM fields (SQLAlchemy columns) are descriptors.
 - A **metaclass** is "the class of a class" — it customises class *creation*. Used by frameworks (Pydantic, Django ORM, Enum). Rarely needed in application code; prefer `__init_subclass__` or decorators.
 
+```flow
+pipeline: How obj.attr is resolved (descriptors)
+Data descriptor on the class? > `property` or a class with __get__ + __set__ wins first.
+Instance __dict__? > The object's own attributes.
+Non-data descriptor / class attribute? > Methods (functions are descriptors), classmethod, plain values.
+__getattr__? > Last resort, then AttributeError. Metaclasses go one level up: they customise how the class itself is created.
+```
+
 ```python
 class Plugin:
     registry = {}
@@ -597,6 +755,20 @@ Plugin.registry   # {'pdf': PdfParser}
 ### Q23. Iterable vs iterator vs generator, and `yield`
 
 **Short answer:** An **iterable** can give you an iterator (`__iter__`), e.g. list. An **iterator** returns the next item on `__next__()` and raises `StopIteration` when done. A **generator** is the easiest way to write an iterator: a function with `yield` that pauses and resumes with local state preserved.
+
+```flow
+sequence: The iterator protocol behind a for loop
+actors: for loop, Iterable, Iterator
+for loop -> Iterable: iter(obj) calls __iter__()
+Iterable --> for loop: a fresh iterator
+for loop -> Iterator: next() calls __next__()
+Iterator --> for loop: value 1
+for loop -> Iterator: next()
+Iterator --> for loop: value 2
+for loop -> Iterator: next()
+Iterator --> for loop: raises StopIteration → loop ends
+> A generator function writes this for you: each `yield` hands out the next value and pauses until the next `next()`.
+```
 
 **Explanation:**
 ```
@@ -629,6 +801,18 @@ for line in only_errors(read_pages("app.log")):   # one line in memory at a time
 
 **Short answer:** A context manager guarantees setup and teardown around a block — even if an exception occurs. Implement `__enter__`/`__exit__` or use `@contextlib.contextmanager` with a single `yield`. Async version: `async with` / `@asynccontextmanager`.
 
+```flow
+sequence: What `with` guarantees
+actors: Your code, Context manager
+Your code -> Context manager: __enter__()
+Context manager --> Your code: resource (file, lock, DB session)
+Your code -> Your code: run the block
+> It might finish normally or raise an exception.
+Your code -> Context manager: __exit__(exc_type, exc, tb)
+> Always called, success or failure: close the file, release the lock, commit or roll back.
+Context manager --> Your code: return True to swallow the exception, else it propagates
+```
+
 **Example:**
 ```python
 from contextlib import contextmanager
@@ -654,6 +838,14 @@ with timer("embed"):
 
 **Short answer:** `try` holds risky code; `except` handles specific errors; `else` runs only if **no** exception happened; `finally` always runs (cleanup), even after `return`.
 
+```flow
+pipeline: try / except / else / finally, in order
+try > Run the risky code.
+except (only if it raised) > Handle the specific error types you expect.
+else (only if it did NOT raise) > Code that should run only on success. Keeping it out of `try` avoids catching its errors by accident.
+finally (always) > Cleanup that must happen, even after `return`, `break` or an unhandled exception.
+```
+
 **Example:**
 ```python
 try:
@@ -677,6 +869,14 @@ finally:
 
 **Short answer:** Create a base exception for your domain and subclasses for specific failures, so callers can catch at the right granularity.
 
+```flow
+trace: Catching at the right level with an exception hierarchy
+DocumentError ← NotFound, ← ParseError, ← QuotaExceeded > Domain base class + specific subclasses.
+raise ParseError("page 3") > The specific failure.
+except NotFound → 404 handler: **skipped** > Doesn't match.
+except DocumentError → **caught** > Callers can catch broadly or narrowly. Use `raise … from err` to keep the original cause.
+```
+
 ```python
 class ToolError(Exception): """Base for all tool failures."""
 class RetryableToolError(ToolError): pass
@@ -693,6 +893,15 @@ except ToolError as e: report(e)
 ### Q27. `ExceptionGroup` and `except*` (3.11+)
 
 **Short answer:** When several concurrent tasks fail at once (e.g., inside `asyncio.TaskGroup`), Python raises an `ExceptionGroup` holding all of them. `except*` lets you handle each type separately.
+
+```flow
+sequence: except* splits an ExceptionGroup
+actors: TaskGroup, Your code
+TaskGroup --> Your code: ExceptionGroup([TimeoutError, ValueError, TimeoutError])
+Your code -> Your code: except* TimeoutError → handles both timeouts
+Your code -> Your code: except* ValueError → handles the ValueError
+> Each `except*` clause takes the matching part of the group; unhandled parts are re-raised.
+```
 
 ```python
 try:
@@ -711,6 +920,14 @@ except* ValueError as eg:
 ### Q28. Type hints and generics — are they enforced?
 
 **Short answer:** No. Type hints are **not enforced at runtime**; they are checked by static tools (mypy, pyright) and used by IDEs and frameworks like FastAPI/Pydantic that *choose* to read them.
+
+```flow
+pipeline: Where type hints actually matter
+Write hints > def get(id: str) -> Doc | None.
+Runtime ignores them > Passing an int still runs.
+Static checkers > mypy / pyright catch the bug before running.
+Frameworks read them > FastAPI / Pydantic turn hints into validation at runtime.
+```
 
 **Example:**
 ```python
@@ -732,6 +949,14 @@ def run(mode: Mode, cb: Callable[[str], None] | None = None) -> None: ...
 ### Q29. dataclass vs NamedTuple vs TypedDict vs Pydantic
 
 **Short answer:** Pick by **where the data comes from**:
+
+```flow
+pipeline: Choosing a data container by where data comes from
+Internal, trusted data > @dataclass.
+Small immutable record / tuple compatibility > NamedTuple.
+Typing an existing dict (JSON shape) > TypedDict: no runtime checks.
+Untrusted input (API, LLM output, files) > Pydantic: validates and converts at runtime.
+```
 
 | Tool | Runtime validation | Mutable | Best for |
 |---|---|---|---|
@@ -793,6 +1018,19 @@ Use enums instead of magic strings for statuses, routes and modes — typos beco
 
 **Short answer:** The Global Interpreter Lock in standard CPython lets only **one thread execute Python bytecode at a time** per interpreter. Threads still help for I/O (the GIL is released while waiting), but don't speed up pure-Python CPU work. The GIL does **not** make your code thread-safe.
 
+```flow
+sequence: Two threads under the GIL
+actors: Thread 1, GIL, Thread 2, Network
+Thread 1 -> GIL: acquire, run Python bytecode
+Thread 1 -> Network: blocking I/O: release GIL while waiting
+> I/O-bound threads still overlap, because the GIL is released during blocking I/O.
+Thread 2 -> GIL: acquire, run bytecode
+Thread 2 -> GIL: switch interval: forced to release
+> CPU-bound threads just take turns, so two CPU-heavy threads aren't faster than one. Use processes, native extensions or the free-threaded build.
+Thread 1 -> GIL: reacquire, continue
+> The GIL doesn't make your code thread-safe: `x += 1` is several bytecodes and can still interleave. Use locks.
+```
+
 **Example:**
 ```python
 counter = 0
@@ -814,6 +1052,14 @@ def safe_work():
 ---
 
 ### Q32. Threads vs processes vs asyncio — when to use each?
+
+```flow
+pipeline: Threads, processes or asyncio?
+Many concurrent I/O waits with async libraries? > asyncio: thousands of tasks on one thread.
+I/O with blocking libraries (boto3, requests)? > Threads (or asyncio.to_thread).
+CPU-heavy pure Python? > Processes (ProcessPoolExecutor) to use multiple cores.
+Free-threaded build (3.13+) > Threads can run Python in parallel, once your libraries support it.
+```
 
 | | Threads | Processes | asyncio |
 |---|---|---|---|
@@ -884,6 +1130,19 @@ asyncio.run(main(["https://a", "https://b"]))   # 2 requests overlap in time
 - `asyncio.timeout(s)` — deadline for a block.
 - Cancellation is cooperative: a `CancelledError` is raised at the next `await`; clean up in `finally`.
 
+```flow
+sequence: TaskGroup: one failure cancels the rest
+actors: Parent, TaskGroup, Task A, Task B
+Parent -> TaskGroup: async with TaskGroup() as tg
+TaskGroup -> Task A: create_task(fetch_a())
+TaskGroup -> Task B: create_task(fetch_b())
+Task A --> TaskGroup: raises ValueError
+TaskGroup -> Task B: cancel()
+> Structured concurrency: no task is left running in the background after a failure.
+TaskGroup --> Parent: ExceptionGroup([ValueError])
+> With `gather`, by contrast, the other tasks keep running unless you cancel them yourself.
+```
+
 **Example (bounded fan-out — a very common interview ask):**
 ```python
 sem = asyncio.Semaphore(20)                  # max 20 concurrent LLM calls
@@ -905,6 +1164,17 @@ async def embed_all(texts):
 
 **Short answer:** Offload it to a thread with `await asyncio.to_thread(fn, *args)` (or `loop.run_in_executor`). For CPU-heavy work, use a process pool.
 
+```flow
+sequence: Calling blocking code from async code
+actors: Event loop, Thread pool, Blocking lib (boto3)
+Event loop -> Thread pool: await asyncio.to_thread(s3.get_object, …)
+Thread pool -> Blocking lib (boto3): runs in a worker thread
+> The event loop is free to serve other requests while the thread waits on the network.
+Blocking lib (boto3) --> Thread pool: result
+Thread pool --> Event loop: await resumes with the result
+> Calling boto3 directly inside `async def` would freeze every request on that worker until it finished.
+```
+
 ```python
 async def get_object(key):
     return await asyncio.to_thread(s3.get_object, Bucket="b", Key=key)  # boto3 is sync
@@ -918,6 +1188,17 @@ async def get_object(key):
 
 `threading.Lock/RLock` (mutual exclusion), `queue.Queue` (thread-safe producer/consumer), `threading.Event` (signal), `asyncio.Lock/Queue` (async equivalents — **not** thread-safe), `contextvars` (per-request context such as request ID that works with asyncio).
 
+```flow
+sequence: Producer / consumer with queue.Queue
+actors: Producer thread, Queue, Worker 1, Worker 2
+Producer thread -> Queue: put(job1), put(job2)
+Worker 1 -> Queue: get() → job1
+Worker 2 -> Queue: get() → job2
+Worker 1 -> Queue: task_done()
+Producer thread -> Queue: join() waits until all jobs are done
+> The queue handles locking for you; maxsize gives backpressure.
+```
+
 ```python
 import contextvars
 request_id = contextvars.ContextVar("request_id", default="-")
@@ -927,6 +1208,16 @@ request_id = contextvars.ContextVar("request_id", default="-")
 ---
 
 ### Q37. Multiprocessing pitfalls
+
+```flow
+sequence: What multiprocessing does with your arguments
+actors: Parent process, Pickle, Child process
+Parent process -> Pickle: serialise function + arguments
+Pickle -> Child process: send bytes (spawn: child re-imports your module)
+Child process -> Child process: run work
+Child process --> Parent process: pickled result back
+> Big arguments are slow to copy, so pass file paths or IDs. Guard the entry point with `if __name__ == "__main__":`.
+```
 
 - Arguments and results are **pickled** → large data is slow; send file paths/IDs instead.
 - On Windows/macOS the default start method is `spawn` → protect entry code with `if __name__ == "__main__":`.
@@ -939,6 +1230,15 @@ request_id = contextvars.ContextVar("request_id", default="-")
 ### Q38. Virtual environments, dependencies and reproducible builds
 
 **Short answer:** Isolate each project in a virtual environment, declare dependencies in `pyproject.toml`, and install from a **lockfile** that pins every transitive version (plus hashes). Build an immutable Docker image tagged with the git SHA.
+
+```flow
+pipeline: Reproducible Python environments
+pyproject.toml > Declares direct dependencies and version ranges.
+Lockfile (uv.lock) > Resolver pins every transitive package to an exact version + hash.
+Virtual environment > Isolated per project, so projects don't break each other.
+Install from lock > CI, Docker and teammates all get identical versions (`uv sync --frozen`).
+Upgrade deliberately > Bump the lock in a PR, let tests run, then merge.
+```
 
 **Example workflow (uv is now the common fast tool; pip-tools/Poetry also fine):**
 ```bash
@@ -956,6 +1256,15 @@ uv run pytest
 ### Q39. Testing with pytest: fixtures, parametrize, mocks
 
 **Short answer:** Use plain `assert`; **fixtures** for reusable setup (with scopes: function/module/session); **parametrize** for many input cases; **mock only external boundaries** (HTTP, AWS, LLM), not your own logic.
+
+```flow
+pipeline: A pytest run with fixtures
+Collect tests > pytest finds `test_*` functions; `parametrize` expands one test into many cases.
+Set up fixtures > Requested fixtures are created at their scope (function, module or session), dependencies first.
+Run test > Plain `assert`; pytest shows the values that differed.
+Tear down > Code after `yield` in each fixture runs, even if the test failed.
+Report > Pass/fail, coverage, JUnit XML for CI.
+```
 
 **Example:**
 ```python
@@ -985,6 +1294,15 @@ def test_router_timeout(fake_llm):
 
 ### Q40. Code-quality tooling
 
+```flow
+pipeline: Quality gates on every commit
+pre-commit > ruff format + ruff lint on changed files.
+Type check > mypy / pyright.
+Tests + coverage > pytest, pytest-cov.
+Security > bandit, pip-audit.
+CI repeats all of it > Nothing merges without passing.
+```
+
 | Tool | Purpose |
 |---|---|
 | `ruff` | very fast linter + formatter (replaces flake8, isort, black for many teams) |
@@ -998,6 +1316,15 @@ def test_router_timeout(fake_llm):
 ### Q41. Logging properly
 
 **Short answer:** Use the `logging` module (not `print`), one logger per module (`logging.getLogger(__name__)`), configure handlers once at startup, log **structured JSON** in services, and never log secrets/PII.
+
+```flow
+pipeline: The path of one log call
+logger = getLogger(__name__) > One logger per module.
+logger.info("job done", extra={job_id}) > Level checked first: below threshold → dropped cheaply.
+Handlers > Configured once at startup (stdout in containers).
+Formatter (JSON) > Structured fields: time, level, message, trace_id, job_id.
+Collector > CloudWatch / OpenSearch. Never log secrets or PII.
+```
 
 ```python
 import logging
@@ -1013,6 +1340,15 @@ log.exception("tool failed")      # inside except: includes stack trace
 ### Q42. Memory leaks / high memory in long-running services
 
 **Short answer:** Common causes: unbounded caches/dicts, references kept in globals/closures, `lru_cache` on methods, accumulating background tasks, loading whole files/results lists, and native library allocations. Measure first: `tracemalloc` snapshots, `memray`, container memory metrics.
+
+```flow
+pipeline: Usual causes of memory growth
+Unbounded caches / dicts > Add maxsize or TTL.
+lru_cache on methods > Keeps `self` alive forever.
+Globals and closures > Holding references longer than needed.
+Background tasks never awaited > Accumulate.
+Whole files in memory > Stream instead.
+```
 
 ```python
 import tracemalloc
@@ -1055,6 +1391,15 @@ def call_model(prompt): ...
 
 **Short answer:** **Measure → find the bottleneck → fix the biggest one → measure again.** Most slowness is algorithmic (O(n²)), I/O (serial network calls), or serialization — not Python syntax.
 
+```flow
+cycle: Optimising slow code
+Measure > Time the real workload; get a baseline.
+Profile > cProfile / py-spy / scalene: find where the time actually goes.
+Fix the biggest cost > Usually algorithmic (O(n²)), serial I/O, or serialization.
+Measure again > Keep only changes that helped.
+exit > Stop when the target is met. Optimising without measuring usually fixes the wrong thing.
+```
+
 ```bash
 python -m cProfile -s cumtime app.py      # deterministic profiler
 py-spy top --pid 1234                     # sampling profiler on live process
@@ -1065,6 +1410,14 @@ py-spy top --pid 1234                     # sampling profiler on live process
 ---
 
 ### Q45. Serialization choices and pickle security
+
+```flow
+pipeline: Serialising data safely
+JSON > Interoperable, safe; validate with Pydantic on the way in.
+MessagePack / Protobuf > Compact, fast, schema options.
+pickle > Python-only; unpickling untrusted data can execute code.
+Version your payloads > A `version` field so formats can evolve.
+```
 
 | Format | Pros | Cons |
 |---|---|---|
@@ -1079,6 +1432,18 @@ py-spy top --pid 1234                     # sampling profiler on live process
 ### Q46. Database transactions, race conditions and idempotency
 
 **Short answer:** A transaction makes several writes atomic. To prevent lost updates between concurrent workers use **optimistic locking** (version column, conditional update) or **pessimistic locking** (`SELECT ... FOR UPDATE`). Python `threading.Lock` does **not** work across multiple processes/containers — the database must enforce it.
+
+```flow
+sequence: Optimistic locking stops a lost update
+actors: Worker A, Database, Worker B
+Worker A -> Database: read job (status=PENDING, version=4)
+Worker B -> Database: read job (status=PENDING, version=4)
+Worker A -> Database: UPDATE … SET status=RUNNING, version=5 WHERE id=… AND version=4
+Database --> Worker A: 1 row updated ✓
+Worker B -> Database: same UPDATE … WHERE version=4
+Database --> Worker B: 0 rows updated
+> B's write didn't match the version, so it knows someone else won. It re-reads or skips. No lost update, and no lock held while thinking.
+```
 
 ```sql
 -- optimistic locking: succeeds only if nobody changed it since we read version 7
@@ -1106,6 +1471,14 @@ table.update_item(
 - **Metrics** = how much / how often (latency p50/p95/p99, error rate, queue depth).
 - **Traces** = where time went across services (spans linked by a trace ID).
 
+```flow
+pipeline: Logs, metrics, traces together
+Metric alarm fires > Error rate up for the documents API.
+Trace > Shows which hop is slow or failing.
+Logs for that trace_id > The exact error and context.
+Fix + dashboard > And an alert on the cause next time.
+```
+
 Propagate a correlation/trace ID through every hop (OpenTelemetry does this), and redact tokens/PII.
 
 ```flow
@@ -1126,6 +1499,15 @@ Lambda tool -> S3: GetObject
 ### Q48. Clean architecture / dependency inversion in Python
 
 **Short answer:** Business logic depends on **interfaces** (Protocols), not concrete SDKs. Adapters (S3, Bedrock, Postgres) implement those interfaces. This makes code testable (swap in a fake) and lets you change providers without rewriting logic.
+
+```flow
+pipeline: Dependency inversion in a request
+API handler > Receives the request, then calls a use case.
+Use case (business logic) > Depends only on interfaces like `DocumentStore` and `LLMClient` (Protocols).
+Interface > The contract: method names, inputs and outputs.
+Adapter > `S3DocumentStore`, `BedrockLLM` implement the interface. In tests, `FakeLLM` does.
+External system > S3, Bedrock, Postgres. Swapping one only changes an adapter, never the business logic.
+```
 
 ```
   ┌────────────── API layer (FastAPI routes) ──────────────┐
@@ -1152,6 +1534,15 @@ Lambda tool -> S3: GetObject
    - Downstream rate limit (LLM 429s) → retries pile up.
    - CPU-bound work in the web process.
 3. **Fix the bottleneck**, *then* scale horizontally. Adding ECS tasks doesn't help if all of them wait on the same DB.
+
+```flow
+pipeline: Fast for 1 user, slow for 100: investigation order
+Measure > p95/p99 latency, per-dependency latency from traces, CPU, memory, event-loop lag.
+Find the queue > Where do requests wait? DB pool, thread pool, event loop, a rate-limited API?
+Check for blocking calls > Sync I/O inside `async def` blocks every request on that worker.
+Check pools and limits > DB connection pool size, HTTP client limits, worker count.
+Fix + load test > Change one thing, re-run the load test, compare.
+```
 
 ```python
 @app.get("/doc/{id}")
@@ -1183,6 +1574,15 @@ Key points to say: idempotent claim, bounded concurrency, streaming I/O, checkpo
 
 ### Q51. Your service's memory grows until the container is OOM-killed. Steps?
 
+```flow
+pipeline: Memory grows until OOM-kill
+Confirm the pattern > Container metrics: steady growth (leak) or spikes per request (big payloads)?
+Reproduce under load > Locally, with the same traffic shape.
+Take snapshots > `tracemalloc` / `memray` snapshots a few minutes apart; diff them.
+Find the owner > Unbounded cache, global list, `lru_cache` on a method, never-awaited tasks, whole files loaded.
+Fix + guard > Bound caches (maxsize/TTL), stream files, set memory limits and alarms.
+```
+
 1. Confirm the pattern (steady growth vs spikes per request) from container metrics.
 2. Reproduce locally under load; take `tracemalloc`/`memray` snapshots at intervals and diff them.
 3. Look for: global dicts/caches without bounds, `lru_cache(maxsize=None)`, accumulating `asyncio` tasks never awaited, large lists of results, unclosed clients.
@@ -1191,6 +1591,15 @@ Key points to say: idempotent claim, bounded concurrency, streaming I/O, checkpo
 ---
 
 ### Q52. What do you check in a Python PR review for an AI service?
+
+```flow
+pipeline: Reviewing a Python PR for an AI service
+Boundaries > Inputs validated (Pydantic); LLM output validated before use.
+Resilience > Timeouts, bounded concurrency, retries with backoff, idempotency.
+Security > No secrets in code/logs, authorisation on every tool, injection risks.
+Observability > Structured logs, trace ids, token/cost metrics.
+Tests > Unit tests with fake LLM, eval cases for prompt changes.
+```
 
 - **Input validation** at boundaries (Pydantic), output validation of LLM responses.
 - **Timeouts** on every network call; **bounded concurrency** (no unbounded `gather` over 5,000 items).

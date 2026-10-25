@@ -116,3 +116,16 @@
   .cyc-ring { --ring: 300px; }
   .cyc-node { width: 104px; font-size: 12.5px; padding: 6px 8px; }
 }
+
+/* ---- trace: state frames for algorithms ---- */
+.trace { display: flex; flex-direction: column; gap: 6px; }
+.trace-frame { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-raised); }
+.trace-num { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700; background: var(--line); color: var(--text); }
+.trace-state { font: 14px/1.6 var(--mono); color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.trace-state strong { color: var(--signal-ink); background: var(--flow-accent); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+.trace-state code { background: none; padding: 0; font-size: 1em; }
+.trace-frame.active { border-color: var(--flow-accent); background: color-mix(in srgb, var(--flow-accent) 10%, var(--bg-raised)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--flow-accent) 14%, transparent); }
+.trace-frame.active .trace-num, .trace-frame.done .trace-num { background: var(--flow-accent); color: var(--signal-ink); }
+.trace-frame.active .trace-state { color: var(--text); }
+.trace-frame.active.pulse { animation: step-pop .4s ease-out; }
+@media (max-width: 640px) { .trace-state { font-size: 12.5px; } }

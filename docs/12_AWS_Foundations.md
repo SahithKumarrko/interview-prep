@@ -75,17 +75,41 @@ ECS task (private) --> User: response back through ALB and CloudFront
 - **Availability Zone** — one or more physically separate data centres in a region with independent power/network, low-latency links. **Deploy across ≥2 AZs for high availability.**
 - **Edge locations** — CloudFront/Route 53/WAF points of presence close to users. (Also Local Zones, Wavelength, Outposts for special cases.)
 
+```flow
+pipeline: Region → AZ → data centre → edge
+Region > A geographic area (ap-south-1). Data stays here unless you move it.
+Availability Zones > 3+ isolated groups of data centres per region, low-latency links between them.
+Spread across AZs > Survive one AZ failing.
+Edge locations > CloudFront/Route 53 points of presence close to users.
+```
+
 ---
 
 ### Q02. Shared responsibility model
 
 **Short answer:** AWS secures **"of" the cloud** (hardware, facilities, hypervisor, managed service internals). You secure **"in" the cloud** (IAM, data, encryption choices, network config, OS patching on EC2, application code). The split shifts with service type: on EC2 you patch the OS; on Lambda/Fargate AWS does; on AgentCore/Bedrock you still own prompts, tool permissions and data handling.
 
+```flow
+pipeline: Who secures what
+AWS: security OF the cloud > Hardware, facilities, hypervisor, managed service internals.
+Shared by service type > EC2: you patch the OS. Lambda/Fargate: AWS does.
+You: security IN the cloud > IAM, data encryption, network rules, app code, configuration.
+```
+
 ---
 
 ### Q03. Account structure
 
 Use **AWS Organizations** with multiple accounts (dev/staging/prod, security, logging) for blast-radius isolation, separate billing, and **SCP** guardrails. Humans log in via **IAM Identity Center** (SSO) with permission sets, not IAM users.
+
+```flow
+pipeline: A multi-account structure
+Management account > Billing and Organizations only.
+Security / log archive accounts > Central CloudTrail, GuardDuty, audit.
+Shared services > Networking, CI tooling.
+Workload accounts per env > dev, staging, prod separated: small blast radius.
+SCP guardrails on OUs > Org-wide rules no one can bypass.
+```
 
 ---
 
@@ -98,6 +122,14 @@ Use **AWS Organizations** with multiple accounts (dev/staging/prod, security, lo
 - **Subnet** — a slice of the VPC CIDR **in one AZ** (`10.0.1.0/24`). AWS reserves 5 IPs per subnet.
 - **Route table** — rules deciding where traffic goes; each subnet is associated with one.
 - A subnet is **public** if its route table sends `0.0.0.0/0` to an **Internet Gateway**; **private** otherwise.
+
+```flow
+pipeline: How a packet leaves a private subnet
+Instance in private subnet > Sends to 8.8.8.8.
+Route table lookup > Most specific match: 10.0.0.0/16 → local; 0.0.0.0/0 → NAT gateway.
+NAT gateway (public subnet) > Translates to its public IP.
+Internet gateway > Out to the internet. Replies come back the same way; inbound connections can't start from outside.
+```
 
 ```
  Public subnet route table          Private subnet route table
@@ -112,11 +144,34 @@ Use **AWS Organizations** with multiple accounts (dev/staging/prod, security, lo
 
 **Short answer:** **IGW** allows two-way internet access for resources with public IPs in public subnets. **NAT Gateway** (placed in a public subnet) lets **private** resources make **outbound** connections (download packages, call external APIs) without being reachable from the internet.
 
+```flow
+sequence: IGW vs NAT gateway
+actors: Internet, IGW, Public subnet (ALB), NAT GW, Private task
+Internet -> IGW: inbound request
+IGW -> Public subnet (ALB): allowed: public subnet routes 0.0.0.0/0 to the IGW
+Private task -> NAT GW: outbound: call an external API
+NAT GW -> IGW: source NAT to the NAT's public IP
+IGW -> Internet: out
+> Nothing on the internet can start a connection to the private task. NAT is per-AZ and charged per GB.
+```
+
 **Cost/design notes:** NAT GW charges per hour **and per GB processed** — high-volume traffic to S3/ECR through NAT gets expensive → use **VPC endpoints**. Use one NAT per AZ for resilience (a single NAT is an AZ single point of failure and adds cross-AZ data charges).
 
 ---
 
 ### Q06. Security groups vs Network ACLs
+
+```flow
+sequence: Stateful security group vs stateless NACL
+actors: Client, NACL, Security group, Instance
+Client -> NACL: request to :443
+NACL -> Security group: NACL inbound rule allows 443 (checked in order)
+Security group -> Instance: SG inbound allows 443
+Instance --> Security group: response: automatically allowed (stateful)
+Security group --> NACL: response
+NACL --> Client: needs an OUTBOUND rule for ephemeral ports 1024–65535 (stateless)
+> SGs attach to ENIs and only allow; NACLs attach to subnets and can deny.
+```
 
 | | Security Group | Network ACL |
 |---|---|---|
@@ -138,9 +193,27 @@ Use **AWS Organizations** with multiple accounts (dev/staging/prod, security, lo
 
 Private subnets have no inbound internet. To call AWS APIs (S3, ECR, Secrets Manager, Bedrock) from them: via **NAT** (traffic goes out to public endpoints) or via **VPC endpoints** (traffic stays on the AWS network, no NAT needed, can be restricted with endpoint policies).
 
+```flow
+pipeline: Ways a private task reaches AWS services
+Via NAT gateway > Works for everything; costs per GB; traffic leaves through the internet edge.
+Gateway endpoint (S3, DynamoDB) > Route table entry; free.
+Interface endpoint (ECR, Secrets Manager, Bedrock…) > Private IPs in your subnets via PrivateLink.
+Endpoint policies > Restrict which buckets/actions can be reached.
+```
+
 ---
 
 ### Q08. VPC endpoints and PrivateLink
+
+```flow
+sequence: An interface endpoint (PrivateLink) call
+actors: Task, VPC DNS, Endpoint ENI, Secrets Manager
+Task -> VPC DNS: resolve secretsmanager.ap-south-1.amazonaws.com
+VPC DNS --> Task: private IP of the endpoint ENI (private DNS enabled)
+Task -> Endpoint ENI: HTTPS
+Endpoint ENI -> Secrets Manager: over the AWS network
+> No NAT, no internet. Security groups on the endpoint and endpoint policies add control.
+```
 
 | Type | Services | How |
 |---|---|---|
@@ -155,6 +228,14 @@ Private subnets have no inbound internet. To call AWS APIs (S3, ECR, Secrets Man
 ---
 
 ### Q09. Connecting VPCs and on-premises
+
+```flow
+pipeline: Connecting networks
+VPC peering > One-to-one; no transitive routing; simple for a few VPCs.
+Transit Gateway > Hub for many VPCs and on-prem; central routing.
+Site-to-Site VPN > Encrypted over the internet; quick to set up.
+Direct Connect > Dedicated private link; consistent bandwidth.
+```
 
 | Option | Use |
 |---|---|
@@ -171,11 +252,27 @@ Private subnets have no inbound internet. To call AWS APIs (S3, ECR, Secrets Man
 
 Plan non-overlapping ranges across VPCs/accounts/on-prem (peering/TGW need it). Leave room: e.g., `/16` per VPC, `/20`–`/22` per subnet (ECS awsvpc and Lambda ENIs consume IPs). Use IPAM for organisation-wide allocation.
 
+```flow
+trace: Planning CIDRs
+org range 10.0.0.0/8 → per account/region blocks > Plan centrally (IPAM) so ranges never overlap.
+VPC 10.20.0.0/16 = 65,536 addresses > Room to grow.
+subnets /20 per AZ per tier (4,096 each) > Public small, private app large (ECS tasks use one IP each).
+AWS reserves 5 IPs per subnet > Overlapping CIDRs block peering/TGW later.
+```
+
 ---
 
 ### Q11. ENIs and why IP exhaustion happens
 
 Every ECS task (awsvpc), Lambda-in-VPC hyperplane ENI, RDS, ALB node, interface endpoint uses IPs. Small subnets run out → tasks fail to start ("insufficient free addresses"). Size subnets generously.
+
+```flow
+trace: Running out of IPs
+subnet /24 = 251 usable IPs > Looks plenty.
+each Fargate task (awsvpc) = **1 ENI = 1 IP** > Plus Lambda in VPC, endpoints, load balancer nodes.
+deployment doubles tasks (old + new) → **IP exhaustion** > New tasks fail to place.
+fix: bigger subnets, extra CIDR, prefix delegation on EC2 > Plan for peak, not average.
+```
 
 ---
 
@@ -183,11 +280,27 @@ Every ECS task (awsvpc), Lambda-in-VPC hyperplane ENI, RDS, ALB node, interface 
 
 Capture IP traffic metadata (src/dst, port, ACCEPT/REJECT) per VPC/subnet/ENI → S3/CloudWatch. Use to debug "connection timed out" (REJECT = SG/NACL) and for security analysis.
 
+```flow
+pipeline: Debugging with VPC Flow Logs
+Enable on VPC/subnet/ENI > To CloudWatch Logs or S3.
+Find the connection > Source/destination IP and port.
+ACCEPT or REJECT? > REJECT → a security group or NACL blocked it.
+No record? > Traffic never reached the ENI: routing or DNS issue. (Payload is not captured.)
+```
+
 ---
 
 ### Q13. DNS inside a VPC
 
 Route 53 Resolver provides DNS at VPC+2; private hosted zones for internal names; interface endpoints' private DNS makes `secretsmanager.ap-south-1.amazonaws.com` resolve to private IPs. Resolver endpoints for hybrid DNS with on-prem.
+
+```flow
+pipeline: Name resolution inside a VPC
+App asks the VPC resolver > At VPC base + 2 (e.g. 10.0.0.2).
+Private hosted zone? > Internal names like db.internal.
+Endpoint private DNS? > AWS service names resolve to endpoint IPs.
+Resolver rules > Forward corp.example.com to on-prem DNS; otherwise public DNS.
+```
 
 ---
 
@@ -197,11 +310,28 @@ Route 53 Resolver provides DNS at VPC+2; private hosted zones for internal names
 
 **Short answer:** **Authentication** — proving who you are (SSO login, access keys, role session, SigV4-signed request). **Authorisation** — deciding whether that principal may do this **action** on this **resource** under these **conditions** (policy evaluation).
 
+```flow
+pipeline: Authentication vs authorisation in AWS
+Authenticate > Who are you? Signed request with access keys / temporary credentials (SigV4).
+Identify principal > User, role session, service.
+Authorise > Policies evaluated: allowed for this action + resource + conditions?
+Allow or deny > Every API call, every time.
+```
+
 **IAM identities:** users (avoid for humans/apps), groups, **roles** (assumed temporarily — preferred), federated identities (Identity Center, OIDC like GitLab, SAML).
 
 ---
 
 ### Q15. Anatomy of a policy
+
+```flow
+pipeline: Reading a policy statement
+Effect > Allow or Deny.
+Action > e.g. s3:GetObject.
+Resource > e.g. arn:aws:s3:::reports/*.
+Condition > e.g. aws:PrincipalTag/team = finance, aws:SourceVpce = vpce-123.
+Principal > Only in resource policies: who it applies to.
+```
 
 ```json
 {
@@ -268,11 +398,28 @@ Caller -> Target resource: call S3 / deploy / B's resources
 
 Start from specific actions and resource ARNs; use conditions (tags, VPC endpoint, source account); separate roles per service/tool; **IAM Access Analyzer** to generate policies from CloudTrail activity and find unused permissions/external access; review regularly; permission boundaries for delegated role creation.
 
+```flow
+cycle: Getting to least privilege
+Start narrow > Only the actions the workload obviously needs.
+Observe > CloudTrail / IAM Access Analyzer: what's actually used?
+Tighten > Remove unused permissions; add resource ARNs and conditions.
+Guardrails > Permission boundaries and SCPs cap what's possible.
+exit > Review regularly; least privilege drifts as apps change.
+```
+
 **Example — many agent tools on ECS:** give each tool its own task role (or Lambda role) scoped to its resources, rather than one "agent role" with `s3:*`, `dynamodb:*`.
 
 ---
 
 ### Q19. Cross-account access patterns
+
+```flow
+pipeline: Cross-account access options
+Role assumption > Account B role trusts account A; A's principal assumes it. Most common.
+Resource policy > S3 bucket/KMS key policy grants account A directly.
+Both sides must allow > Caller's identity policy AND the target's trust/resource policy.
+Add conditions > ExternalId, aws:PrincipalOrgID, source account.
+```
 
 1. **Role assumption:** account B has a role trusting account A's role; A assumes it (most common).
 2. **Resource policy:** S3/KMS/SQS policy grants account A's principal (both sides must allow).
@@ -283,6 +430,14 @@ Start from specific actions and resource ARNs; use conditions (tags, VPC endpoin
 ### Q20. ABAC (attribute-based access control)
 
 Grant access based on **tags**: `"Condition": {"StringEquals": {"aws:ResourceTag/project": "${aws:PrincipalTag/project}"}}` → one policy scales to many teams/projects without editing per resource.
+
+```flow
+trace: ABAC: one policy, many teams
+policy: allow if aws:PrincipalTag/project == aws:ResourceTag/project > Compare tags, not hard-coded ARNs.
+role tag project=**atlas**, bucket tag project=**atlas** → ALLOW > Matching tags.
+same role, bucket tag project=**zeus** → DENY > No new policy needed per project.
+protect tags > Users must not be able to change their own tags.
+```
 
 ---
 
@@ -309,6 +464,14 @@ Why: large data never goes to KMS, fewer KMS calls, access controlled by key pol
 
 ### Q22. Other security services to name
 
+```flow
+pipeline: Security services and where they fit
+Detect > GuardDuty (threats), Inspector (vulnerabilities), Macie (sensitive data in S3).
+Audit > CloudTrail (API calls), Config (resource configuration history).
+Aggregate > Security Hub: findings in one place.
+Protect > WAF, Shield, KMS, Secrets Manager.
+```
+
 | Service | Purpose |
 |---|---|
 | **CloudTrail** | API audit log (who did what) |
@@ -325,6 +488,15 @@ Why: large data never goes to KMS, fewer KMS calls, access controlled by key pol
 
 ### Q23. Defence in depth for an internal bank application
 
+```flow
+pipeline: Defence in depth for a bank app
+Edge > CloudFront + WAF + Shield, TLS.
+Identity > SSO + MFA, short-lived credentials, least privilege.
+Network > Private subnets, SGs, VPC endpoints, no public DBs.
+Data > KMS encryption everywhere, Secrets Manager, backups.
+Detection + response > CloudTrail, GuardDuty, alarms, runbooks.
+```
+
 ```
  Identity:  SSO + MFA, short-lived roles, least privilege, SCP guardrails
  Network:   private subnets, SG referencing, no public DB, VPC endpoints with policies, WAF on ALB/CloudFront
@@ -340,6 +512,13 @@ Why: large data never goes to KMS, fewer KMS calls, access controlled by key pol
 
 ### Q24. ALB vs NLB vs Gateway LB
 
+```flow
+pipeline: Which load balancer
+ALB (layer 7) > HTTP/HTTPS routing by path/host, WebSockets, gRPC, OIDC auth.
+NLB (layer 4) > TCP/UDP, static IPs, extreme throughput, PrivateLink services.
+Gateway LB > Inserting third-party firewalls/appliances transparently.
+```
+
 | | **ALB** (Layer 7) | **NLB** (Layer 4) | GWLB |
 |---|---|---|---|
 | Protocols | HTTP/1.1, HTTP/2, gRPC, WebSocket | TCP, UDP, TLS | IP (GENEVE) |
@@ -352,6 +531,14 @@ Why: large data never goes to KMS, fewer KMS calls, access controlled by key pol
 ---
 
 ### Q25. API Gateway vs ALB
+
+```flow
+pipeline: API Gateway or ALB?
+Serverless API, needs keys/throttling/usage plans? > API Gateway.
+Containers, long requests, streaming, steady high traffic? > ALB.
+Timeouts > API Gateway integration ~29 s by default; ALB much longer.
+Cost model > Per request (API GW) vs per hour + LCU (ALB).
+```
 
 | | API Gateway (REST/HTTP API) | ALB |
 |---|---|---|
@@ -382,11 +569,30 @@ ECS > Traffic inside the VPC (re-encrypt to the task if required).
 
 CDN with edge caching, TLS, HTTP/2/3, WAF, origin access control for private S3, multiple origins with path behaviours (`/api/*` → ALB, default → S3), cache policies, response headers policies (CSP, HSTS), signed URLs/cookies for private content.
 
+```flow
+sequence: CloudFront cache hit and miss
+actors: User, Edge location, Origin (S3/ALB)
+User -> Edge location: GET /assets/app-a1b2.js
+Edge location -> Origin (S3/ALB): MISS: fetch from origin
+Origin (S3/ALB) --> Edge location: file + Cache-Control: max-age=31536000
+Edge location --> User: response (now cached at this edge)
+User -> Edge location: another user, same file
+Edge location --> User: HIT: served from the edge, origin not touched
+```
+
 ---
 
 ### Q28. WAF
 
 Rules on CloudFront/ALB/API Gateway: AWS managed rule groups (OWASP common, known bad inputs, bot control), rate-based rules (per IP), geo-blocking, custom rules. Use count mode first, then block.
+
+```flow
+pipeline: WAF evaluating a request
+Request reaches CloudFront/ALB > WAF web ACL attached.
+Rules in priority order > Managed rule groups (SQLi, XSS, bad bots), IP sets, rate limits.
+First terminating match > Block, allow, or CAPTCHA/count.
+Logged > Tune rules from the logs (count mode first).
+```
 
 ---
 
@@ -395,6 +601,15 @@ Rules on CloudFront/ALB/API Gateway: AWS managed rule groups (OWASP common, know
 ### Q29. S3 essentials
 
 Object storage, 11 nines durability; **Block Public Access** on; bucket policies + IAM; SSE-S3/SSE-KMS (default encryption on); versioning, lifecycle rules (→ IA/Glacier), Object Lock (WORM); presigned URLs for direct browser upload/download; event notifications → Lambda/SQS/EventBridge; strong read-after-write consistency.
+
+```flow
+pipeline: An S3 object's protections
+Block Public Access > Account + bucket level: on.
+Bucket policy + IAM > Who may read/write which prefixes.
+Encryption > SSE-S3 or SSE-KMS by default.
+Versioning + Object Lock > Recover deletes; WORM retention.
+Lifecycle rules > Move to cheaper classes, expire old data.
+```
 
 ---
 
@@ -417,11 +632,31 @@ Deep dive (SQL, indexes, isolation, DynamoDB key design, caching): **21_Database
 
 EBS = block disk for one EC2 (AZ-scoped, snapshots). EFS = shared NFS file system across AZs/instances/tasks. S3 = object storage via API, unlimited, cheapest durable store.
 
+```flow
+pipeline: EBS vs EFS vs S3
+EBS > Block disk for one instance in one AZ (like a hard drive).
+EFS > Shared file system across instances, tasks and AZs (NFS).
+S3 > Object storage via API: unlimited, cheapest, most durable.
+Pick by access pattern > Single-instance disk, shared POSIX files, or objects.
+```
+
 ---
 
 ## 7. Integration: SQS, SNS, EventBridge
 
 ### Q32. SQS vs SNS vs EventBridge (vs Kinesis)
+
+```flow
+sequence: SQS vs SNS vs EventBridge
+actors: Producer, SQS, Worker, SNS, Subscribers, EventBridge, Targets
+Producer -> SQS: QUEUE: one message → one consumer
+SQS -> Worker: worker pulls when ready (buffering, retries)
+Producer -> SNS: PUB/SUB: one message → many
+SNS -> Subscribers: push to every subscriber (fan-out)
+Producer -> EventBridge: EVENT BUS: routing by content
+EventBridge -> Targets: rules match fields, send to targets (Lambda, SFN, SQS…)
+> Kinesis/MSK for ordered, replayable high-volume streams.
+```
 
 | | **SQS** | **SNS** | **EventBridge** | Kinesis Data Streams |
 |---|---|---|---|---|
@@ -436,6 +671,18 @@ EBS = block disk for one EC2 (AZ-scoped, snapshots). EFS = shared NFS file syste
 
 ### Q33. SQS deep dive (frequently asked)
 
+```flow
+sequence: SQS visibility timeout in action
+actors: SQS, Worker A, Worker B
+Worker A -> SQS: ReceiveMessage
+SQS --> Worker A: message M (hidden for visibility timeout, e.g. 60 s)
+Worker B -> SQS: ReceiveMessage
+SQS --> Worker B: M not visible → other messages only
+Worker A -> Worker A: crashes before deleting M
+SQS --> Worker B: after 60 s, M visible again → redelivered
+> At-least-once delivery: consumers must be idempotent. After maxReceiveCount failures → DLQ.
+```
+
 - **Visibility timeout:** after a consumer receives a message, it's hidden for N seconds; if not deleted in time, it reappears (retry). Set > processing time; extend for long jobs.
 - **At-least-once delivery** (standard queues) → consumers must be **idempotent**. FIFO: exactly-once processing within dedup window + ordering per message group.
 - **DLQ** with `maxReceiveCount` for poison messages; redrive back after fixing.
@@ -448,17 +695,43 @@ EBS = block disk for one EC2 (AZ-scoped, snapshots). EFS = shared NFS file syste
 
 **Short answer:** Because of retries and at-least-once delivery, the same request/event can arrive more than once. Make handlers safe to repeat: idempotency key (request ID, event ID) stored with a **conditional write** (DynamoDB `attribute_not_exists`), unique constraints, upserts, or AWS APIs' own client tokens (`ClientRequestToken`, `ClientToken`). Powertools for Lambda has an idempotency utility.
 
+```flow
+sequence: Idempotent consumer with a DynamoDB dedupe record
+actors: SQS, Consumer, DynamoDB
+SQS -> Consumer: message (event_id = e-77)
+Consumer -> DynamoDB: put e-77 IF attribute_not_exists
+DynamoDB --> Consumer: ok → process the event
+SQS -> Consumer: duplicate delivery of e-77
+Consumer -> DynamoDB: put e-77 IF attribute_not_exists
+DynamoDB --> Consumer: ConditionalCheckFailed → skip (already done)
+```
+
 ---
 
 ### Q35. Choreography with events vs orchestration
 
 EventBridge/SNS for loosely coupled reactions (choreography); **Step Functions** when you need a visible, controlled multi-step process with retries, timeouts and compensation (orchestration).
 
+```flow
+pipeline: Events or orchestration?
+Many independent reactions to one fact? > Choreography with EventBridge: loose coupling.
+Ordered steps, retries, compensation, visibility? > Orchestration with Step Functions.
+Hybrid > An orchestrated workflow that emits events when done.
+```
+
 ---
 
 ## 8. Observability
 
 ### Q36. CloudWatch vs CloudTrail vs X-Ray / OpenTelemetry
+
+```flow
+pipeline: CloudWatch vs CloudTrail vs X-Ray/OTel
+CloudWatch > Metrics, logs, alarms: is the system healthy?
+CloudTrail > Who called which AWS API, when: audit and security.
+X-Ray / OpenTelemetry > Traces across services: where did this request spend time?
+Use all three > Alarm → trace → logs → audit.
+```
 
 | Service | Answers |
 |---|---|
@@ -479,6 +752,14 @@ fields @timestamp, level, request_id, msg
 
 User-facing symptoms first (error rate, p99 latency, availability via synthetics), then saturation (CPU/memory, queue age, DB connections), and cost anomalies. Use composite alarms and SLO-based alerting to reduce noise.
 
+```flow
+pipeline: What to alarm on
+User-facing symptoms first > Error rate, p99 latency, availability (SLOs).
+Saturation > Queue age, CPU/memory, connection pools, throttles.
+Dependencies > DB, LLM provider errors and latency.
+Cost + security > Budget anomalies, GuardDuty findings. Every alarm needs an owner and a runbook.
+```
+
 ---
 
 ## 9. Resilience, DR & Well-Architected
@@ -487,9 +768,25 @@ User-facing symptoms first (error rate, p99 latency, availability via synthetics
 
 Run ≥2 (ideally 3) AZs for every tier: ALB across AZs, ECS service spread across AZs, RDS Multi-AZ, NAT per AZ, stateless app instances, health checks + auto-replacement, avoid AZ-pinned single points (one NAT, one EC2). Test by simulating AZ failure (AWS Fault Injection Service).
 
+```flow
+pipeline: Surviving an AZ failure
+Load balancer across 3 AZs > Healthy targets only.
+Compute spread across AZs > ECS/ASG balance tasks per AZ.
+Multi-AZ database > Standby promoted automatically.
+Capacity headroom > Remaining AZs can carry the load (N+1).
+```
+
 ---
 
 ### Q39. Disaster recovery strategies
+
+```flow
+pipeline: DR strategies, cheapest to fastest
+Backup & restore > Hours of RTO; cheapest.
+Pilot light > Core data replicated, minimal infra ready; scale up on disaster.
+Warm standby > Scaled-down full copy running; minutes.
+Multi-site active/active > Both regions serve traffic; near-zero RTO; most expensive.
+```
 
 | Strategy | RTO / RPO | Cost |
 |---|---|---|
@@ -506,11 +803,29 @@ Run ≥2 (ideally 3) AZs for every tier: ALB across AZs, ECS service spread acro
 
 **Operational excellence** (automate, observe, iterate) · **Security** (identity, least privilege, encryption, traceability) · **Reliability** (multi-AZ, recovery, quotas) · **Performance efficiency** (right services, measure) · **Cost optimisation** (right-size, pay for value, Graviton, Savings Plans) · **Sustainability** (efficient resource use). Lenses exist for serverless, generative AI, etc.
 
+```flow
+pipeline: The six Well-Architected pillars
+Operational excellence > Automate, observe, learn from incidents.
+Security > Identity, protection, detection.
+Reliability > Recover from failure, scale, change safely.
+Performance efficiency > Right resources, measure, evolve.
+Cost optimisation > Pay for what you need.
+Sustainability > Minimise environmental impact.
+```
+
 ---
 
 ### Q41. Service quotas and throttling
 
 Most AWS APIs have rate limits and account quotas (Lambda concurrency, Bedrock tokens/min, ENIs). Design with backoff + jitter, request quota increases early, monitor `ThrottlingException`s, and spread load (queues).
+
+```flow
+pipeline: Handling throttling and quotas
+Know your quotas > Service Quotas console; request increases ahead of launches.
+Client retries with backoff + jitter > SDK standard/adaptive retry modes.
+Smooth the load > Queues, batching, caching.
+Alarm before the limit > Usage metrics vs quota.
+```
 
 ---
 
@@ -527,11 +842,29 @@ Check in order:
 6. Cross-account bucket → bucket policy must also allow.
 Tools: CloudTrail error event, IAM Policy Simulator, Access Analyzer.
 
+```flow
+pipeline: ECS can't read S3 despite an Allow
+Which role? > The app uses the TASK role, not the execution role.
+Resource ARN right? > bucket vs bucket/* for objects.
+Explicit deny anywhere? > SCP, permissions boundary, bucket policy.
+KMS key policy > SSE-KMS objects also need kms:Decrypt.
+Endpoint policy > A restrictive S3 gateway endpoint policy.
+```
+
 ---
 
 ### Q43. An internal API sometimes times out under load
 
 Measure where: ALB metrics (`TargetResponseTime`, 5xx, surge queue), ECS CPU/memory, app latency per dependency (traces), DB connections/CPU, NAT GW `ErrorPortAllocation`, DynamoDB/Bedrock throttling, Lambda concurrency. Typical fixes: connection pooling, autoscaling on right metric, timeouts + retries with backoff, caching, async processing via SQS, quota increases.
+
+```flow
+pipeline: Intermittent timeouts under load
+Where? > Traces: which hop is slow?
+Pools exhausted? > DB connections, HTTP client pool, threads.
+Dependency throttling? > 429s / slow responses upstream.
+Timeouts mismatched? > Client timeout shorter than server work; retries piling up.
+Fix > Pool sizes, timeouts + budgets, backpressure, scale.
+```
 
 ---
 
@@ -539,17 +872,44 @@ Measure where: ALB metrics (`TargetResponseTime`, 5xx, surge queue), ECS CPU/mem
 
 **Timeout** = network path problem (SG, NACL, route table, missing NAT/endpoint, DNS to wrong IP). **AccessDenied** = network fine, IAM/resource policy problem. **Connection refused** = reached host but nothing listening on that port.
 
+```flow
+pipeline: Timeout vs AccessDenied tells you which layer
+Connection timed out > Network: security group, NACL, route, NAT/endpoint missing. Packets never got a reply.
+AccessDenied / 403 > You reached the service; IAM/resource policy said no.
+Connection refused > Reached the host but nothing listening on that port.
+DNS failure > Name didn't resolve: private DNS / resolver config.
+```
+
 ---
 
 ### Q45. Design secure cross-account access for a central agent platform calling team accounts
 
 Central account role → assumes per-team roles (`sts:AssumeRole`) with trust limited to the platform role ARN + `aws:PrincipalOrgID`; team roles grant only specific tools' actions; session tags carry end-user/tenant for ABAC; CloudTrail in both accounts; SCPs prevent privilege escalation.
 
+```flow
+sequence: Central agent platform calling team accounts
+actors: Agent tool role (platform), STS, Team account role, Team resource
+Agent tool role (platform) -> STS: AssumeRole(team role, ExternalId, session tags: user, tenant)
+STS -> STS: team role trust: only the platform role, PrincipalOrgID, tags required
+STS --> Agent tool role (platform): short-lived credentials
+Agent tool role (platform) -> Team resource: call with least-privilege permissions
+> Each team owns its role and can revoke trust; CloudTrail in both accounts shows who did what.
+```
+
 ---
 
 ### Q46. How do you present an AWS design trade-off in an interview?
 
 Structure: requirements (latency, scale, compliance) → 2 options → compare on **security, reliability, cost, operability, performance** → choose with reasoning → risks + mitigations → how you'd validate (load test, cost estimate). Example: "API Gateway + Lambda vs ALB + ECS for an agent API: streaming for minutes and steady load favour ALB + ECS; spiky low traffic favours Lambda."
+
+```flow
+pipeline: Presenting an AWS trade-off
+Requirement > What matters most here (latency, cost, ops, compliance)?
+Options > Two or three realistic choices.
+Compare > On those criteria, with numbers where you can.
+Decide + why > And what would change your mind.
+Risks + mitigation > What could go wrong and how you'd know.
+```
 
 ---
 

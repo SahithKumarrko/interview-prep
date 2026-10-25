@@ -28,49 +28,49 @@
      "id": "Q01",
      "title": "What is EC2 and when do you choose it?",
      "short_md": "Resizable virtual machines with full OS control. Choose EC2 when you need: specific OS/kernel/drivers, GPUs or special hardware, long-running stateful software (legacy apps, databases you self-manage), licensing tied to hosts, or maximum cost control at steady high load. Otherwise prefer managed compute (Fargate, Lambda, AgentCore) to avoid OS management.",
-     "body_md": "**Short answer:** Resizable virtual machines with full OS control. Choose EC2 when you need: specific OS/kernel/drivers, GPUs or special hardware, long-running stateful software (legacy apps, databases you self-manage), licensing tied to hosts, or maximum cost control at steady high load. Otherwise prefer managed compute (Fargate, Lambda, AgentCore) to avoid OS management."
+     "body_md": "**Short answer:** Resizable virtual machines with full OS control. Choose EC2 when you need: specific OS/kernel/drivers, GPUs or special hardware, long-running stateful software (legacy apps, databases you self-manage), licensing tied to hosts, or maximum cost control at steady high load. Otherwise prefer managed compute (Fargate, Lambda, AgentCore) to avoid OS management.\n\n```flow\npipeline: When EC2 is the right choice\nNeed OS-level control? > Custom kernels, agents, licensing.\nSpecial hardware? > GPUs, high memory, local NVMe.\nLong-running, steady load? > Cheaper with Savings Plans.\nOtherwise > Prefer Fargate/Lambda to avoid patching servers.\n```"
     },
     {
      "id": "Q02",
      "title": "What is an AMI?",
      "short_md": "Amazon Machine Image — template with root volume snapshot, boot settings, architecture (x86_64/arm64) and permissions. Sources: AWS (Amazon Linux 2023, Ubuntu, Windows), Marketplace, or your **golden AMIs** built with **EC2 Image Builder**/Packer (pre-hardened, patched, agents installed). AMIs are regional — copy to other regions for DR.",
-     "body_md": "**Short answer:** Amazon Machine Image — template with root volume snapshot, boot settings, architecture (x86_64/arm64) and permissions. Sources: AWS (Amazon Linux 2023, Ubuntu, Windows), Marketplace, or your **golden AMIs** built with **EC2 Image Builder**/Packer (pre-hardened, patched, agents installed). AMIs are regional — copy to other regions for DR."
+     "body_md": "**Short answer:** Amazon Machine Image — template with root volume snapshot, boot settings, architecture (x86_64/arm64) and permissions. Sources: AWS (Amazon Linux 2023, Ubuntu, Windows), Marketplace, or your **golden AMIs** built with **EC2 Image Builder**/Packer (pre-hardened, patched, agents installed). AMIs are regional — copy to other regions for DR.\n\n```flow\npipeline: Golden AMI pipeline\nBase AMI > Amazon Linux / Ubuntu.\nInstall + harden > Patches, agents, CIS settings (EC2 Image Builder / Packer).\nTest + scan > Inspector.\nPublish AMI > Versioned; launch templates point to it.\nRebuild regularly > New patches → new AMI → instance refresh.\n```"
     },
     {
      "id": "Q03",
      "title": "Instance families and naming",
-     "short_md": "m7g.2xlarge │││   └── size (vCPU/RAM scale: large=2 vCPU … 2xlarge=8 vCPU) ││└── attribute: g = Graviton (ARM), i = Intel, a = AMD, d = local NVMe, n = network-optimised │└── generation (newer = better price/performance) └── family",
-     "body_md": "```\n m7g.2xlarge\n │││   └── size (vCPU/RAM scale: large=2 vCPU … 2xlarge=8 vCPU)\n ││└── attribute: g = Graviton (ARM), i = Intel, a = AMD, d = local NVMe, n = network-optimised\n │└── generation (newer = better price/performance)\n └── family\n```\n| Family | For |\n|---|---|\n| **t** (burstable, CPU credits) | dev, low steady CPU — watch credit exhaustion (or unlimited mode) |\n| **m** general purpose | web/app servers |\n| **c** compute optimised | CPU-heavy (batch, encoding) |\n| **r / x** memory optimised | caches, in-memory DBs |\n| **i / d** storage optimised | high IOPS local NVMe |\n| **g / p / inf / trn** accelerated | GPUs (inference/training), Inferentia, Trainium |\n\n**Graviton** (ARM) typically gives ~20–40% better price/performance — need arm64 builds."
+     "short_md": "trace: Decoding an instance type name m7g.2xlarge > Read left to right. **m** = family (general purpose; c compute, r memory, g/p GPU) > What it's optimised for. **7** = generation;  **g** = Graviton (ARM); i Intel; a AMD > Newer generations are usually cheaper per performance. **2xlarge** = size (8 vCPU, 32 GiB for m7g) > Each size step doubles resources.",
+     "body_md": "```flow\ntrace: Decoding an instance type name\nm7g.2xlarge > Read left to right.\n**m** = family (general purpose; c compute, r memory, g/p GPU) > What it's optimised for.\n**7** = generation;  **g** = Graviton (ARM); i Intel; a AMD > Newer generations are usually cheaper per performance.\n**2xlarge** = size (8 vCPU, 32 GiB for m7g) > Each size step doubles resources.\n```\n\n```\n m7g.2xlarge\n │││   └── size (vCPU/RAM scale: large=2 vCPU … 2xlarge=8 vCPU)\n ││└── attribute: g = Graviton (ARM), i = Intel, a = AMD, d = local NVMe, n = network-optimised\n │└── generation (newer = better price/performance)\n └── family\n```\n| Family | For |\n|---|---|\n| **t** (burstable, CPU credits) | dev, low steady CPU — watch credit exhaustion (or unlimited mode) |\n| **m** general purpose | web/app servers |\n| **c** compute optimised | CPU-heavy (batch, encoding) |\n| **r / x** memory optimised | caches, in-memory DBs |\n| **i / d** storage optimised | high IOPS local NVMe |\n| **g / p / inf / trn** accelerated | GPUs (inference/training), Inferentia, Trainium |\n\n**Graviton** (ARM) typically gives ~20–40% better price/performance — need arm64 builds."
     },
     {
      "id": "Q04",
      "title": "User data and cloud-init",
      "short_md": "Script/cloud-config that runs **once at first boot** (by default) as root: install packages, pull config, join cluster, start services. Keep it small (use golden AMIs for heavy setup), idempotent, no secrets in plain text (user data is readable via IMDS/console) — fetch secrets from Secrets Manager using the instance role.",
-     "body_md": "Script/cloud-config that runs **once at first boot** (by default) as root: install packages, pull config, join cluster, start services. Keep it small (use golden AMIs for heavy setup), idempotent, no secrets in plain text (user data is readable via IMDS/console) — fetch secrets from Secrets Manager using the instance role.\n\n```bash\n#!/bin/bash\nset -euo pipefail\ndnf install -y amazon-cloudwatch-agent\naws ssm get-parameter --name /app/prod/config --query Parameter.Value --output text > /etc/app/config.json\nsystemctl enable --now app\n```"
+     "body_md": "Script/cloud-config that runs **once at first boot** (by default) as root: install packages, pull config, join cluster, start services. Keep it small (use golden AMIs for heavy setup), idempotent, no secrets in plain text (user data is readable via IMDS/console) — fetch secrets from Secrets Manager using the instance role.\n\n```flow\npipeline: First boot of an instance\nLaunch from AMI > With a launch template.\ncloud-init runs user data > Install, configure, start services (first boot only by default).\nFetch config/secrets > Via the instance role, not hard-coded.\nRegister / health > Joins target group or ECS cluster when ready.\n```\n\n```bash\n#!/bin/bash\nset -euo pipefail\ndnf install -y amazon-cloudwatch-agent\naws ssm get-parameter --name /app/prod/config --query Parameter.Value --output text > /etc/app/config.json\nsystemctl enable --now app\n```"
     },
     {
      "id": "Q05",
      "title": "Instance profile and IAM role",
      "short_md": "An **instance profile** attaches an IAM role to an instance; the SDK automatically gets temporary, auto-rotated credentials from the **Instance Metadata Service**. Never store access keys on instances.",
-     "body_md": "An **instance profile** attaches an IAM role to an instance; the SDK automatically gets temporary, auto-rotated credentials from the **Instance Metadata Service**. Never store access keys on instances."
+     "body_md": "An **instance profile** attaches an IAM role to an instance; the SDK automatically gets temporary, auto-rotated credentials from the **Instance Metadata Service**. Never store access keys on instances.\n\n```flow\nsequence: How code on EC2 gets AWS credentials\nactors: App (SDK), IMDS, STS, S3\nApp (SDK) -> IMDS: get role credentials (169.254.169.254)\nIMDS --> App (SDK): temporary credentials from the instance profile's role\nApp (SDK) -> S3: signed request\n> Rotated automatically before expiry; no access keys on disk.\n```"
     },
     {
      "id": "Q06",
      "title": "IMDSv2 — why enforce it?",
      "short_md": "IMDS (169.254.169.254) exposes metadata and **role credentials**. IMDSv1 is a simple GET → an **SSRF** bug in your app could fetch credentials (Capital One breach pattern). **IMDSv2** requires a session token obtained via a PUT with a hop limit — blocks most SSRF and open-proxy attacks.",
-     "body_md": "**Short answer:** IMDS (169.254.169.254) exposes metadata and **role credentials**. IMDSv1 is a simple GET → an **SSRF** bug in your app could fetch credentials (Capital One breach pattern). **IMDSv2** requires a session token obtained via a PUT with a hop limit — blocks most SSRF and open-proxy attacks.\n\n```bash\nTOKEN=$(curl -X PUT \"http://169.254.169.254/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\")\ncurl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/instance-id\n```\nEnforce `HttpTokens=required` in launch templates (new default for many AMIs), set hop limit 1 (2 for containers on the host if needed), and enforce org-wide via SCP / account default."
+     "body_md": "**Short answer:** IMDS (169.254.169.254) exposes metadata and **role credentials**. IMDSv1 is a simple GET → an **SSRF** bug in your app could fetch credentials (Capital One breach pattern). **IMDSv2** requires a session token obtained via a PUT with a hop limit — blocks most SSRF and open-proxy attacks.\n\n```flow\nsequence: IMDSv2 session token\nactors: App, IMDS, Attacker via SSRF\nApp -> IMDS: PUT /latest/api/token (TTL header)\nIMDS --> App: session token\nApp -> IMDS: GET credentials with X-aws-ec2-metadata-token\nIMDS --> App: credentials\nAttacker via SSRF -> IMDS: simple GET (can't send PUT / custom header)\nIMDS --> Attacker via SSRF: 401: no token\n> Enforce IMDSv2 (HttpTokens=required) and hop limit 1 so containers/SSRF can't steal role credentials.\n```\n\n```bash\nTOKEN=$(curl -X PUT \"http://169.254.169.254/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\")\ncurl -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/instance-id\n```\nEnforce `HttpTokens=required` in launch templates (new default for many AMIs), set hop limit 1 (2 for containers on the host if needed), and enforce org-wide via SCP / account default."
     },
     {
      "id": "Q07",
      "title": "Launch templates and versioning",
      "short_md": "Launch template = versioned config (AMI, type, SGs, IAM profile, user data, IMDS options, EBS, tags). ASGs reference a template **version** (`$Latest`/`$Default`/explicit). Versioning gives rollback and controlled rollouts (instance refresh).",
-     "body_md": "Launch template = versioned config (AMI, type, SGs, IAM profile, user data, IMDS options, EBS, tags). ASGs reference a template **version** (`$Latest`/`$Default`/explicit). Versioning gives rollback and controlled rollouts (instance refresh)."
+     "body_md": "Launch template = versioned config (AMI, type, SGs, IAM profile, user data, IMDS options, EBS, tags). ASGs reference a template **version** (`$Latest`/`$Default`/explicit). Versioning gives rollback and controlled rollouts (instance refresh).\n\n```flow\npipeline: Launch template versions\nv1, v2, v3 > Each change (AMI, type, user data) is a new version.\nASG uses $Latest or a pinned version > Pinning is safer.\nInstance refresh > Rolls instances to the new version.\nRoll back > Point back to the previous version.\n```"
     },
     {
      "id": "Q08",
      "title": "Placement groups",
-     "short_md": "| Type | Behaviour | Use |\n|---|---|---|\n| **Cluster** | instances close together in one AZ | low-latency HPC, distributed training |\n| **Spread** | each instance on distinct hardware (max 7 per AZ) | small number of critical instances |\n| **Partition** | groups on separate racks | Kafka, HDFS, Cassandra (rack awareness) |",
-     "body_md": "| Type | Behaviour | Use |\n|---|---|---|\n| **Cluster** | instances close together in one AZ | low-latency HPC, distributed training |\n| **Spread** | each instance on distinct hardware (max 7 per AZ) | small number of critical instances |\n| **Partition** | groups on separate racks | Kafka, HDFS, Cassandra (rack awareness) |"
+     "short_md": "pipeline: Placement groups Cluster > Packed in one AZ: lowest latency, highest throughput (HPC). Single-AZ risk. Spread > Each instance on separate hardware: max 7 per AZ, for critical nodes. Partition > Groups on separate racks: Kafka, Cassandra, HDFS.",
+     "body_md": "```flow\npipeline: Placement groups\nCluster > Packed in one AZ: lowest latency, highest throughput (HPC). Single-AZ risk.\nSpread > Each instance on separate hardware: max 7 per AZ, for critical nodes.\nPartition > Groups on separate racks: Kafka, Cassandra, HDFS.\n```\n\n| Type | Behaviour | Use |\n|---|---|---|\n| **Cluster** | instances close together in one AZ | low-latency HPC, distributed training |\n| **Spread** | each instance on distinct hardware (max 7 per AZ) | small number of critical instances |\n| **Partition** | groups on separate racks | Kafka, HDFS, Cassandra (rack awareness) |"
     }
    ]
   },
@@ -83,20 +83,20 @@
     {
      "id": "Q09",
      "title": "EBS vs instance store",
-     "short_md": "| | **EBS** | **Instance store** |\n|---|---|---|\n| Type | network block storage | physically attached NVMe |\n| Persistence | survives stop/start; snapshots to S3 | **lost on stop/terminate/hardware failure** |\n| Scope | one AZ (attach to instances in that AZ) | that instance |\n| Use | root disks, databases, durable data | caches, scratch, buffers, temp data |",
-     "body_md": "| | **EBS** | **Instance store** |\n|---|---|---|\n| Type | network block storage | physically attached NVMe |\n| Persistence | survives stop/start; snapshots to S3 | **lost on stop/terminate/hardware failure** |\n| Scope | one AZ (attach to instances in that AZ) | that instance |\n| Use | root disks, databases, durable data | caches, scratch, buffers, temp data |"
+     "short_md": "pipeline: EBS vs instance store EBS > Network disk; survives stop/start; snapshots; can detach. Instance store > Physically attached NVMe: very fast, but lost on stop/terminate/hardware failure. Use instance store for > Caches, scratch, replicated data. Use EBS for > Anything you need to keep.",
+     "body_md": "```flow\npipeline: EBS vs instance store\nEBS > Network disk; survives stop/start; snapshots; can detach.\nInstance store > Physically attached NVMe: very fast, but lost on stop/terminate/hardware failure.\nUse instance store for > Caches, scratch, replicated data.\nUse EBS for > Anything you need to keep.\n```\n\n| | **EBS** | **Instance store** |\n|---|---|---|\n| Type | network block storage | physically attached NVMe |\n| Persistence | survives stop/start; snapshots to S3 | **lost on stop/terminate/hardware failure** |\n| Scope | one AZ (attach to instances in that AZ) | that instance |\n| Use | root disks, databases, durable data | caches, scratch, buffers, temp data |"
     },
     {
      "id": "Q10",
      "title": "EBS volume types",
-     "short_md": "Encrypt by default (account setting, KMS). Performance limited also by **instance EBS bandwidth**.",
-     "body_md": "| Type | Notes |\n|---|---|\n| **gp3** | default SSD; baseline 3,000 IOPS / 125 MB/s, provision more independently of size; cheaper than gp2 |\n| **io2 Block Express** | very high IOPS, durability, multi-attach; critical databases |\n| st1 / sc1 | throughput HDD / cold HDD for big sequential data |\n\nEncrypt by default (account setting, KMS). Performance limited also by **instance EBS bandwidth**."
+     "short_md": "pipeline: Picking an EBS volume type gp3 > Default SSD; set IOPS/throughput independently of size. io2 / io2 Block Express > Very high, consistent IOPS for databases. st1 > Throughput-optimised HDD for big sequential reads. sc1 > Cold HDD; cheapest.",
+     "body_md": "```flow\npipeline: Picking an EBS volume type\ngp3 > Default SSD; set IOPS/throughput independently of size.\nio2 / io2 Block Express > Very high, consistent IOPS for databases.\nst1 > Throughput-optimised HDD for big sequential reads.\nsc1 > Cold HDD; cheapest.\n```\n\n| Type | Notes |\n|---|---|\n| **gp3** | default SSD; baseline 3,000 IOPS / 125 MB/s, provision more independently of size; cheaper than gp2 |\n| **io2 Block Express** | very high IOPS, durability, multi-attach; critical databases |\n| st1 / sc1 | throughput HDD / cold HDD for big sequential data |\n\nEncrypt by default (account setting, KMS). Performance limited also by **instance EBS bandwidth**."
     },
     {
      "id": "Q11",
      "title": "Snapshots and AMI protection",
      "short_md": "EBS snapshots are incremental, stored in S3 (regional), copyable cross-region/account. Protect with: encryption (CMK), no public sharing (block public access for snapshots/AMIs), **Recycle Bin** retention rules for accidental deletes, AWS Backup plans with vault lock, lifecycle policies (Data Lifecycle Manager).",
-     "body_md": "EBS snapshots are incremental, stored in S3 (regional), copyable cross-region/account. Protect with: encryption (CMK), no public sharing (block public access for snapshots/AMIs), **Recycle Bin** retention rules for accidental deletes, AWS Backup plans with vault lock, lifecycle policies (Data Lifecycle Manager)."
+     "body_md": "EBS snapshots are incremental, stored in S3 (regional), copyable cross-region/account. Protect with: encryption (CMK), no public sharing (block public access for snapshots/AMIs), **Recycle Bin** retention rules for accidental deletes, AWS Backup plans with vault lock, lifecycle policies (Data Lifecycle Manager).\n\n```flow\npipeline: Snapshots and protection\nSnapshot > Incremental, stored in S3 (managed).\nAutomate > Data Lifecycle Manager / AWS Backup schedules.\nCopy cross-region/account > DR and ransomware protection.\nLock / recycle bin > Prevent deletion; recover accidental deletes.\n```"
     }
    ]
   },
@@ -109,32 +109,32 @@
     {
      "id": "Q12",
      "title": "Private IP, public IP, Elastic IP",
-     "short_md": "- **Private IP** — fixed for the instance's life, used inside the VPC. - **Public IP** — auto-assigned from AWS pool, **changes on stop/start**. - **Elastic IP** — static public IPv4 you own and can remap (charged; AWS bills public IPv4 addresses hourly). Prefer load balancers/DNS over EIPs for apps.",
-     "body_md": "- **Private IP** — fixed for the instance's life, used inside the VPC.\n- **Public IP** — auto-assigned from AWS pool, **changes on stop/start**.\n- **Elastic IP** — static public IPv4 you own and can remap (charged; AWS bills public IPv4 addresses hourly). Prefer load balancers/DNS over EIPs for apps."
+     "short_md": "pipeline: Instance addressing Private IP > Stays for the instance's life. Public IP (auto-assigned) > Changes on stop/start. Elastic IP > Static public IP you own; charged (public IPv4 is billed). Better > Put instances behind a load balancer and use DNS.",
+     "body_md": "```flow\npipeline: Instance addressing\nPrivate IP > Stays for the instance's life.\nPublic IP (auto-assigned) > Changes on stop/start.\nElastic IP > Static public IP you own; charged (public IPv4 is billed).\nBetter > Put instances behind a load balancer and use DNS.\n```\n\n- **Private IP** — fixed for the instance's life, used inside the VPC.\n- **Public IP** — auto-assigned from AWS pool, **changes on stop/start**.\n- **Elastic IP** — static public IPv4 you own and can remap (charged; AWS bills public IPv4 addresses hourly). Prefer load balancers/DNS over EIPs for apps."
     },
     {
      "id": "Q13",
      "title": "Security groups on EC2",
      "short_md": "Stateful virtual firewall on ENIs: allow rules only, reference other SGs (e.g., app SG allows 8080 from ALB SG). No SSH from `0.0.0.0/0`. Outbound restricted where possible.",
-     "body_md": "Stateful virtual firewall on ENIs: allow rules only, reference other SGs (e.g., app SG allows 8080 from ALB SG). No SSH from `0.0.0.0/0`. Outbound restricted where possible."
+     "body_md": "Stateful virtual firewall on ENIs: allow rules only, reference other SGs (e.g., app SG allows 8080 from ALB SG). No SSH from `0.0.0.0/0`. Outbound restricted where possible.\n\n```flow\nsequence: Security group referencing another SG\nactors: ALB (sg-alb), App instance (sg-app), DB (sg-db)\nALB (sg-alb) -> App instance (sg-app): 8080 allowed: sg-app inbound source = sg-alb\nApp instance (sg-app) -> DB (sg-db): 5432 allowed: sg-db inbound source = sg-app\n> Rules follow roles, not IP addresses, so scaling and IP changes need no rule edits.\n```"
     },
     {
      "id": "Q14",
      "title": "Key pairs vs better access options",
      "short_md": "Key pairs = SSH public key injected at launch (private key download once). Problems: key sharing, rotation, open port 22. Better: **SSM Session Manager** (no inbound ports, IAM-controlled, sessions logged to S3/CloudWatch), **EC2 Instance Connect** (short-lived keys pushed via API), EC2 Instance Connect Endpoint for private instances.",
-     "body_md": "Key pairs = SSH public key injected at launch (private key download once). Problems: key sharing, rotation, open port 22. Better: **SSM Session Manager** (no inbound ports, IAM-controlled, sessions logged to S3/CloudWatch), **EC2 Instance Connect** (short-lived keys pushed via API), EC2 Instance Connect Endpoint for private instances."
+     "body_md": "Key pairs = SSH public key injected at launch (private key download once). Problems: key sharing, rotation, open port 22. Better: **SSM Session Manager** (no inbound ports, IAM-controlled, sessions logged to S3/CloudWatch), **EC2 Instance Connect** (short-lived keys pushed via API), EC2 Instance Connect Endpoint for private instances.\n\n```flow\nsequence: Shell access without SSH keys\nactors: Engineer, SSM Session Manager, Instance (SSM agent)\nEngineer -> SSM Session Manager: start-session (IAM authorised)\nSSM Session Manager -> Instance (SSM agent): open channel (agent connects outbound)\nInstance (SSM agent) --> Engineer: shell\n> No inbound port 22, no keys to leak, every session logged.\n```"
     },
     {
      "id": "Q15",
      "title": "Network performance constraints",
      "short_md": "Each instance type has network bandwidth limits (\"up to\" = burst with credits), packets-per-second limits, EBS bandwidth limits, and connection tracking limits (security groups track connections — very high connection counts can hit `conntrack` allowances). Enhanced networking (ENA) is standard on modern types. Check `NetworkIn/Out`, ENA allowance-exceeded metrics (`bw_out_allowance_exceeded`, `conntrack_allowance_exceeded`).",
-     "body_md": "Each instance type has network bandwidth limits (\"up to\" = burst with credits), packets-per-second limits, EBS bandwidth limits, and connection tracking limits (security groups track connections — very high connection counts can hit `conntrack` allowances). Enhanced networking (ENA) is standard on modern types. Check `NetworkIn/Out`, ENA allowance-exceeded metrics (`bw_out_allowance_exceeded`, `conntrack_allowance_exceeded`)."
+     "body_md": "Each instance type has network bandwidth limits (\"up to\" = burst with credits), packets-per-second limits, EBS bandwidth limits, and connection tracking limits (security groups track connections — very high connection counts can hit `conntrack` allowances). Enhanced networking (ENA) is standard on modern types. Check `NetworkIn/Out`, ENA allowance-exceeded metrics (`bw_out_allowance_exceeded`, `conntrack_allowance_exceeded`).\n\n```flow\npipeline: Network performance limits\nInstance size > Bandwidth scales with size (\"up to\" = burst).\nPer-flow limit > A single connection is capped (~5 Gbps outside placement groups).\nENA / enhanced networking > Required for high throughput.\nPackets per second > Small packets hit PPS limits first.\n```"
     },
     {
      "id": "Q16",
      "title": "EC2 status checks vs application readiness",
-     "short_md": "- **System status check** — AWS hardware/network problem → stop/start moves to new host (or auto-recover). - **Instance status check** — OS problem (kernel panic, network misconfig) → reboot/fix. - **Attached EBS status check**. - **ELB / ASG health checks** — is the **application** responding? An instance can pass EC2 checks while the app is dead → configure ASG `HealthCheckType=ELB` so it replaces instances failing the app health check.",
-     "body_md": "- **System status check** — AWS hardware/network problem → stop/start moves to new host (or auto-recover).\n- **Instance status check** — OS problem (kernel panic, network misconfig) → reboot/fix.\n- **Attached EBS status check**.\n- **ELB / ASG health checks** — is the **application** responding? An instance can pass EC2 checks while the app is dead → configure ASG `HealthCheckType=ELB` so it replaces instances failing the app health check."
+     "short_md": "pipeline: Healthy instance ≠ healthy app System status check > AWS hardware/host problem. Instance status check > OS problem (boot, network config). App health check (ALB / ASG) > Is the service actually responding? Act on each > Auto-recover for system; replace for app failures.",
+     "body_md": "```flow\npipeline: Healthy instance ≠ healthy app\nSystem status check > AWS hardware/host problem.\nInstance status check > OS problem (boot, network config).\nApp health check (ALB / ASG) > Is the service actually responding?\nAct on each > Auto-recover for system; replace for app failures.\n```\n\n- **System status check** — AWS hardware/network problem → stop/start moves to new host (or auto-recover).\n- **Instance status check** — OS problem (kernel panic, network misconfig) → reboot/fix.\n- **Attached EBS status check**.\n- **ELB / ASG health checks** — is the **application** responding? An instance can pass EC2 checks while the app is dead → configure ASG `HealthCheckType=ELB` so it replaces instances failing the app health check."
     }
    ]
   },
@@ -147,14 +147,14 @@
     {
      "id": "Q17",
      "title": "On-Demand vs Savings Plans vs Reserved vs Spot",
-     "short_md": "| Model | Discount | Commitment | Use |\n|---|---|---|---|\n| **On-Demand** | 0% | none | spiky, short-term, unknown |\n| **Savings Plans** (Compute / EC2 Instance) | up to ~66–72% | $/hour for 1 or 3 yrs; Compute SP also covers Fargate & Lambda | steady baseline |\n| **Reserved Instances** | similar | specific instance type/region (capacity reservation option) | legacy/specific needs |\n| **Spot** | up to ~90% | none; **can be reclaimed with 2-minute notice** | fault-tolerant batch, CI runners, stateless workers |\n| On-Demand Capacity Reservations | 0% | reserve capacity in an AZ | guaranteed capacity (e.g., events, GPUs) |",
-     "body_md": "| Model | Discount | Commitment | Use |\n|---|---|---|---|\n| **On-Demand** | 0% | none | spiky, short-term, unknown |\n| **Savings Plans** (Compute / EC2 Instance) | up to ~66–72% | $/hour for 1 or 3 yrs; Compute SP also covers Fargate & Lambda | steady baseline |\n| **Reserved Instances** | similar | specific instance type/region (capacity reservation option) | legacy/specific needs |\n| **Spot** | up to ~90% | none; **can be reclaimed with 2-minute notice** | fault-tolerant batch, CI runners, stateless workers |\n| On-Demand Capacity Reservations | 0% | reserve capacity in an AZ | guaranteed capacity (e.g., events, GPUs) |"
+     "short_md": "pipeline: Pricing models On-Demand > Pay per second, no commitment. Savings Plans > 1–3 year $/hour commitment, big discount, flexible. Reserved Instances > Specific type/region commitment. Spot > Up to ~90% off; can be reclaimed with 2 minutes' notice. Mix > Baseline on Savings Plans, bursts on On-Demand, batch on Spot.",
+     "body_md": "```flow\npipeline: Pricing models\nOn-Demand > Pay per second, no commitment.\nSavings Plans > 1–3 year $/hour commitment, big discount, flexible.\nReserved Instances > Specific type/region commitment.\nSpot > Up to ~90% off; can be reclaimed with 2 minutes' notice.\nMix > Baseline on Savings Plans, bursts on On-Demand, batch on Spot.\n```\n\n| Model | Discount | Commitment | Use |\n|---|---|---|---|\n| **On-Demand** | 0% | none | spiky, short-term, unknown |\n| **Savings Plans** (Compute / EC2 Instance) | up to ~66–72% | $/hour for 1 or 3 yrs; Compute SP also covers Fargate & Lambda | steady baseline |\n| **Reserved Instances** | similar | specific instance type/region (capacity reservation option) | legacy/specific needs |\n| **Spot** | up to ~90% | none; **can be reclaimed with 2-minute notice** | fault-tolerant batch, CI runners, stateless workers |\n| On-Demand Capacity Reservations | 0% | reserve capacity in an AZ | guaranteed capacity (e.g., events, GPUs) |"
     },
     {
      "id": "Q18",
      "title": "Using Spot safely",
      "short_md": "Diversify instance types/AZs (ASG mixed instances policy, `price-capacity-optimized` allocation), handle interruption notices (EventBridge / IMDS `spot/instance-action`) to drain work, checkpoint jobs, keep an on-demand base capacity, capacity rebalancing.",
-     "body_md": "Diversify instance types/AZs (ASG mixed instances policy, `price-capacity-optimized` allocation), handle interruption notices (EventBridge / IMDS `spot/instance-action`) to drain work, checkpoint jobs, keep an on-demand base capacity, capacity rebalancing."
+     "body_md": "Diversify instance types/AZs (ASG mixed instances policy, `price-capacity-optimized` allocation), handle interruption notices (EventBridge / IMDS `spot/instance-action`) to drain work, checkpoint jobs, keep an on-demand base capacity, capacity rebalancing.\n\n```flow\nsequence: Spot interruption handled gracefully\nactors: AWS, Instance, ASG, Queue\nAWS -> Instance: interruption notice (2 minutes)\nInstance -> Instance: stop taking work, checkpoint progress\nInstance -> Queue: return unfinished job (or release lock)\nASG -> ASG: capacity rebalancing launches a replacement\nQueue -> ASG: new instance resumes the job\n```"
     }
    ]
   },
@@ -168,37 +168,37 @@
      "id": "Q19",
      "title": "Auto Scaling groups",
      "short_md": "An ASG keeps a fleet between min/max/desired across AZs, replaces unhealthy instances, registers with target groups, and scales by policies.",
-     "body_md": "**Short answer:** An ASG keeps a fleet between min/max/desired across AZs, replaces unhealthy instances, registers with target groups, and scales by policies.\n\n```\n ASG (min 2, desired 3, max 10, subnets in AZ-a/b/c, launch template v12)\n   ├─ target tracking: CPU 50%  or ALB RequestCountPerTarget 1000\n   ├─ health check type: ELB, grace period 300 s\n   ├─ instance refresh: rolling replace to new template version (min healthy 90%)\n   ├─ lifecycle hooks: on launch (bootstrap) / on terminate (drain, upload logs)\n   └─ warm pool: pre-initialised stopped instances for faster scale-out\n```"
+     "body_md": "**Short answer:** An ASG keeps a fleet between min/max/desired across AZs, replaces unhealthy instances, registers with target groups, and scales by policies.\n\n```flow\ncycle: Auto Scaling group keeping capacity\nDesired count > e.g. 4 instances across 3 AZs.\nHealth checks > EC2 + ELB checks.\nReplace unhealthy > Terminate and launch from the launch template.\nScale with policy > Up/down on metrics or schedule.\nexit > Continuous: the ASG always works back to the desired count.\n```\n\n```\n ASG (min 2, desired 3, max 10, subnets in AZ-a/b/c, launch template v12)\n   ├─ target tracking: CPU 50%  or ALB RequestCountPerTarget 1000\n   ├─ health check type: ELB, grace period 300 s\n   ├─ instance refresh: rolling replace to new template version (min healthy 90%)\n   ├─ lifecycle hooks: on launch (bootstrap) / on terminate (drain, upload logs)\n   └─ warm pool: pre-initialised stopped instances for faster scale-out\n```"
     },
     {
      "id": "Q20",
      "title": "Scaling policies",
      "short_md": "Target tracking (simplest), step scaling, scheduled, **predictive scaling** (ML forecast for daily cycles). Scale on the metric that reflects load (requests per target, queue depth per instance) rather than only CPU.",
-     "body_md": "Target tracking (simplest), step scaling, scheduled, **predictive scaling** (ML forecast for daily cycles). Scale on the metric that reflects load (requests per target, queue depth per instance) rather than only CPU."
+     "body_md": "Target tracking (simplest), step scaling, scheduled, **predictive scaling** (ML forecast for daily cycles). Scale on the metric that reflects load (requests per target, queue depth per instance) rather than only CPU.\n\n```flow\npipeline: Scaling policies\nTarget tracking > Keep CPU at 50% (simplest, recommended).\nStep scaling > Bigger steps for bigger breaches.\nScheduled > Known daily peaks.\nPredictive > Forecast and scale ahead of demand.\n```"
     },
     {
      "id": "Q21",
      "title": "Graceful termination and draining",
      "short_md": "Scale-in/instance refresh → ALB **deregistration delay** drains connections → **lifecycle hook** (`autoscaling:EC2_INSTANCE_TERMINATING`) gives time to finish jobs/flush logs → instance terminates. Use instance **scale-in protection** for instances doing critical work. Apps should handle SIGTERM on shutdown.",
-     "body_md": "Scale-in/instance refresh → ALB **deregistration delay** drains connections → **lifecycle hook** (`autoscaling:EC2_INSTANCE_TERMINATING`) gives time to finish jobs/flush logs → instance terminates. Use instance **scale-in protection** for instances doing critical work. Apps should handle SIGTERM on shutdown."
+     "body_md": "Scale-in/instance refresh → ALB **deregistration delay** drains connections → **lifecycle hook** (`autoscaling:EC2_INSTANCE_TERMINATING`) gives time to finish jobs/flush logs → instance terminates. Use instance **scale-in protection** for instances doing critical work. Apps should handle SIGTERM on shutdown.\n\n```flow\nsequence: Scale-in with a lifecycle hook\nactors: ASG, ALB, Instance, Hook handler\nASG -> ALB: deregister instance (connection draining)\nASG -> Instance: Terminating:Wait (lifecycle hook)\nHook handler -> Instance: finish jobs, flush logs, upload data\nHook handler -> ASG: CompleteLifecycleAction\nASG -> Instance: terminate\n```"
     },
     {
      "id": "Q22",
      "title": "Resilient multi-AZ EC2 service",
      "short_md": "ASG across ≥3 AZs behind ALB, stateless instances (sessions in ElastiCache/DynamoDB, files in S3/EFS), data in Multi-AZ RDS, golden AMI + immutable deployments (instance refresh / blue-green ASGs), health checks with auto replacement, alarms, regular AZ-failure tests.",
-     "body_md": "ASG across ≥3 AZs behind ALB, stateless instances (sessions in ElastiCache/DynamoDB, files in S3/EFS), data in Multi-AZ RDS, golden AMI + immutable deployments (instance refresh / blue-green ASGs), health checks with auto replacement, alarms, regular AZ-failure tests."
+     "body_md": "ASG across ≥3 AZs behind ALB, stateless instances (sessions in ElastiCache/DynamoDB, files in S3/EFS), data in Multi-AZ RDS, golden AMI + immutable deployments (instance refresh / blue-green ASGs), health checks with auto replacement, alarms, regular AZ-failure tests.\n\n```flow\npipeline: A resilient multi-AZ EC2 service\nALB across 3 AZs > Health-checked targets.\nASG across 3 AZs > Min capacity survives losing one AZ.\nStateless instances > State in RDS Multi-AZ, S3, ElastiCache.\nImmutable deploys > New AMI + instance refresh.\n```"
     },
     {
      "id": "Q23",
      "title": "EC2-backed ECS cluster design",
      "short_md": "ECS-optimised AMI (or Bottlerocket), ASG **capacity provider** with managed scaling + managed termination protection, mixed instances (on-demand base + Spot), instance draining on scale-in, ENI trunking for awsvpc density, IMDSv2 with hop limit restrictions so tasks use **task roles** not the instance role, CloudWatch/Container Insights, or simply use **ECS Managed Instances** to let AWS handle this.",
-     "body_md": "ECS-optimised AMI (or Bottlerocket), ASG **capacity provider** with managed scaling + managed termination protection, mixed instances (on-demand base + Spot), instance draining on scale-in, ENI trunking for awsvpc density, IMDSv2 with hop limit restrictions so tasks use **task roles** not the instance role, CloudWatch/Container Insights, or simply use **ECS Managed Instances** to let AWS handle this."
+     "body_md": "ECS-optimised AMI (or Bottlerocket), ASG **capacity provider** with managed scaling + managed termination protection, mixed instances (on-demand base + Spot), instance draining on scale-in, ENI trunking for awsvpc density, IMDSv2 with hop limit restrictions so tasks use **task roles** not the instance role, CloudWatch/Container Insights, or simply use **ECS Managed Instances** to let AWS handle this.\n\n```flow\npipeline: EC2-backed ECS cluster\nASG of ECS-optimised AMIs > Instances join the cluster.\nCapacity provider with managed scaling > Adds instances when tasks can't place.\nManaged termination protection > Instances with tasks aren't killed.\nDrain on scale-in > Tasks move before termination.\n```"
     },
     {
      "id": "Q24",
      "title": "Deploying new versions on EC2",
      "short_md": "Options: in-place (CodeDeploy agent, Ansible) — simple but mutable; **immutable**: bake new AMI → new launch template version → instance refresh or blue/green ASG behind the ALB → rollback by reverting template version. Immutable infra is safer and reproducible.",
-     "body_md": "Options: in-place (CodeDeploy agent, Ansible) — simple but mutable; **immutable**: bake new AMI → new launch template version → instance refresh or blue/green ASG behind the ALB → rollback by reverting template version. Immutable infra is safer and reproducible."
+     "body_md": "Options: in-place (CodeDeploy agent, Ansible) — simple but mutable; **immutable**: bake new AMI → new launch template version → instance refresh or blue/green ASG behind the ALB → rollback by reverting template version. Immutable infra is safer and reproducible.\n\n```flow\npipeline: Deploying a new version to EC2\nBake new AMI > Or new app artifact.\nUpdate launch template version > Pinned.\nInstance refresh / blue-green ASG > Replace instances gradually with health checks.\nRoll back > Previous launch template version.\n```"
     }
    ]
   },
@@ -212,19 +212,19 @@
      "id": "Q25",
      "title": "Patching and hardening",
      "short_md": "Golden AMIs rebuilt regularly (Image Builder pipelines with CIS hardening), **SSM Patch Manager** with maintenance windows and patch baselines, **Inspector** vulnerability scanning, minimal packages, IMDSv2, no SSH (Session Manager), encrypted EBS, least-privilege instance role, CloudWatch agent for logs/metrics, GuardDuty, AWS Config compliance rules.",
-     "body_md": "Golden AMIs rebuilt regularly (Image Builder pipelines with CIS hardening), **SSM Patch Manager** with maintenance windows and patch baselines, **Inspector** vulnerability scanning, minimal packages, IMDSv2, no SSH (Session Manager), encrypted EBS, least-privilege instance role, CloudWatch agent for logs/metrics, GuardDuty, AWS Config compliance rules."
+     "body_md": "Golden AMIs rebuilt regularly (Image Builder pipelines with CIS hardening), **SSM Patch Manager** with maintenance windows and patch baselines, **Inspector** vulnerability scanning, minimal packages, IMDSv2, no SSH (Session Manager), encrypted EBS, least-privilege instance role, CloudWatch agent for logs/metrics, GuardDuty, AWS Config compliance rules.\n\n```flow\npipeline: Patching and hardening\nHardened golden AMI > CIS baseline.\nSSM Patch Manager > Scheduled patching with baselines.\nInspector > Continuous vulnerability scanning.\nReplace, don't patch in place > Immutable AMIs where possible.\n```"
     },
     {
      "id": "Q26",
      "title": "Systems Manager (SSM) toolbox",
      "short_md": "Session Manager (shell access), Run Command (run scripts across fleets), Patch Manager, State Manager (enforce config), Parameter Store, Inventory, Automation runbooks (e.g., isolate instance). Requires SSM agent + instance role with `AmazonSSMManagedInstanceCore` + network path (endpoints or NAT).",
-     "body_md": "Session Manager (shell access), Run Command (run scripts across fleets), Patch Manager, State Manager (enforce config), Parameter Store, Inventory, Automation runbooks (e.g., isolate instance). Requires SSM agent + instance role with `AmazonSSMManagedInstanceCore` + network path (endpoints or NAT)."
+     "body_md": "Session Manager (shell access), Run Command (run scripts across fleets), Patch Manager, State Manager (enforce config), Parameter Store, Inventory, Automation runbooks (e.g., isolate instance). Requires SSM agent + instance role with `AmazonSSMManagedInstanceCore` + network path (endpoints or NAT).\n\n```flow\npipeline: The SSM toolbox\nSession Manager > Shell without SSH.\nRun Command > Same command across a fleet.\nPatch Manager > OS patching.\nParameter Store > Config/secrets.\nInventory + State Manager > What's installed; enforce config.\n```"
     },
     {
      "id": "Q27",
      "title": "Monitoring EC2",
      "short_md": "Default metrics: CPU, network, disk I/O, status checks (5-min; 1-min with detailed monitoring). **Memory and disk space need the CloudWatch agent.** Alarms: status check failed (auto-recover action), CPU credit balance (t-family), disk usage, app metrics.",
-     "body_md": "Default metrics: CPU, network, disk I/O, status checks (5-min; 1-min with detailed monitoring). **Memory and disk space need the CloudWatch agent.** Alarms: status check failed (auto-recover action), CPU credit balance (t-family), disk usage, app metrics."
+     "body_md": "Default metrics: CPU, network, disk I/O, status checks (5-min; 1-min with detailed monitoring). **Memory and disk space need the CloudWatch agent.** Alarms: status check failed (auto-recover action), CPU credit balance (t-family), disk usage, app metrics.\n\n```flow\npipeline: Monitoring an instance\nBuilt-in metrics > CPU, network, disk I/O, status checks.\nCloudWatch agent > Memory and disk space (not built-in!).\nLogs > App and system logs to CloudWatch.\nAlarms > Status check failed, disk filling, CPU credits (burstable).\n```"
     },
     {
      "id": "Q28",
@@ -235,8 +235,8 @@
     {
      "id": "Q29",
      "title": "EC2 vs Fargate vs Lambda — decision",
-     "short_md": "| Choose EC2 when | Choose Fargate/ECS when | Choose Lambda when |\n|---|---|---|\n| need OS/kernel control, GPUs, special hardware, licensing, very steady high load with Savings Plans, legacy software | containerised services without managing servers | short event-driven tasks, spiky traffic, glue |",
-     "body_md": "| Choose EC2 when | Choose Fargate/ECS when | Choose Lambda when |\n|---|---|---|\n| need OS/kernel control, GPUs, special hardware, licensing, very steady high load with Savings Plans, legacy software | containerised services without managing servers | short event-driven tasks, spiky traffic, glue |"
+     "short_md": "pipeline: EC2 vs Fargate vs Lambda Lambda > Short event-driven work, zero ops, spiky. Fargate > Containers without servers, long-running services. EC2 > OS control, GPUs, special hardware, cheapest at steady scale. Decide by > Ops effort vs control vs cost profile.",
+     "body_md": "```flow\npipeline: EC2 vs Fargate vs Lambda\nLambda > Short event-driven work, zero ops, spiky.\nFargate > Containers without servers, long-running services.\nEC2 > OS control, GPUs, special hardware, cheapest at steady scale.\nDecide by > Ops effort vs control vs cost profile.\n```\n\n| Choose EC2 when | Choose Fargate/ECS when | Choose Lambda when |\n|---|---|---|\n| need OS/kernel control, GPUs, special hardware, licensing, very steady high load with Savings Plans, legacy software | containerised services without managing servers | short event-driven tasks, spiky traffic, glue |"
     }
    ]
   },
@@ -250,37 +250,37 @@
      "id": "Q30",
      "title": "Instance is running but unreachable (SSH or app)",
      "short_md": "Path check: correct IP (public IP changed after stop/start?) → route table (public subnet → IGW; private → via bastion/SSM) → **security group** inbound rule for your IP/port → NACL (stateless — ephemeral ports outbound) → OS firewall → service actually listening on `0.0.0.0:port` (`ss -lntp`) → status checks / system log / EC2 serial console for boot issues. Use **Reachability Analyzer** to test the network path.",
-     "body_md": "Path check: correct IP (public IP changed after stop/start?) → route table (public subnet → IGW; private → via bastion/SSM) → **security group** inbound rule for your IP/port → NACL (stateless — ephemeral ports outbound) → OS firewall → service actually listening on `0.0.0.0:port` (`ss -lntp`) → status checks / system log / EC2 serial console for boot issues. Use **Reachability Analyzer** to test the network path."
+     "body_md": "Path check: correct IP (public IP changed after stop/start?) → route table (public subnet → IGW; private → via bastion/SSM) → **security group** inbound rule for your IP/port → NACL (stateless — ephemeral ports outbound) → OS firewall → service actually listening on `0.0.0.0:port` (`ss -lntp`) → status checks / system log / EC2 serial console for boot issues. Use **Reachability Analyzer** to test the network path.\n\n```flow\npipeline: Instance running but unreachable\nStatus checks > Instance-level failure?\nSecurity group + NACL > Port allowed from your source?\nRoute + public IP > Public subnet with IGW route? Or reach it via SSM.\nService listening? > On 0.0.0.0 and the right port; OS firewall.\n```"
     },
     {
      "id": "Q31",
      "title": "CPU stays low but endpoint latency spikes",
      "short_md": "Not CPU-bound — look at: t-instance **CPU credits** exhausted (throttled — CPU metric may look capped), EBS throughput/IOPS limits or burst balance (gp2), network bandwidth/PPS/conntrack allowances exceeded, memory pressure/swap, GC pauses, thread/connection pool exhaustion, downstream dependency latency (traces), DNS resolution issues.",
-     "body_md": "Not CPU-bound — look at: t-instance **CPU credits** exhausted (throttled — CPU metric may look capped), EBS throughput/IOPS limits or burst balance (gp2), network bandwidth/PPS/conntrack allowances exceeded, memory pressure/swap, GC pauses, thread/connection pool exhaustion, downstream dependency latency (traces), DNS resolution issues."
+     "body_md": "Not CPU-bound — look at: t-instance **CPU credits** exhausted (throttled — CPU metric may look capped), EBS throughput/IOPS limits or burst balance (gp2), network bandwidth/PPS/conntrack allowances exceeded, memory pressure/swap, GC pauses, thread/connection pool exhaustion, downstream dependency latency (traces), DNS resolution issues.\n\n```flow\npipeline: CPU low, latency high\nWaiting on I/O > Disk (EBS IOPS/throughput limits) or network.\nBurst credits exhausted > t-family or gp2 throttled.\nDependency slow > DB, external APIs.\nThreads/connections saturated > Pools full while CPU idles.\n```"
     },
     {
      "id": "Q32",
      "title": "ASG keeps replacing instances in a loop",
      "short_md": "ELB health check failing because the app needs longer to start than the **health check grace period**, user data failing (check `/var/log/cloud-init-output.log`), wrong health check path, missing IAM permissions to fetch config/secrets at boot, AMI broken. Suspend `ReplaceUnhealthy` temporarily to debug.",
-     "body_md": "ELB health check failing because the app needs longer to start than the **health check grace period**, user data failing (check `/var/log/cloud-init-output.log`), wrong health check path, missing IAM permissions to fetch config/secrets at boot, AMI broken. Suspend `ReplaceUnhealthy` temporarily to debug."
+     "body_md": "ELB health check failing because the app needs longer to start than the **health check grace period**, user data failing (check `/var/log/cloud-init-output.log`), wrong health check path, missing IAM permissions to fetch config/secrets at boot, AMI broken. Suspend `ReplaceUnhealthy` temporarily to debug.\n\n```flow\npipeline: ASG replaces instances in a loop\nNew instance fails health check > Why?\nGrace period too short > App not ready before checks start.\nBad AMI / user data > Service never starts.\nHealth check path wrong > ALB marks every instance unhealthy.\n```"
     },
     {
      "id": "Q33",
      "title": "Migrate a legacy EC2 API to ECS",
      "short_md": "Containerise (Dockerfile, externalise config/secrets, logs to stdout, stateless — move local files to S3/EFS, sessions to Redis), build in CI, deploy ECS service behind the same ALB (new target group), shift traffic with weighted listener rules (10% → 100%), monitor, keep EC2 ASG for rollback, then decommission.",
-     "body_md": "Containerise (Dockerfile, externalise config/secrets, logs to stdout, stateless — move local files to S3/EFS, sessions to Redis), build in CI, deploy ECS service behind the same ALB (new target group), shift traffic with weighted listener rules (10% → 100%), monitor, keep EC2 ASG for rollback, then decommission."
+     "body_md": "Containerise (Dockerfile, externalise config/secrets, logs to stdout, stateless — move local files to S3/EFS, sessions to Redis), build in CI, deploy ECS service behind the same ALB (new target group), shift traffic with weighted listener rules (10% → 100%), monitor, keep EC2 ASG for rollback, then decommission.\n\n```flow\npipeline: Migrating a legacy EC2 API to ECS\nContainerise > Dockerfile; config via env; logs to stdout.\nExternalise state > Sessions, files → Redis/S3/DB.\nRun on ECS in parallel > Same ALB, weighted target groups.\nShift traffic gradually > Compare metrics.\nDecommission EC2 > After stable.\n```"
     },
     {
      "id": "Q34",
      "title": "Spot instances interrupted mid-job",
      "short_md": "Handle 2-minute notice (stop taking work, checkpoint), make jobs resumable/idempotent, queue-based work distribution so another worker picks up, diversify instance types, keep on-demand base.",
-     "body_md": "Handle 2-minute notice (stop taking work, checkpoint), make jobs resumable/idempotent, queue-based work distribution so another worker picks up, diversify instance types, keep on-demand base."
+     "body_md": "Handle 2-minute notice (stop taking work, checkpoint), make jobs resumable/idempotent, queue-based work distribution so another worker picks up, diversify instance types, keep on-demand base.\n\n```flow\npipeline: Spot interruptions mid-job\nCheckpoint progress > Regularly, to S3/DB.\nHandle the 2-minute notice > Stop and save.\nQueue-based work > Unfinished jobs return to the queue.\nDiversify > Many instance types/AZs; capacity-optimised allocation.\n```"
     },
     {
      "id": "Q35",
      "title": "Reduce EC2 costs",
      "short_md": "Right-size (Compute Optimizer), Graviton, Savings Plans for baseline, Spot for flexible workloads, auto scaling + schedules (turn off dev at night), gp3 instead of gp2, delete unattached EBS/old snapshots/unused EIPs, VPC endpoints to cut NAT data charges.",
-     "body_md": "Right-size (Compute Optimizer), Graviton, Savings Plans for baseline, Spot for flexible workloads, auto scaling + schedules (turn off dev at night), gp3 instead of gp2, delete unattached EBS/old snapshots/unused EIPs, VPC endpoints to cut NAT data charges."
+     "body_md": "Right-size (Compute Optimizer), Graviton, Savings Plans for baseline, Spot for flexible workloads, auto scaling + schedules (turn off dev at night), gp3 instead of gp2, delete unattached EBS/old snapshots/unused EIPs, VPC endpoints to cut NAT data charges.\n\n```flow\npipeline: Reducing EC2 cost\nRight-size > Compute Optimizer recommendations.\nGraviton > Better price/performance.\nSavings Plans > For the steady baseline.\nSpot > For interruptible work.\nTurn off idle > Schedules for dev/test; delete unattached EBS and old snapshots.\n```"
     }
    ]
   },

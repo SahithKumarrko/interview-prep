@@ -68,6 +68,16 @@ Building an agent locally is easy. Running it for thousands of users needs: isol
 
 **Short answer:** An agentic platform of **modular, serverless services** for deploying and operating agents securely at scale — with any framework and any model. Core services: **Harness, Runtime, Gateway, Identity, Memory, Code Interpreter, Browser, Observability, Policy, Evaluations**, plus newer ones: **Optimization, Registry, Payments**. Pricing is consumption-based.
 
+```flow
+pipeline: AgentCore services along an agent's life
+Build > Harness (config) or your own framework code.
+Run > Runtime: isolated session microVMs.
+Connect > Gateway turns APIs/Lambda into MCP tools; Policy checks each call.
+Secure > Identity: inbound auth, outbound tokens.
+Remember > Memory: short-term events, long-term records.
+Operate > Observability, Evaluations, Optimization, Registry.
+```
+
 **Interview framing:** "AgentCore doesn't replace LangGraph — LangGraph decides *what the agent does*; AgentCore provides *where it runs securely, how it reaches tools, who it acts as, what it remembers, and how we observe and govern it*."
 
 ---
@@ -76,11 +86,27 @@ Building an agent locally is easy. Running it for thousands of users needs: isol
 
 **Short answer:** A **managed agent loop defined by configuration**: you declare model, system prompt, tools (Gateway, MCP servers, inline functions, built-in Browser/Code Interpreter), skills and memory; AgentCore runs the loop (powered by **Strands Agents**). Each session runs in an isolated microVM (on Runtime) with its own filesystem and shell.
 
+```flow
+pipeline: AgentCore Harness from config to running agent
+Declare config > Model, system prompt, tools (Gateway / MCP), memory.
+Create harness > A versioned, managed agent loop.
+Invoke > AgentCore runs the loop: model → tools → observe.
+Iterate > Change config, publish a new version. No agent code to host.
+```
+
 **Notable features:** switch model providers mid-session without losing context; attach skills (Git, S3 or curated AWS catalog); bring your own container image; mount S3 Files/EFS for shared data; lifecycle hooks; immutable versions + named endpoints (instant rollback); `InvokeHarness` state in Step Functions; **export to Strands code** when config isn't enough. No separate harness charge.
 
 ---
 
 ### Q03. Harness vs code-based Runtime — when to choose which?
+
+```flow
+pipeline: Harness or Runtime?
+Standard agent loop fits? > Harness: fastest, no code to host.
+Custom control flow, framework or libraries? > Runtime with your LangGraph/Strands code.
+Hosting MCP/A2A servers? > Runtime.
+Long, heavy or GPU sessions? > Runtime Instances.
+```
 
 | | Harness | Runtime (your code) |
 |---|---|---|
@@ -120,6 +146,15 @@ Agent --> User: stream response
 
 **Short answer:** Use the **AgentCore CLI / SDK** (`bedrock-agentcore` Python SDK + starter toolkit). Wrap your agent with `BedrockAgentCoreApp`, test locally, then deploy (direct code upload or container image in ECR). Infrastructure-as-code: CloudFormation / CDK / Terraform AWS provider resources.
 
+```flow
+pipeline: From local agent to deployed runtime
+Wrap entrypoint > `BedrockAgentCoreApp` + `@app.entrypoint`.
+Test locally > Same contract on your machine.
+Configure > CLI / starter toolkit: execution role, auth, protocol.
+Deploy > Container image (ECR) or direct code upload → new version.
+Point endpoint > Release by moving an endpoint to the version; IaC via CloudFormation/CDK/Terraform.
+```
+
 ```python
 # app.py – minimal LangGraph agent on AgentCore Runtime
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -158,9 +193,27 @@ agentcore invoke '{"prompt": "hello", "thread_id": "t-1"}'
 - **Consumption pricing** — CPU billed for active processing (I/O wait while waiting for the LLM is typically not charged).
 - Built-in identity (inbound/outbound auth) and observability.
 
+```flow
+sequence: Session isolation in Runtime
+actors: User A, User B, Runtime, microVM A, microVM B
+User A -> Runtime: invoke(session=sA)
+Runtime -> microVM A: dedicated microVM for sA
+User B -> Runtime: invoke(session=sB)
+Runtime -> microVM B: separate microVM for sB
+> Separate CPU, memory and filesystem per session; wiped when the session ends.
+```
+
 ---
 
 ### Q07. Runtime building blocks: agent runtime, versions, endpoints, sessions
+
+```flow
+trace: Releasing and rolling back with versions and endpoints
+deploy  →  versions V1, V2, **V3** > Every update creates an immutable version.
+endpoint "prod" → **V2** > Clients call the endpoint, not a version.
+release: move "prod" → **V3** > Instant switch.
+rollback: move "prod" → **V2** > Just as instant. "DEFAULT" always tracks the latest.
+```
 
 ```
  Agent Runtime (ARN)  ── a deployed agent
@@ -199,6 +252,15 @@ invoke(s1) again > Gets a brand-new microVM, so durable state must live in Memor
 
 **Short answer:** **You do.** AgentCore does **not** enforce session-to-user mapping. Your backend must store `user → session IDs`, check ownership before invoking, and limit sessions per user. The session header is a routing key, **not authentication**.
 
+```flow
+sequence: Your backend owns the user ↔ session mapping
+actors: User, Your API, Mapping table, Runtime
+User -> Your API: message (JWT, conversation c1)
+Your API -> Mapping table: c1 belongs to this user? → session id s-c1
+Your API -> Runtime: InvokeAgentRuntime(sessionId = s-c1)
+> AgentCore doesn't check that a session belongs to a user. If you let clients choose session IDs, one user could reach another's session.
+```
+
 ```python
 @app.post("/chat/{conv_id}")
 def chat(conv_id: str, body: Msg, user=Depends(verify_okta_jwt)):
@@ -217,6 +279,17 @@ def chat(conv_id: str, body: Msg, user=Depends(verify_okta_jwt)):
 
 ### Q10. Runtime service contract (what your container must implement)
 
+```flow
+sequence: The Runtime service contract
+actors: AgentCore Runtime, Your container
+AgentCore Runtime -> Your container: start (listen on 0.0.0.0:8080, ARM64 image)
+AgentCore Runtime -> Your container: GET /ping
+Your container --> AgentCore Runtime: {"status": "Healthy"} (or HealthyBusy)
+AgentCore Runtime -> Your container: POST /invocations (payload + session headers)
+Your container --> AgentCore Runtime: JSON response or SSE stream
+> MCP servers use port 8000 /mcp; A2A uses 9000. The SDK implements this contract for you.
+```
+
 | Protocol | Port | Paths | Format |
 |---|---|---|---|
 | **HTTP** | 8080 | `POST /invocations`, `GET /ping`, `/ws` (WebSocket) | JSON / SSE / WebSocket |
@@ -232,6 +305,14 @@ Also: listen on `0.0.0.0`, `/ping` returns health (`Healthy` / `HealthyBusy` for
 
 ### Q11. Which protocol to expose?
 
+```flow
+pipeline: Which protocol to expose
+Your app calls the agent > HTTP (/invocations).
+Hosting tools for other agents > MCP.
+Agents delegating to your agent > A2A.
+Realtime / bidirectional > WebSocket.
+```
+
 - **HTTP** — your own app/backend calls the agent (most common).
 - **MCP** — you're hosting **tools** for other agents (an MCP server on Runtime; also put behind Gateway).
 - **A2A** — your agent is a peer other agents delegate tasks to (Agent Card discovery).
@@ -240,6 +321,13 @@ Also: listen on `0.0.0.0`, `/ping` returns health (`Healthy` / `HealthyBusy` for
 ---
 
 ### Q12. MicroVMs vs Instances (capacity providers)
+
+```flow
+pipeline: microVM vs Instances
+microVM per session > Strong isolation, fast start, auto-cleanup; time-limited sessions.
+Instances (capacity on EC2) > Long-running (days), GPUs, bigger machines.
+Trade-off > Instances give weaker per-session isolation, so design tenancy carefully.
+```
 
 | | microVM (default) | Instances |
 |---|---|---|
@@ -256,15 +344,48 @@ Choose Instances for long-running research/coding agents or GPU needs; accept we
 
 The agent can return quickly and continue work in a background thread/task; it signals "still busy" via `/ping` → `HealthyBusy`, keeping the session active (up to max lifetime). Pattern: invoke → agent starts job → returns job ID → client polls/streams status → agent writes results to S3/DB. For multi-hour or multi-day workflows, also persist checkpoints externally so a stopped session can resume. Runtime **platform V2** starts agents from snapshots for faster, more consistent cold starts.
 
+```flow
+sequence: Async work that outlives the request
+actors: Caller, Runtime, Agent
+Caller -> Runtime: invoke("research X")
+Runtime -> Agent: start
+Agent --> Caller: quick reply: "started, job j1"
+Agent -> Agent: background task keeps working
+Runtime -> Agent: GET /ping
+Agent --> Runtime: HealthyBusy (keeps the session alive)
+Agent -> Agent: done → report Healthy, store results
+> Results are written to storage or sent via a callback; the session can then idle out.
+```
+
 ---
 
 ### Q14. Streaming responses
 
 Return a generator from your entrypoint → Runtime streams SSE to the caller; or use WebSocket (`/ws`) for bidirectional streaming (voice, interactive). Your API can forward the stream to the browser with stable event types.
 
+```flow
+sequence: Streaming from Runtime
+actors: Client, Runtime, Agent
+Client -> Runtime: invoke (accept SSE)
+Runtime -> Agent: call entrypoint
+Agent --> Runtime: yield token
+Runtime --> Client: SSE event
+Agent --> Runtime: yield token … done
+Runtime --> Client: stream closes
+> Return a generator from your entrypoint. Use WebSocket (/ws) for two-way streaming.
+```
+
 ---
 
 ### Q15. Runtime vs LangGraph checkpointing — two different layers
+
+```flow
+pipeline: Two state layers
+microVM memory > Fast, but gone after 15 min idle or 8 h.
+LangGraph checkpointer (Postgres / Memory-backed) > Durable conversation + workflow state by thread_id.
+AgentCore Memory > Durable events and long-term records per user.
+Rule > Anything that must survive the session lives outside the microVM.
+```
 
 | Layer | Provides | Lifetime |
 |---|---|---|
@@ -282,6 +403,17 @@ Return a generator from your entrypoint → Runtime streams SSE to the caller; o
 ### Q16. What is AgentCore Gateway?
 
 **Short answer:** A managed **AI gateway** — a single secure entry point for agent traffic. Its main job: turn **APIs, Lambda functions and existing services into MCP tools** and aggregate existing MCP servers behind **one MCP endpoint**. It also does **HTTP passthrough** (including A2A to other agents) and **inference routing** across model providers. It handles **inbound auth** (who may call the gateway) and **outbound auth** (credentials to each target), plus semantic tool search, interceptors and Policy enforcement.
+
+```flow
+sequence: A tool call through Gateway
+actors: Agent, Gateway, Policy, Lambda tool
+Agent -> Gateway: tools/call get_invoice (MCP + token)
+Gateway -> Gateway: inbound auth: token valid for this gateway?
+Gateway -> Policy: allowed for this principal + args?
+Policy --> Gateway: ALLOW
+Gateway -> Lambda tool: invoke (outbound IAM role)
+Lambda tool --> Agent: result
+```
 
 ```
                   Agent (any framework, MCP client)
@@ -332,6 +464,14 @@ tools = await client.get_tools()
 - **Inbound** = "May this caller (agent/user) use the gateway?" — validate a JWT (issuer, audience/allowed clients, scopes) or IAM SigV4.
 - **Outbound** = "With what credentials does the gateway call the target?" — IAM role, OAuth token (machine 2LO or user-delegated 3LO), or API key from the token vault.
 
+```flow
+pipeline: Inbound vs outbound auth on Gateway
+Inbound: who is calling? > Validate the agent's/user's JWT (issuer, audience, client) or IAM.
+Policy / interceptors > Fine-grained decision per tool call.
+Outbound: how Gateway calls the target > IAM role, API key, or OAuth token from Identity.
+Target > Sees Gateway's credentials, never the agent's raw secrets.
+```
+
 They are independent: a valid inbound token doesn't mean the target will accept the call, and vice versa. Debug them separately.
 
 ---
@@ -340,15 +480,42 @@ They are independent: a valid inbound token doesn't mean the target will accept 
 
 With hundreds of tools, putting all definitions in the prompt wastes tokens and confuses the model. Gateway can expose a built-in **search tool**: the agent searches by task description and gets only relevant tools. Cheaper, faster, better tool selection.
 
+```flow
+sequence: Semantic tool search
+actors: Agent, Gateway, Tool index
+Agent -> Gateway: x_amz_bedrock_agentcore_search("refund an order")
+Gateway -> Tool index: semantic search over 300 tool descriptions
+Tool index --> Gateway: top 5 relevant tools
+Gateway --> Agent: just those 5 definitions
+Agent -> Gateway: call the chosen tool
+> Only relevant tools enter the prompt: fewer tokens, better choices.
+```
+
 ---
 
 ### Q20. Interceptors and fine-grained access control
 
 **Interceptors** (e.g., Lambda) run at the Gateway boundary to inspect/transform/reject requests and responses: redact PII, add headers, filter tools per user, log. **Fine-grained access control** can filter which tools a caller sees/uses based on token claims. These complement, not replace, authorisation inside the target system.
 
+```flow
+pipeline: Interceptors at the Gateway boundary
+Request arrives > Tool call with arguments.
+Request interceptor (Lambda) > Inspect, rewrite, enrich or reject: e.g. add tenant scope, block fields.
+Target runs > If allowed.
+Response interceptor > Redact PII, trim output before the agent sees it.
+```
+
 ---
 
 ### Q21. Gateway vs a custom MCP server
+
+```flow
+pipeline: Gateway + custom MCP server together
+Custom MCP server > Your own tool logic.
+Host on Runtime (MCP protocol) > Isolated, scalable.
+Add as Gateway target > Gets inbound auth, policy, search, observability.
+Agents see one endpoint > With all tools, managed and custom.
+```
 
 | Use Gateway when | Use a custom MCP server when |
 |---|---|
@@ -369,6 +536,14 @@ They combine well: host the custom MCP server on **Runtime** (MCP protocol) and 
 - **Workload identities** — each agent gets its own identity.
 - **Credential providers + token vault** — securely store OAuth client configs/API keys and the tokens obtained, so agent code never handles raw secrets.
 - **Outbound OAuth flows:** **2LO** (client credentials, agent acts as itself) and **3LO** (authorization code, user consents and the agent acts **on behalf of the user**), with consent portal support.
+
+```flow
+pipeline: What AgentCore Identity handles
+Inbound auth > JWT authorizers (Okta, Entra, Cognito) or IAM for Runtime/Gateway.
+Workload identity > The agent's own identity.
+Token vault > Stores OAuth tokens / API keys for outbound calls.
+2LO / 3LO flows > Machine credentials or user-consented tokens.
+```
 
 ---
 
@@ -408,9 +583,28 @@ async def list_events(*, access_token: str):
 
 Configure the Runtime (or Gateway) inbound **JWT authorizer** with the IdP's OIDC discovery URL and allowed audiences/client IDs. Runtime validates signature, issuer, audience and expiry. Your app still maps verified claims (sub, groups) to permissions; pass needed claims to tools via trusted context, never via the prompt.
 
+```flow
+sequence: Okta-protected agent invocation
+actors: User, React, Okta, AgentCore Runtime
+User -> Okta: sign in (OIDC + PKCE)
+Okta --> React: access token (JWT)
+React -> AgentCore Runtime: invoke + Bearer JWT
+AgentCore Runtime -> Okta: (cached) discovery + signing keys
+AgentCore Runtime -> AgentCore Runtime: check issuer, audience/client, expiry, signature
+AgentCore Runtime --> React: response (or 401/403)
+```
+
 ---
 
 ### Q25. Keep identities distinct (avoid confusion)
+
+```flow
+pipeline: Four identities, never mixed
+End user > Okta sub + groups: who is asking.
+Backend API role (IAM) > Calls InvokeAgentRuntime.
+Agent execution role (IAM) > What the agent's code may touch in AWS.
+Workload / outbound credentials > What the agent may do in Jira, Slack…
+```
 
 ```
  End user (Okta sub, groups)        ── who is asking
@@ -427,6 +621,14 @@ Least privilege for each. The execution role should **not** have broad S3/DB acc
 ### Q26. Pass user context to the agent safely
 
 Validate the user at the edge; pass identity as **verified claims** (JWT propagated via allowlisted headers, or your backend's signed context). Tools authorise against those claims. Never let the model supply `user_id`.
+
+```flow
+pipeline: Passing user context safely
+Validate at the edge > Your API verifies the JWT.
+Forward verified claims > Allowlisted header / forwarded JWT, set by your server.
+Agent reads claims from request context > Never from the prompt or model output.
+Use for authZ + memory namespace > actorId = verified user sub.
+```
 
 ---
 
@@ -453,6 +655,14 @@ Long-term records --> Agent: "prefers window seats"
 
 ### Q28. Long-term memory strategies
 
+```flow
+pipeline: Long-term memory strategies
+Events written > Raw conversation turns (short-term).
+Strategies extract async > Semantic facts, user preferences, session summaries, or your custom prompt.
+Records in namespaces > E.g. /users/{actorId}/preferences.
+Retrieve by query > Relevant records injected into the next session. Extraction takes a little time.
+```
+
 | Strategy | Extracts |
 |---|---|
 | **Semantic** | facts/knowledge from conversations |
@@ -470,11 +680,27 @@ Extraction is **asynchronous** (records appear shortly after events). Memory is 
 
 Use the AgentCore Memory **checkpointer/store integrations** for LangGraph (short-term → checkpoints/events, long-term → store) or call the Memory APIs from nodes. Namespace by verified user/tenant.
 
+```flow
+pipeline: AgentCore Memory with LangGraph
+Short-term > Memory-backed checkpointer / events per session.
+Long-term > Memory-backed store for cross-session records.
+actorId > The verified user.
+Graph unchanged > Swap the saver/store; nodes stay the same.
+```
+
 ---
 
 ### Q30. Isolating and auditing memory
 
 Derive `actorId` from the **verified identity**, never from model output; namespace per tenant/user; IAM conditions to restrict which namespaces a runtime role can access; validate extracted facts (could be poisoned via injection); support user deletion; set retention; audit with CloudTrail.
+
+```flow
+pipeline: Isolating and auditing memory
+actorId from verified identity > Never from the model.
+Namespace per tenant/user > Paths like /tenants/t1/users/u1/…
+IAM conditions > Restrict which namespaces a role can read/write.
+CloudTrail + retention > Audit access; delete per user on request.
+```
 
 ---
 
@@ -484,11 +710,32 @@ Derive `actorId` from the **verified identity**, never from model output; namesp
 
 A managed **sandbox** where agents run Python/JavaScript/TypeScript for calculations, data analysis, charts and file processing. Session-based, isolated, with configurable network mode (sandbox/no internet vs public). Use it instead of `exec()` in your agent container. Data uploaded is untrusted — keep network restricted for sensitive data.
 
+```flow
+sequence: Agent uses Code Interpreter
+actors: Agent, Code Interpreter sandbox
+Agent -> Code Interpreter sandbox: start session
+Agent -> Code Interpreter sandbox: run Python: load CSV, compute stats, plot
+Code Interpreter sandbox --> Agent: stdout, files (chart.png)
+Agent -> Code Interpreter sandbox: stop session
+> Isolated sandbox: untrusted, model-written code never runs inside your service.
+```
+
 ---
 
 ### Q32. Browser
 
 A managed, isolated **cloud browser** the agent can drive (Playwright, Browser Use, Nova Act) to navigate sites, fill forms and extract information; supports live view and session recording for audit. Risks: web pages contain **indirect prompt injection**; restrict domains, avoid giving it credentials it doesn't need, require approval for form submissions with side effects.
+
+```flow
+sequence: Agent drives the managed Browser
+actors: Agent, Browser session, Website
+Agent -> Browser session: start (isolated cloud browser)
+Agent -> Browser session: Playwright / Nova Act: open page, fill form
+Browser session -> Website: real browser traffic
+Website --> Browser session: page content
+Browser session --> Agent: extracted data / screenshot
+> Live view and recordings for audit; page content is untrusted input.
+```
 
 ---
 
@@ -497,6 +744,17 @@ A managed, isolated **cloud browser** the agent can drive (Playwright, Browser U
 ### Q33. AgentCore Policy
 
 **Short answer:** Deterministic authorisation **outside the agent's code**. You create a **policy engine**, write policies in **Cedar** (or natural language that's translated to Cedar and validated with automated reasoning, or the Cedar-compatible **Dogwood** language), and associate it with a **Gateway**. Every tool call through the gateway is evaluated against principal, tool, resource and **input parameters**. Supports **temporal policies** (session history: "approval must precede transfer", "max 3 refunds per session", running budget) and **guardrail signals** (e.g., prompt-attack score) as conditions. Decisions are logged to CloudWatch.
+
+```flow
+sequence: AgentCore Policy on a tool call
+actors: Agent, Gateway, Policy engine
+Agent -> Gateway: refund(order=A12, amount=900)
+Gateway -> Policy engine: evaluate (principal, action, resource, context)
+Policy engine -> Policy engine: Cedar rule: refunds above 500 → forbid for role "agent"
+Policy engine --> Gateway: DENY
+Gateway --> Agent: error: not permitted
+> Deterministic, outside the agent's code, logged for audit.
+```
 
 ```cedar
 // Only users in the "refund-approvers" group may issue refunds, and only up to 500
@@ -519,11 +777,27 @@ permit (
 
 Runtime, Gateway, Memory and tools emit **OpenTelemetry** traces/metrics/logs into **CloudWatch** (GenAI observability dashboards): sessions, traces, spans for model calls and tool calls, latency, tokens, errors. Instrument your framework with OTel/OpenInference (ADOT) for agent-internal spans; correlate with your API's trace ID. Redact sensitive payloads.
 
+```flow
+pipeline: Observability path
+Runtime, Gateway, Memory, tools > Emit OpenTelemetry spans, metrics, logs.
+CloudWatch > GenAI observability dashboards.
+One trace per request > API → agent → gateway → tool.
+Alarms > Errors, latency, token spend.
+```
+
 ---
 
 ### Q35. Evaluations
 
 Managed evaluation of agent quality on **sessions, traces and spans** (Strands, LangGraph via OTel/OpenInference): built-in evaluators (correctness, helpfulness, goal success, tool selection/parameter accuracy, faithfulness, harmfulness…) and custom LLM-judge or code evaluators; **online** (sample production traffic) and **on-demand** (datasets). Results land in CloudWatch.
+
+```flow
+pipeline: Evaluations
+Collect traces > Sessions, traces and spans via OTel.
+Built-in / custom evaluators > Helpfulness, correctness, tool selection, safety.
+Online (sampled) or on-demand > Score production traffic or test sets.
+Dashboards + alarms > Catch quality regressions.
+```
 
 ---
 
@@ -531,11 +805,28 @@ Managed evaluation of agent quality on **sessions, traces and spans** (Strands, 
 
 Builds on Evaluations: analyses traces to generate **recommendations** (system prompt, tool descriptions), packages them as versioned configuration bundles, and runs **A/B tests** (traffic splitting through Gateway) with statistical significance per session.
 
+```flow
+cycle: Optimization loop
+Analyse traces > Using evaluation results.
+Recommendations > Better system prompt, tool descriptions.
+Package as versions > Testable configuration changes.
+A/B test > Compare against the current version.
+exit > Promote the winner; repeat as behaviour drifts.
+```
+
 ---
 
 ### Q37. Registry
 
 A central **catalog** of agents, MCP servers, tools, skills and custom resources across the organisation, with publish → review → approve workflow and hybrid semantic/keyword search. Helps governance ("only approved MCP servers") and reuse.
+
+```flow
+pipeline: Registry lifecycle
+Publish > Agent, MCP server, tool or skill metadata.
+Review > Owners and security approve.
+Approved in catalog > Discoverable across the organisation.
+Reuse > Teams find existing agents/tools instead of rebuilding.
+```
 
 ---
 
@@ -543,11 +834,30 @@ A central **catalog** of agents, MCP servers, tools, skills and custom resources
 
 Lets agents pay for paid APIs/MCP servers/content via the **x402** and **Machine Payments Protocol (MPP)** with wallet providers, spending limits and observability. Relevant mainly for agents consuming paid third-party services; always set spending caps.
 
+```flow
+sequence: An agent paying for an API call
+actors: Agent, Paid API, Wallet provider
+Agent -> Paid API: request
+Paid API --> Agent: 402 Payment Required (price, terms)
+Agent -> Wallet provider: pay within spend limits (x402 / MPP)
+Wallet provider --> Agent: payment proof
+Agent -> Paid API: retry with proof
+Paid API --> Agent: content
+```
+
 ---
 
 ### Q39. Managed knowledge/retrieval with agents
 
 Expose retrieval as a tool: a Bedrock Knowledge Base (via a Lambda/OpenAPI target or integration) behind Gateway, or your own retriever MCP server. Same rules as any RAG: ACL filtering by verified identity, freshness, evaluation.
+
+```flow
+pipeline: Retrieval as a governed tool
+Knowledge Base > Bedrock KB or your search service.
+Exposed via Gateway > Lambda / OpenAPI target.
+Filter by user > Tenant + ACL filters from verified identity.
+Agent calls "search_docs" > Gets only allowed chunks, with citations.
+```
 
 ---
 
@@ -606,15 +916,39 @@ Tools --> React: results stream back up the chain
 **AWS:** infrastructure, microVM isolation, service availability, managed auth plumbing, encryption at rest.
 **You:** agent code and dependencies (container supply chain), execution-role permissions, session↔user mapping, tool authorisation, Cedar policies, prompt-injection defences, data classification/retention, secrets in the token vault (not env vars), what you log.
 
+```flow
+pipeline: Shared responsibility for agents
+AWS > Infrastructure, microVM isolation, availability, auth plumbing, encryption at rest.
+You: identity mapping > Users ↔ sessions, authorisation.
+You: tools + policies > Least privilege, Cedar rules, approvals.
+You: data + prompts > What is stored, retention, prompt-injection defences, evaluation.
+```
+
 ---
 
 ### Q42. Limits of microVM isolation
 
 Isolation protects **sessions from each other**. It does **not** stop code inside a session from using the session's IAM role and network access. If a prompt-injected agent can call `s3:GetObject` on `*`, isolation won't help. Combine with least-privilege roles, VPC/egress controls, Gateway Policy, and approval for sensitive tools.
 
+```flow
+pipeline: What microVM isolation does and doesn't stop
+Stops > One session reading another session's memory or files.
+Doesn't stop > Code inside a session using that session's credentials.
+Prompt injection > Can still trigger the agent's allowed tools.
+So add > Least-privilege roles, policy on tool calls, approvals.
+```
+
 ---
 
 ### Q43. ECS/Lambda vs AgentCore Runtime
+
+```flow
+pipeline: Where each piece usually runs
+FastAPI on ECS > The BFF: auth, ownership, rate limits.
+Agents on AgentCore Runtime > Per-session isolation, identity, memory.
+Tools as Lambda behind Gateway > Least privilege, scale to zero.
+Heavy batch pipelines > Step Functions / ECS workers.
+```
 
 | Choose | When |
 |---|---|
@@ -630,11 +964,28 @@ Common: FastAPI on ECS as the BFF, agents on AgentCore Runtime, tools as Lambda 
 
 Version everything (Runtime versions/endpoints, Harness versions, Gateway target schemas, Cedar policies, prompts); deploy via CI/CD with IaC; run Evaluations as a release gate; canary via endpoint switching or Optimization A/B tests; roll back by pointing the endpoint at the previous version; review custom images and skills for supply-chain risk.
 
+```flow
+pipeline: Governing agent changes
+Version everything > Runtime versions, Harness versions, prompts, tool schemas, policies.
+Evaluate before release > Eval suite on the candidate.
+Staged rollout > Endpoint per environment; canary.
+Audit + rollback > Who changed what; move endpoints back instantly.
+```
+
 ---
 
 ### Q45. Evaluating a new AgentCore feature before adopting
 
 Check: GA vs preview, region availability, quotas, pricing model, IAM/auth details, observability, compliance (data residency, logging of content), exit path (portability of your agent code), and run a benchmark of your real workload vs current architecture.
+
+```flow
+pipeline: Vetting a new AgentCore feature
+GA or preview? > Preview = no production SLA.
+Region + quotas + pricing > Available where you run? Limits fit?
+Security model > IAM, auth, data handling, logging.
+Prototype + eval > Measure against your use case.
+Exit plan > How hard is it to switch away?
+```
 
 ---
 
@@ -648,11 +999,28 @@ Separate **caller** denies from **tool** denies:
 3. If the error comes from inside the agent: the **execution role** lacks permissions (Bedrock model access, Memory, S3) — check logs.
 4. If a tool fails: Gateway inbound/outbound auth or Policy deny.
 
+```flow
+pipeline: 403 on invoke, works locally
+CloudTrail: InvokeAgentRuntime denied? > Caller's IAM policy, resource policy, SCPs.
+JWT authorizer? > Issuer, audience/client ID, expiry, token type (access vs ID).
+Tool-level 403? > Agent execution role or Gateway outbound credentials.
+Network / VPC config > Endpoints, security groups for VPC mode.
+```
+
 ---
 
 ### Q47. A user sees another user's previous conversation
 
 **Severity-1 incident.** Contain (disable feature/route), then inspect: backend session/thread mapping (reused or client-supplied IDs?), caches keyed without user, Memory `actorId` derived from untrusted input, LangGraph `thread_id` ownership checks. Fix with server-generated IDs + ownership checks, add regression tests, assess impact, notify per policy.
+
+```flow
+pipeline: User sees another user's conversation
+Contain > Disable the feature or route now (severity 1).
+Session/thread mapping > Client-chosen session IDs? Missing ownership check?
+Caches > Cache keys without user/tenant?
+Memory namespaces > actorId taken from the model or request body?
+Fix + verify + notify > Patch, test cross-user access, follow the incident process.
+```
 
 ---
 
@@ -660,11 +1028,27 @@ Separate **caller** denies from **tool** denies:
 
 Test layer by layer: inbound token valid for gateway? → Policy decision (CloudWatch logs: deny?) → outbound credential provider configured (OAuth scopes, client secret, 3LO consent completed for this user?) → target accepts the credential (call it directly) → tool schema/endpoint correct. Use correlation IDs; never log tokens.
 
+```flow
+pipeline: Gateway tool listed but every call fails auth
+Inbound token valid for the gateway? > Audience/issuer.
+Policy decision > CloudWatch logs: denied by Cedar?
+Outbound credentials > Credential provider configured? OAuth token present for this user?
+Target permissions > Lambda resource policy / API key scope.
+```
+
 ---
 
 ### Q49. After 20 minutes of inactivity, the agent "forgets" the conversation and a pending approval
 
 Idle timeout (15 min default) stopped the microVM; state lived only in process memory (`InMemorySaver`). Fix: durable checkpointer (Postgres/DynamoDB/AgentCore Memory saver) keyed by a stable `thread_id`; optionally tune idle timeout or use session storage. Approvals stored durably in your DB.
+
+```flow
+trace: Agent forgets after 20 minutes idle
+t=0: conversation + pending approval held **in microVM memory** > State lived only inside the session.
+t=15 min idle: session stopped, microVM destroyed > Idle timeout.
+t=20 min: invoke → **new microVM, empty state** > Memory and approval are gone.
+fix: durable checkpointer + AgentCore Memory; approvals stored in your DB > Then a new microVM resumes from saved state.
+```
 
 ---
 
@@ -672,17 +1056,43 @@ Idle timeout (15 min default) stopped the microVM; state lived only in process m
 
 Reuse session IDs for follow-ups (stickiness), keep images small, lazy-load heavy libraries, use Runtime platform V2 (snapshot start), pre-warm sessions for known users if justified, stream early status events to the UI.
 
+```flow
+pipeline: Reducing cold-start latency
+Reuse session IDs > Follow-ups hit the warm microVM.
+Smaller image > Faster pull and start.
+Lazy-load heavy libraries > Import inside functions where possible.
+Stream early > Send a first token or status quickly.
+```
+
 ---
 
 ### Q51. Agent costs are higher than expected
 
 Check CloudWatch: session durations (agents left in `HealthyBusy`?), token usage per session, tool loops, oversized prompts (enable semantic tool search instead of listing all tools), Memory extraction strategies running on every event, Browser/Code Interpreter sessions not stopped. Add budgets and limits in the agent loop.
 
+```flow
+pipeline: Agent cost higher than expected
+Session durations > Agents stuck in HealthyBusy?
+Tokens per session > Long histories, big tool outputs.
+Tool loops > Repeated calls.
+Model choice > Expensive model for simple steps.
+Fix > Summarise, cap steps, route models, end sessions.
+```
+
 ---
 
 ### Q52. How would you migrate an existing LangGraph app on ECS to AgentCore?
 
 Keep the graph; wrap with `BedrockAgentCoreApp`; move checkpointer to a managed durable store; expose tools via Gateway instead of in-process clients with broad credentials; set inbound JWT auth; move secrets/OAuth to Identity; add OTel instrumentation; run both stacks in parallel on the same eval set; shift traffic gradually via the backend.
+
+```flow
+pipeline: Migrating a LangGraph app from ECS to AgentCore
+Keep the graph > No rewrite.
+Wrap with BedrockAgentCoreApp > Entrypoint calls graph.invoke/stream.
+Move state out > Durable checkpointer (Postgres / Memory-backed).
+Tools behind Gateway > With Identity for outbound auth.
+Cut over gradually > BFF routes a share of users; compare metrics.
+```
 
 ---
 
