@@ -1,5 +1,5 @@
 {
- "total_questions": 928,
+ "total_questions": 941,
  "groups": [
   {
    "name": "Core",
@@ -46,7 +46,7 @@
    "updated": "27 October 2026 (React 19.2 is current)",
    "level": "basics → hooks → architecture & production",
    "source": "docs/02_React.md",
-   "question_count": 46,
+   "question_count": 59,
    "section_count": 11
   },
   {
