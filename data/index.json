@@ -43,7 +43,7 @@
    "full_title": "React.js: Interview Preparation",
    "group": "Core",
    "accent": "#38bdf8",
-   "updated": "24 October 2026 (React 19.2 line is current)",
+   "updated": "27 October 2026 (React 19.2 is current)",
    "level": "basics → hooks → architecture & production",
    "source": "docs/02_React.md",
    "question_count": 46,
