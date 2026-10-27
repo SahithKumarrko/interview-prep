@@ -1,5 +1,5 @@
 {
- "total_questions": 1067,
+ "total_questions": 1096,
  "groups": [
   {
    "name": "Core",
@@ -121,10 +121,10 @@
    "full_title": "Amazon Bedrock AgentCore: Interview Preparation",
    "group": "AI & Agents",
    "accent": "#fbbf24",
-   "updated": "24 October 2026",
+   "updated": "27 October 2026",
    "level": "what each service does → how they connect → security & production design",
    "source": "docs/08_AWS_AgentCore.md",
-   "question_count": 52,
+   "question_count": 59,
    "section_count": 12
   },
   {
@@ -160,10 +160,10 @@
    "full_title": "Terraform: Interview Preparation",
    "group": "DevOps",
    "accent": "#fb923c",
-   "updated": "24 October 2026 (Terraform 1.x; AWS provider v6)",
-   "level": "IaC basics → state & modules → safe production workflows",
+   "updated": "27 October 2026 (Terraform 1.x; AWS provider v6)",
+   "level": "infrastructure-as-code basics → language → state & modules → safe production workflows",
    "source": "docs/11_Terraform.md",
-   "question_count": 41,
+   "question_count": 45,
    "section_count": 9
   },
   {
@@ -225,10 +225,10 @@
    "full_title": "AWS Secrets Manager: Interview Preparation",
    "group": "AWS",
    "accent": "#c084fc",
-   "updated": "24 October 2026",
-   "level": "what a secret is → access, encryption, rotation → secure credential architecture for agents",
+   "updated": "27 October 2026",
+   "level": "what a secret is → access control & encryption → rotation → consuming secrets safely → agents and multi-tenant credentials",
    "source": "docs/16_AWS_Secrets_Manager.md",
-   "question_count": 31,
+   "question_count": 39,
    "section_count": 9
   },
   {
@@ -290,10 +290,10 @@
    "full_title": "Databases: SQL, PostgreSQL, DynamoDB & Caching: Interview Preparation",
    "group": "Design & Coding",
    "accent": "#34d399",
-   "updated": "25 October 2026",
+   "updated": "27 October 2026 (PostgreSQL 18 is current)",
    "level": "SQL basics → indexes & transactions → scaling → DynamoDB design → production scenarios",
    "source": "docs/21_Databases_SQL_DynamoDB.md",
-   "question_count": 41,
+   "question_count": 51,
    "section_count": 10
   },
   {
