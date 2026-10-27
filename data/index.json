@@ -1,5 +1,5 @@
 {
- "total_questions": 1096,
+ "total_questions": 1104,
  "groups": [
   {
    "name": "Core",
@@ -303,10 +303,10 @@
    "full_title": "Software Design: OOP, SOLID, Design Patterns & Microservice Patterns: Interview Preparation",
    "group": "Design & Coding",
    "accent": "#2dd4bf",
-   "updated": "25 October 2026",
-   "level": "OOP principles → SOLID → classic patterns in Python → distributed/microservice patterns → design review scenarios",
+   "updated": "27 October 2026",
+   "level": "OOP basics → SOLID → classic patterns in Python → distributed and microservice patterns → design-review scenarios",
    "source": "docs/22_Design_Principles_Patterns.md",
-   "question_count": 35,
+   "question_count": 43,
    "section_count": 8
   }
  ]

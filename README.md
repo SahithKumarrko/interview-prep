@@ -1,16 +1,16 @@
 # Interview Prep Handbook
 
-A static, single-page interview-preparation app: 22 courses and 928 questions covering Python, React, Vite, GenAI, agentic AI, LangChain, LangGraph, Bedrock AgentCore, GitLab CI/CD, Docker, Terraform, AWS (foundations, ECS, Lambda, Step Functions, Secrets Manager, EC2), system design, DSA, FastAPI, databases and design patterns.
+A static, single-page interview-preparation app: 22 courses and 1104 questions covering Python, React, Vite, GenAI, agentic AI, LangChain, LangGraph, Bedrock AgentCore, GitLab CI/CD, Docker, Terraform, AWS (foundations, ECS, Lambda, Step Functions, Secrets Manager, EC2), system design, DSA, FastAPI, databases and design patterns.
 
 Plain HTML, CSS and JavaScript. No framework and no build step for the site itself.
 
 ## Features
 
-- Reading view per course: mental-model diagrams, every question with a short answer, explanation, examples and pitfalls
+- Reading view per course: mental-model diagrams, every question with a plain-language short answer, how it works, a worked example with a step-by-step walkthrough, the common mistake and its fix, a ready-to-say answer and follow-ups
 - Search across all courses (`Ctrl K` / `⌘ K` or `/`)
 - Progress tracking: mark questions reviewed, bookmark them, see progress per course
 - Flashcards per course, across all courses or from bookmarks, with "knew it / shaky / didn't know" ratings that bring missed cards back
-- Animated step-by-step diagrams on 887 of the 928 questions (908 in total): request flows, pipelines, loops and algorithm traces
+- 413 animated diagrams (request flows, pipelines, loops, algorithm traces), each matching the example in its answer
 - Dark and light themes, mobile layout, deep links to every question (`#/c/<course>/<Q05>`)
 - Progress lives in your browser's localStorage; export and import it as a JSON file to move devices
 

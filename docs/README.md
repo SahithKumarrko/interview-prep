@@ -1,6 +1,6 @@
 # Comprehensive Interview Handbook
 
-**Updated:** 25 October 2026 · **928 questions** across 22 subjects · basics → advanced → production scenarios
+**Updated:** 25 October 2026 · **1104 questions** across 22 subjects · basics → advanced → production scenarios
 
 This is an engineering-focused interview preparation bank for the listed tech stack, checked against current official documentation (React 19.2, Vite 8, LangChain/LangGraph v1, MCP spec 2026-07-28, current AgentCore services, Terraform 1.x/AWS provider v6).
 
@@ -12,7 +12,7 @@ Every file has the same structure:
 
 1. **Mental model** — a diagram and plain-language explanation of how the technology works *before* any questions.
 2. **Sections from basics to advanced**, each question with:
-   - **Short answer** — what you say in the first 30 seconds.
+   - **Short answer** — what the thing is, in plain words, and the key rule.
    - **Explanation / Example** — intuition, diagrams, runnable code or config.
    - **Pitfall / Follow-up** — what interviewers push on next.
 3. **Scenario & debugging questions** — real production problems, answered step by step.
@@ -23,28 +23,28 @@ Every file has the same structure:
 
 | # | Subject | Questions | Highlights |
 |---|---|---|---|
-| 01 | [Python](01_Python.md) | 52 | memory model, OOP/MRO, decorators, generators, asyncio vs threads vs processes, GIL & free-threading, testing, production patterns |
-| 02 | [React.js](02_React.md) | 46 | render/commit, hooks in depth, React 19 Actions/`useOptimistic`/`use`, 19.2 `<Activity>`/`useEffectEvent`, React Compiler, streaming UI, XSS, React + TypeScript |
-| 03 | [Vite.js](03_Vite.md) | 32 | dev server vs build, Vite 8 + Rolldown, env vars, proxy vs CORS, S3+CloudFront deployment, cache-safe releases |
-| 04 | [Generative AI](04_Generative_AI.md) | 55 | transformers, tokens, decoding, KV cache, reasoning models, RAG architecture, chunking, hybrid search, LoRA, evaluation, Bedrock, security |
-| 05 | [Agentic AI](05_Agentic_AI.md) | 49 | agent loop, workflow vs agent patterns, tool design, HITL, memory, **MCP (2026 stateless spec)**, A2A, Agent Skills, threat model, frameworks (Strands, CrewAI, OpenAI Agents SDK…) |
-| 06 | [LangChain](06_LangChain.md) | 36 | v1 `create_agent`, middleware hooks, HITL middleware, structured output strategies, LCEL, RAG, MCP adapters |
-| 07 | [LangGraph](07_LangGraph.md) | 44 | super-steps & reducers, checkpointers, durability modes, `interrupt`/`Command`, `Send`, subgraphs, multi-agent, functional API |
-| 08 | [Amazon Bedrock AgentCore](08_AWS_AgentCore.md) | 52 | Harness, Runtime (sessions, contract, Instances), Gateway, Identity (2LO/3LO), Memory strategies, Policy (Cedar), Evaluations, Optimization, Registry |
-| 09 | [GitLab CI/CD](09_GitLab_CICD.md) | 46 | runners, rules, `needs`, components & catalog, OIDC to AWS, Terraform pipelines, supply-chain security, Git (merge vs rebase, branching, undo) |
-| 10 | [Docker](10_Docker.md) | 39 | namespaces/cgroups, layers & cache, multi-stage, BuildKit secrets, SIGTERM, health checks, exit codes, security |
-| 11 | [Terraform](11_Terraform.md) | 41 | state & S3 native locking, `for_each`, lifecycle, `moved`/`removed`/`import`, ephemeral & write-only secrets, `terraform test` |
-| 12 | [AWS Foundations, IAM & Networking](12_AWS_Foundations.md) | 46 | VPC design, SG vs NACL, endpoints, IAM evaluation logic, KMS envelope encryption, ALB/API GW, SQS/SNS/EventBridge, DR |
-| 13 | [Amazon ECS](13_AWS_ECS.md) | 37 | task def/service, Fargate vs Managed Instances vs EC2, task vs execution role, native blue/green/canary, scaling, debugging |
-| 14 | [AWS Lambda](14_AWS_Lambda.md) | 41 | execution environment, invocation models, SQS partial batch, concurrency, SnapStart, durable functions, Managed Instances |
-| 15 | [AWS Step Functions](15_AWS_Step_Functions.md) | 35 | Standard vs Express, JSONata & variables, `.sync`/task tokens, Distributed Map, sagas, redrive |
-| 16 | [AWS Secrets Manager](16_AWS_Secrets_Manager.md) | 31 | staging labels, KMS, cross-account, 4-step rotation, alternating users, ECS/Lambda consumption, agent credentials |
-| 17 | [Amazon EC2](17_AWS_EC2.md) | 35 | instance types, EBS vs instance store, IMDSv2, pricing models, ASG, hardening, incident response |
-| 18 | [Architecture & System Design](18_System_Design.md) | 48 | design framework, building blocks, **full agentic AI reference architecture**, scenarios, incidents, leadership, classic designs (URL shortener, notifications, chat) |
-| 19 | [Python Algorithms & Coding](19_Python_DSA_Coding.md) | 45 | pattern-recognition map + template code for every major pattern, LRU, scale problems, sorting algorithms, bits, grids, strings |
-| 20 | [FastAPI & API Design](20_FastAPI_API_Design.md) | 42 | request lifecycle, DI, native SSE, idempotency keys, JWT/IDOR, production on ECS, REST vs GraphQL vs gRPC, SQLAlchemy async + Alembic |
-| 21 | [Databases: SQL, PostgreSQL, DynamoDB & caching](21_Databases_SQL_DynamoDB.md) | 41 | joins, window functions, B-tree & composite indexes, EXPLAIN, isolation levels, locking, migrations, DynamoDB key/GSI design, conditional writes, hot partitions, cache-aside |
-| 22 | [Design principles & patterns](22_Design_Principles_Patterns.md) | 35 | OOP, SOLID with Python examples, GoF patterns, circuit breaker, saga, outbox, CQRS, event sourcing, monolith vs microservices |
+| 01 | [Python](01_Python.md) | 68 | memory model, OOP/MRO, decorators, generators, asyncio vs threads vs processes, GIL & free-threading, testing, production patterns |
+| 02 | [React.js](02_React.md) | 59 | render/commit, hooks in depth, React 19 Actions/`useOptimistic`/`use`, 19.2 `<Activity>`/`useEffectEvent`, React Compiler, streaming UI, XSS, React + TypeScript |
+| 03 | [Vite.js](03_Vite.md) | 38 | dev server vs build, Vite 8 + Rolldown, env vars, proxy vs CORS, S3+CloudFront deployment, cache-safe releases |
+| 04 | [Generative AI](04_Generative_AI.md) | 62 | transformers, tokens, decoding, KV cache, reasoning models, RAG architecture, chunking, hybrid search, LoRA, evaluation, Bedrock, security |
+| 05 | [Agentic AI](05_Agentic_AI.md) | 55 | agent loop, workflow vs agent patterns, tool design, HITL, memory, **MCP (2026 stateless spec)**, A2A, Agent Skills, threat model, frameworks (Strands, CrewAI, OpenAI Agents SDK…) |
+| 06 | [LangChain](06_LangChain.md) | 45 | v1 `create_agent`, middleware hooks, HITL middleware, structured output strategies, LCEL, RAG, MCP adapters |
+| 07 | [LangGraph](07_LangGraph.md) | 46 | super-steps & reducers, checkpointers, durability modes, `interrupt`/`Command`, `Send`, subgraphs, multi-agent, functional API |
+| 08 | [Amazon Bedrock AgentCore](08_AWS_AgentCore.md) | 59 | Harness, Runtime (sessions, contract, Instances), Gateway, Identity (2LO/3LO), Memory strategies, Policy (Cedar), Evaluations, Optimization, Registry |
+| 09 | [GitLab CI/CD](09_GitLab_CICD.md) | 58 | runners, rules, `needs`, components & catalog, OIDC to AWS, Terraform pipelines, supply-chain security, Git (merge vs rebase, branching, undo) |
+| 10 | [Docker](10_Docker.md) | 46 | namespaces/cgroups, layers & cache, multi-stage, BuildKit secrets, SIGTERM, health checks, exit codes, security |
+| 11 | [Terraform](11_Terraform.md) | 45 | state & S3 native locking, `for_each`, lifecycle, `moved`/`removed`/`import`, ephemeral & write-only secrets, `terraform test` |
+| 12 | [AWS Foundations, IAM & Networking](12_AWS_Foundations.md) | 59 | VPC design, SG vs NACL, endpoints, IAM evaluation logic, KMS envelope encryption, ALB/API GW, SQS/SNS/EventBridge, DR |
+| 13 | [Amazon ECS](13_AWS_ECS.md) | 42 | task def/service, Fargate vs Managed Instances vs EC2, task vs execution role, native blue/green/canary, scaling, debugging |
+| 14 | [AWS Lambda](14_AWS_Lambda.md) | 48 | execution environment, invocation models, SQS partial batch, concurrency, SnapStart, durable functions, Managed Instances |
+| 15 | [AWS Step Functions](15_AWS_Step_Functions.md) | 42 | Standard vs Express, JSONata & variables, `.sync`/task tokens, Distributed Map, sagas, redrive |
+| 16 | [AWS Secrets Manager](16_AWS_Secrets_Manager.md) | 39 | staging labels, KMS, cross-account, 4-step rotation, alternating users, ECS/Lambda consumption, agent credentials |
+| 17 | [Amazon EC2](17_AWS_EC2.md) | 36 | instance types, EBS vs instance store, IMDSv2, pricing models, ASG, hardening, incident response |
+| 18 | [Architecture & System Design](18_System_Design.md) | 57 | design framework, building blocks, **full agentic AI reference architecture**, scenarios, incidents, leadership, classic designs (URL shortener, notifications, chat) |
+| 19 | [Python Algorithms & Coding](19_Python_DSA_Coding.md) | 58 | pattern-recognition map + template code for every major pattern, LRU, scale problems, sorting algorithms, bits, grids, strings |
+| 20 | [FastAPI & API Design](20_FastAPI_API_Design.md) | 48 | request lifecycle, DI, native SSE, idempotency keys, JWT/IDOR, production on ECS, REST vs GraphQL vs gRPC, SQLAlchemy async + Alembic |
+| 21 | [Databases: SQL, PostgreSQL, DynamoDB & caching](21_Databases_SQL_DynamoDB.md) | 51 | joins, window functions, B-tree & composite indexes, EXPLAIN, isolation levels, locking, migrations, DynamoDB key/GSI design, conditional writes, hot partitions, cache-aside |
+| 22 | [Design principles & patterns](22_Design_Principles_Patterns.md) | 43 | OOP, SOLID with Python examples, GoF patterns, circuit breaker, saga, outbox, CQRS, event sourcing, monolith vs microservices |
 
 ## The end-to-end picture (how the files connect)
 
