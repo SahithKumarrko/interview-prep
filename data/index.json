@@ -1,5 +1,5 @@
 {
- "total_questions": 1020,
+ "total_questions": 1053,
  "groups": [
   {
    "name": "Core",
@@ -82,10 +82,10 @@
    "full_title": "Agentic AI: Interview Preparation",
    "group": "AI & Agents",
    "accent": "#f472b6",
-   "updated": "24 October 2026 (MCP spec revision **2026-07-28** is current)",
-   "level": "what an agent is → patterns → protocols (MCP/A2A) → production safety",
+   "updated": "27 October 2026 (MCP spec revision **2026-07-28** is current)",
+   "level": "what an agent is → tools → patterns → memory → protocols (MCP, A2A, Skills) → frameworks → production safety",
    "source": "docs/05_Agentic_AI.md",
-   "question_count": 49,
+   "question_count": 55,
    "section_count": 11
   },
   {
@@ -108,10 +108,10 @@
    "full_title": "LangGraph: Interview Preparation",
    "group": "AI & Agents",
    "accent": "#f59e0b",
-   "updated": "24 October 2026 (LangGraph **v1.x**)",
-   "level": "graph basics → persistence & HITL → multi-agent → production",
+   "updated": "27 October 2026 (LangGraph **v1.x**)",
+   "level": "graph basics → persistence & human approval → multi-agent → production",
    "source": "docs/07_LangGraph.md",
-   "question_count": 44,
+   "question_count": 46,
    "section_count": 10
   },
   {
@@ -147,10 +147,10 @@
    "full_title": "Docker: Interview Preparation",
    "group": "DevOps",
    "accent": "#2dd4bf",
-   "updated": "24 October 2026",
-   "level": "containers basics → Dockerfile mastery → security & production on ECS",
+   "updated": "27 October 2026",
+   "level": "what a container is → images and Dockerfiles → networking, storage, Compose → security & production on ECS",
    "source": "docs/10_Docker.md",
-   "question_count": 39,
+   "question_count": 46,
    "section_count": 9
   },
   {
@@ -186,11 +186,11 @@
    "full_title": "Amazon ECS: Interview Preparation",
    "group": "AWS",
    "accent": "#60a5fa",
-   "updated": "24 October 2026",
-   "level": "core concepts → networking, IAM, deployments → scaling & production debugging",
+   "updated": "27 October 2026",
+   "level": "containers & ECS basics → capacity, networking, IAM → deployments → scaling & production debugging",
    "source": "docs/13_AWS_ECS.md",
-   "question_count": 37,
-   "section_count": 11
+   "question_count": 42,
+   "section_count": 12
   },
   {
    "slug": "14-aws-lambda",
@@ -212,10 +212,10 @@
    "full_title": "AWS Step Functions: Interview Preparation",
    "group": "AWS",
    "accent": "#a78bfa",
-   "updated": "24 October 2026",
-   "level": "state machine basics → integration patterns → resilient large-scale workflows",
+   "updated": "27 October 2026",
+   "level": "state machine basics → data flow & error handling → integration patterns & large-scale workflows",
    "source": "docs/15_AWS_Step_Functions.md",
-   "question_count": 35,
+   "question_count": 42,
    "section_count": 10
   },
   {
@@ -277,10 +277,10 @@
    "full_title": "FastAPI & API Design: Interview Preparation",
    "group": "Design & Coding",
    "accent": "#fbbf24",
-   "updated": "24 October 2026",
+   "updated": "27 October 2026",
    "level": "HTTP & REST basics → FastAPI internals → secure, resilient production APIs",
    "source": "docs/20_FastAPI_API_Design.md",
-   "question_count": 42,
+   "question_count": 48,
    "section_count": 10
   },
   {
