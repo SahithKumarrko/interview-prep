@@ -1,5 +1,5 @@
 {
- "total_questions": 1053,
+ "total_questions": 1067,
  "groups": [
   {
    "name": "Core",
@@ -238,10 +238,10 @@
    "full_title": "Amazon EC2: Interview Preparation",
    "group": "AWS",
    "accent": "#f472b6",
-   "updated": "24 October 2026",
-   "level": "instance basics → storage, networking, scaling → hardening & incident response",
+   "updated": "27 October 2026",
+   "level": "what an instance is → storage, networking, access → pricing → Auto Scaling → hardening & incident response",
    "source": "docs/17_AWS_EC2.md",
-   "question_count": 35,
+   "question_count": 36,
    "section_count": 10
   },
   {
@@ -264,11 +264,11 @@
    "full_title": "Python Algorithms & Coding: Interview Preparation",
    "group": "Design & Coding",
    "accent": "#f59e0b",
-   "updated": "24 October 2026",
-   "level": "complexity basics → core patterns with code → scale & concurrency problems",
+   "updated": "27 October 2026",
+   "level": "fundamentals → core patterns with code → scale & concurrency problems",
    "source": "docs/19_Python_DSA_Coding.md",
-   "question_count": 45,
-   "section_count": 14
+   "question_count": 58,
+   "section_count": 13
   },
   {
    "slug": "20-fastapi-api-design",
