@@ -1,5 +1,5 @@
 {
- "total_questions": 995,
+ "total_questions": 1020,
  "groups": [
   {
    "name": "Core",
@@ -30,11 +30,11 @@
    "full_title": "Python: Interview Preparation",
    "group": "Core",
    "accent": "#60a5fa",
-   "updated": "24 October 2026",
-   "level": "basics → internals → production engineering",
+   "updated": "27 October 2026 (Python 3.15 is current; 3.14 is widely deployed)",
+   "level": "basics → internals → concurrency & production",
    "source": "docs/01_Python.md",
-   "question_count": 52,
-   "section_count": 12
+   "question_count": 68,
+   "section_count": 14
   },
   {
    "slug": "02-react",
@@ -251,11 +251,11 @@
    "full_title": "Architecture & System Design: Interview Preparation",
    "group": "Design & Coding",
    "accent": "#fb7185",
-   "updated": "24 October 2026",
-   "level": "design framework → building blocks → agentic AI platform designs → leadership & incidents",
+   "updated": "27 October 2026",
+   "level": "fundamentals → building blocks → classic designs → agentic AI platform → reliability, operations & incidents",
    "source": "docs/18_System_Design.md",
-   "question_count": 48,
-   "section_count": 10
+   "question_count": 57,
+   "section_count": 11
   },
   {
    "slug": "19-python-dsa-coding",
