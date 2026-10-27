@@ -1,5 +1,5 @@
 {
- "total_questions": 941,
+ "total_questions": 995,
  "groups": [
   {
    "name": "Core",
@@ -56,10 +56,10 @@
    "full_title": "Vite.js: Interview Preparation",
    "group": "Core",
    "accent": "#a78bfa",
-   "updated": "24 October 2026 (Vite 8 is current — stable since March 2026, uses **Rolldown**)",
+   "updated": "27 October 2026 (Vite 8 is current, stable since March 2026, built on **Rolldown** and **Oxc**)",
    "level": "basics → internals → production delivery",
    "source": "docs/03_Vite.md",
-   "question_count": 32,
+   "question_count": 38,
    "section_count": 8
   },
   {
@@ -69,10 +69,10 @@
    "full_title": "Generative AI: Interview Preparation",
    "group": "AI & Agents",
    "accent": "#c084fc",
-   "updated": "24 October 2026",
-   "level": "how LLMs work → RAG → evaluation → production & security",
+   "updated": "27 October 2026",
+   "level": "how LLMs work → prompting → RAG → fine-tuning → evaluation → production & security",
    "source": "docs/04_Generative_AI.md",
-   "question_count": 55,
+   "question_count": 62,
    "section_count": 11
   },
   {
@@ -95,10 +95,10 @@
    "full_title": "LangChain: Interview Preparation",
    "group": "AI & Agents",
    "accent": "#fb7185",
-   "updated": "24 October 2026 (LangChain **v1.x** — `create_agent` + middleware, built on LangGraph)",
-   "level": "components → agents → production",
+   "updated": "27 October 2026 (LangChain **v1.x**: `create_agent` + middleware, built on LangGraph)",
+   "level": "components → agents → RAG → production",
    "source": "docs/06_LangChain.md",
-   "question_count": 36,
+   "question_count": 45,
    "section_count": 8
   },
   {
@@ -134,10 +134,10 @@
    "full_title": "GitLab CI/CD: Interview Preparation",
    "group": "DevOps",
    "accent": "#34d399",
-   "updated": "24 October 2026",
-   "level": "pipeline basics → advanced YAML → secure deployments to AWS",
+   "updated": "27 October 2026",
+   "level": "Git basics → pipeline basics → advanced YAML → secure deployments to AWS",
    "source": "docs/09_GitLab_CICD.md",
-   "question_count": 46,
+   "question_count": 58,
    "section_count": 11
   },
   {
@@ -173,10 +173,10 @@
    "full_title": "AWS Foundations, IAM & Networking: Interview Preparation",
    "group": "AWS",
    "accent": "#818cf8",
-   "updated": "24 October 2026",
-   "level": "global infrastructure → VPC & IAM → integration services → resilient secure design",
+   "updated": "27 October 2026",
+   "level": "what AWS is → accounts, VPC & IAM → load balancing, storage, messaging → resilient, secure design",
    "source": "docs/12_AWS_Foundations.md",
-   "question_count": 46,
+   "question_count": 59,
    "section_count": 12
   },
   {
@@ -199,10 +199,10 @@
    "full_title": "AWS Lambda: Interview Preparation",
    "group": "AWS",
    "accent": "#38bdf8",
-   "updated": "24 October 2026",
-   "level": "execution model → event sources & concurrency → production patterns",
+   "updated": "27 October 2026",
+   "level": "basics → invocation & concurrency → production patterns & newer compute types",
    "source": "docs/14_AWS_Lambda.md",
-   "question_count": 41,
+   "question_count": 48,
    "section_count": 11
   },
   {
